@@ -45,6 +45,12 @@ categorize prompt, which auto-learns):
 komunalka learn-pattern "Газ (постачання)" "naftogaz"
 ```
 
+## Commands
+Telegram menu (also published in code via `set_my_commands`): `/start`, `/unpaid`
+(open this month), `/stats` (this month's spend, as a chart when there's data),
+`/help`. Commands run **deterministically** — no LLM. Anything else you type is free
+text handled by the agent (e.g. «що треба заплатити?»).
+
 ## How it works
 - **Webhook** → idempotent (by `mono_tx_id`), outflow-only. Matches the description
   to a provider → logs + confirms; unmatched-but-utility-candidate → asks you to

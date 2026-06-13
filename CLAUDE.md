@@ -22,8 +22,10 @@ via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
 - `agent/` — `persona` (BUTLER_SYSTEM_PROMPT), `provider` (LLMProvider ABC +
   ClaudeCodeProvider + AnthropicAPIProvider stub), `tools` (TOOLS registry),
   `dispatcher` (handle_message: deterministic tool routing).
-- `bot/` — aiogram 3 bot, allowlist middleware, text + callback handlers, keyboards,
-  and the webhook→Telegram notifier.
+- `bot/` — aiogram 3 bot, allowlist middleware, slash commands (`/start /unpaid
+  /stats /help` — deterministic, registered before the free-text catch-all and
+  mirrored via `set_my_commands`), text + callback handlers, keyboards, and the
+  webhook→Telegram notifier.
 - `reminders/` — APScheduler daily payment nudges (Redis jobstore, memory fallback).
 - `app.py` — FastAPI; lifespan starts bot long-polling + scheduler + notifier.
 
