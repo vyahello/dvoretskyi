@@ -13,9 +13,14 @@ def now() -> datetime:
     return datetime.now(KYIV)
 
 
+def ensure_aware(moment: datetime) -> datetime:
+    """Attach Kyiv tz to a naive datetime (e.g. one SQLite returned without tzinfo)."""
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=KYIV)
+
+
 def cycle_of(moment: datetime) -> str:
     """Billing cycle key 'YYYY-MM' for a given moment (in Kyiv tz)."""
-    local = moment.astimezone(KYIV)
+    local = ensure_aware(moment).astimezone(KYIV)
     return f"{local.year:04d}-{local.month:02d}"
 
 

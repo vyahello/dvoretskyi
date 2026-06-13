@@ -105,9 +105,10 @@ async def compute_pending_nudges(
         ).scalar_one_or_none()
 
         if nudge is not None:
-            if nudge.snoozed_until is not None and nudge.snoozed_until > now:
+            if nudge.snoozed_until is not None and clock.ensure_aware(nudge.snoozed_until) > now:
                 continue  # snoozed
-            if nudge.nudged_at.astimezone(clock.KYIV).date() == now.astimezone(clock.KYIV).date():
+            nudged_day = clock.ensure_aware(nudge.nudged_at).astimezone(clock.KYIV).date()
+            if nudged_day == now.astimezone(clock.KYIV).date():
                 continue  # already nudged today
 
         pending.append(
