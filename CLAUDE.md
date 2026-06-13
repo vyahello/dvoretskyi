@@ -59,12 +59,17 @@ uvicorn komunalka.app:app --host 0.0.0.0 --port 8000   # webhook + bot polling +
 The mono webhook must be reachable over public HTTPS at
 `${PUBLIC_BASE_URL}/mono/webhook/${MONO_WEBHOOK_SECRET}`.
 
-## Test
+## Test, lint, types
 ```bash
-pytest -q          # 36 tests, in-memory SQLite, no network, no ANTHROPIC_API_KEY needed
+pytest -q                       # 36 tests, in-memory SQLite, no network, no API key
+ruff check src tests            # lint (E,W,F,I,UP,B)
+ruff format src tests           # format (black-compatible; the project standard)
+mypy                            # type-check src/ (config in pyproject)
 ```
 Tests use a fake `LLMProvider` (no real `claude` calls) and pass `now` explicitly to
-reminder logic (no time-freezing dependency).
+reminder logic (no time-freezing dependency). Formatting/linting is **Ruff**
+(`ruff format` replaces black); type-checking is **mypy** with `ignore_missing_imports`
+(aiogram/apscheduler ship partial/no stubs).
 
 ## Env vars (see `.env.example`)
 `MONO_TOKEN`, `MONO_WEBHOOK_SECRET`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID`,
