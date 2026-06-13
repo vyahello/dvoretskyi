@@ -132,6 +132,7 @@ class Notice:
     """What to tell the user about a processed tx (resolved before session close)."""
 
     action: Action
+    payment_id: int | None = None
     amount_uah: str | None = None
     provider_name: str | None = None
     mono_tx_id: str | None = None
@@ -142,6 +143,7 @@ def _build_notice(result: ProcessResult) -> Notice | None:
     if result.action is Action.LOGGED and result.payment is not None:
         return Notice(
             action=Action.LOGGED,
+            payment_id=result.payment.id,
             amount_uah=str(result.payment.amount_uah),
             provider_name=result.provider.name if result.provider else None,
             mono_tx_id=result.payment.mono_tx_id,
@@ -149,6 +151,7 @@ def _build_notice(result: ProcessResult) -> Notice | None:
     if result.action is Action.UNCATEGORIZED and result.payment is not None:
         return Notice(
             action=Action.UNCATEGORIZED,
+            payment_id=result.payment.id,
             amount_uah=str(result.payment.amount_uah),
             mono_tx_id=result.payment.mono_tx_id,
             raw_description=result.payment.raw_description,
