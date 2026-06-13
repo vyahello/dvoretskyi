@@ -8,7 +8,7 @@
 
 ## Role & scope
 
-Build **Phase 1** of a single-user Telegram utility agent ("Платон"). Phase 1 is
+Build **Phase 1** of a single-user Telegram utility agent ("Комунальний Дворецький"). Phase 1 is
 the **money + stats + reminders + conversational agent** layer, sourced entirely
 from the **monobank webhook**. No provider scraping, no meter OCR, no payment
 initiation.
@@ -63,7 +63,7 @@ src/komunalka/
     matcher.py           # description→provider; is_utility_candidate(); learn_pattern()
     client.py            # register webhook via mono API (used by CLI)
   agent/
-    persona.py           # PLATON_SYSTEM_PROMPT constant (Ukrainian, from spec §5a)
+    persona.py           # BUTLER_SYSTEM_PROMPT constant (Ukrainian, from spec §5a)
     provider.py          # LLMProvider ABC + ClaudeCodeProvider + Decision
     tools.py             # tool functions + TOOLS registry
     dispatcher.py        # handle_message(text, ctx) -> reply
@@ -141,7 +141,7 @@ placeholders — real mono `description` strings get captured from live transact
 4. **Outflows only:** ignore `amount >= 0` (top-ups/refunds) in Phase 1.
 5. **Match:** `matcher.match(description)` → Provider | None (case-insensitive substring
    over `ProviderPattern`).
-   - Match → create `Payment(source=mono_webhook, provider=...)`; push Платон
+   - Match → create `Payment(source=mono_webhook, provider=...)`; push the butler's
      confirmation to Telegram.
    - **No match:** only act if `matcher.is_utility_candidate(mcc, description)` is true
      — i.e. `mcc in settings.utility_mccs` (default `{4900, 4814}`: utilities, telecom)
@@ -166,7 +166,7 @@ async. The `Bot` instance is shared via FastAPI app state.
 class Decision:
     tool: str | None
     args: dict
-    message: str          # Ukrainian, in Платон's voice
+    message: str          # Ukrainian, in the butler's voice
 
 class LLMProvider(ABC):
     @abstractmethod
@@ -174,7 +174,7 @@ class LLMProvider(ABC):
 ```
 
 ### `ClaudeCodeProvider`
-- Builds the full prompt: `PLATON_SYSTEM_PROMPT` (persona) + serialized `context`
+- Builds the full prompt: `BUTLER_SYSTEM_PROMPT` (persona) + serialized `context`
   (open providers, current cycle, recent payments) + the user's text + a strict
   instruction to **return only** `{"tool","args","message"}` JSON.
 - Invokes headless Claude Code via `asyncio.create_subprocess_exec`:
@@ -207,7 +207,7 @@ Pure functions over the DB; return plain dicts. `TOOLS` registry maps name → c
 ### `dispatcher.py`
 `handle_message(user_text, ctx) -> reply`: build context (call `get_unpaid` + recent
 payments) → `provider.decide(...)` → if `decision.tool`, execute via `TOOLS` and let
-Платон phrase the result (either a second LLM turn or template the tool output into
+the butler phrase the result (either a second LLM turn or template the tool output into
 `decision.message`) → return final reply + any media. The **tool routing is
 deterministic**; the persona governs only the `message` text.
 
@@ -229,7 +229,7 @@ deterministic**; the persona governs only the `message` text.
 - Daily job: for each provider with `due_day`, current cycle, `kind="payment"`:
   nudge **iff** unpaid this cycle AND within the nudge window (e.g. due_day−3 … due_day)
   AND not snoozed AND not already nudged today. Near deadline (due_day or due_day−1)
-  → escalation copy. Send via Bot in Платон's voice. Record `NudgeLog`.
+  → escalation copy. Send via Bot in the butler's voice. Record `NudgeLog`.
 - Scaffold a `kind="meter"` branch but keep it disabled in Phase 1.
 
 ---
@@ -274,7 +274,7 @@ Document in `.env.example`. **Do not** define `ANTHROPIC_API_KEY`.
 
 ## Definition of done
 1. A real mono outflow matching a seeded pattern is logged once (idempotent) and
-   Платон confirms it in Telegram, in character.
+   the butler confirms it in Telegram, in character.
 2. A utility-candidate unmatched tx produces a categorize prompt; tapping a provider
    logs it and the next identical payee auto-logs.
 3. A non-utility purchase (e.g. grocery, MCC 5814) is silently ignored.
