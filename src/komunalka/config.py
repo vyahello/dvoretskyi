@@ -8,9 +8,10 @@ the API key is stripped from the claude subprocess env (see agent/provider.py, s
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Annotated
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -39,7 +40,11 @@ class Settings(BaseSettings):
     claude_timeout_seconds: int = 60
 
     # --- matching ---
-    utility_mccs: set[int] = Field(default_factory=lambda: {4900, 4814})
+    # NoDecode: pydantic-settings would otherwise JSON-decode this complex field from
+    # the dotenv string; we want the "4900,4814" CSV form parsed by the validator below.
+    utility_mccs: Annotated[set[int], NoDecode] = Field(
+        default_factory=lambda: {4900, 4814}
+    )
 
     # --- misc ---
     tz: str = "Europe/Kyiv"

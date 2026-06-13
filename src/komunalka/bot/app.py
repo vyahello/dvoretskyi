@@ -11,12 +11,26 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
-from aiogram.types import CallbackQuery, FSInputFile, Message, TelegramObject
+from aiogram.filters import Command, CommandStart
+from aiogram.types import (
+    BotCommand,
+    CallbackQuery,
+    FSInputFile,
+    Message,
+    TelegramObject,
+)
 from sqlalchemy import select
 
+from komunalka import clock
 from komunalka.agent import dispatcher as agent_dispatcher
 from komunalka.agent.provider import get_provider
-from komunalka.agent.tools import ToolError, categorize_payment, snooze_reminder
+from komunalka.agent.tools import (
+    ToolError,
+    categorize_payment,
+    get_stats,
+    get_unpaid,
+    snooze_reminder,
+)
 from komunalka.bot import keyboards
 from komunalka.config import get_settings
 from komunalka.db.models import Payment, Provider
@@ -43,6 +57,82 @@ class AllowlistMiddleware(BaseMiddleware):
         if user is None or user.id != self.allowed_user_id:
             return None  # drop, no reply
         return await handler(event, data)
+
+
+# --- slash commands (deterministic — no LLM) ------------------------------
+
+HELP_TEXT = (
+    "До ваших послуг. Веду вашу комуналку: фіксую платежі, рахую статистику й "
+    "нагадую про дедлайни.\n\n"
+    "Команди:\n"
+    "/unpaid — що ще відкрите цього місяця\n"
+    "/stats — витрати за місяць (графіком, якщо є що показати)\n"
+    "/help — це повідомлення\n\n"
+    "А ще просто пишіть як людині — напр. «що треба заплатити?», «скільки вийшло "
+    "за травень?» або «відклади воду на три дні». Розберуся."
+)
+
+
+def _format_unpaid(result: dict) -> str:
+    """Compact butler-voice rendering of get_unpaid output."""
+    if result.get("all_clear"):
+        return "✅ Усе чисто — відкритих платежів цього місяця нема."
+    lines = ["Відкрите цього місяця:"]
+    for item in result["open"]:
+        amount = (
+            f" (≈{item['expected_amount']} ₴)"
+            if item.get("expected_amount") is not None
+            else ""
+        )
+        due = f" — до {item['due_day']}-го" if item.get("due_day") else ""
+        lines.append(f"• {item['provider']}{amount}{due}")
+    return "\n".join(lines)
+
+
+def _format_stats(result: dict) -> str:
+    """Compact butler-voice rendering of get_stats output (header line)."""
+    if not result["items"]:
+        return f"{result['period']}: ще порожньо — жодного платежу."
+    top = result["items"][0]
+    return (
+        f"{result['period']} — {result['total']} ₴. "
+        f"Найбільше з'їв {top['label']} ({top['total']} ₴)."
+    )
+
+
+@router.message(CommandStart())
+async def cmd_start(message: Message) -> None:
+    await message.answer(
+        "До ваших послуг — ваш комунальний дворецький. Стежу за платежами, "
+        "статистикою та дедлайнами.\n"
+        "Почніть з /unpaid, або просто спитайте «що треба заплатити?». "
+        "Повний перелік — /help."
+    )
+
+
+@router.message(Command("unpaid"))
+async def cmd_unpaid(message: Message) -> None:
+    async with session_scope() as session:
+        result = await get_unpaid(session)
+    await message.answer(_format_unpaid(result))
+
+
+@router.message(Command("stats"))
+async def cmd_stats(message: Message) -> None:
+    async with session_scope() as session:
+        result = await get_stats(
+            session, period=clock.current_cycle(), breakdown="provider"
+        )
+    text = _format_stats(result)
+    if result.get("chart_path"):
+        await message.answer_photo(FSInputFile(result["chart_path"]), caption=text)
+    else:
+        await message.answer(text)
+
+
+@router.message(Command("help"))
+async def cmd_help(message: Message) -> None:
+    await message.answer(HELP_TEXT)
 
 
 @router.message(F.text)
@@ -128,6 +218,19 @@ def build_dispatcher() -> Dispatcher:
 
 def build_bot() -> Bot:
     return Bot(token=get_settings().telegram_bot_token)
+
+
+# Mirror of the BotFather menu, kept in code so it stays in sync.
+BOT_COMMANDS = [
+    BotCommand(command="start", description="Привітання дворецького"),
+    BotCommand(command="unpaid", description="Що ще не оплачено цього місяця"),
+    BotCommand(command="stats", description="Витрати за поточний місяць"),
+    BotCommand(command="help", description="Що я вмію і як зі мною говорити"),
+]
+
+
+async def set_my_commands(bot: Bot) -> None:
+    await bot.set_my_commands(BOT_COMMANDS)
 
 
 # --- webhook → Telegram notifier ------------------------------------------

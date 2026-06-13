@@ -13,7 +13,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from komunalka.bot.app import build_bot, build_dispatcher, make_notifier
+from komunalka.bot.app import (
+    build_bot,
+    build_dispatcher,
+    make_notifier,
+    set_my_commands,
+)
 from komunalka.mono.webhook import router as mono_router
 from komunalka.reminders.engine import build_scheduler, schedule_jobs
 
@@ -38,6 +43,12 @@ async def lifespan(app: FastAPI):
     schedule_jobs(scheduler, _send)
     scheduler.start()
     app.state.scheduler = scheduler
+
+    # Publish the command menu so it lives in code, not just BotFather.
+    try:
+        await set_my_commands(bot)
+    except Exception:  # noqa: BLE001 — non-fatal; menu is cosmetic
+        log.warning("could not set bot commands", exc_info=True)
 
     # Telegram long polling as a background task.
     polling = asyncio.create_task(dp.start_polling(bot, handle_signals=False))
