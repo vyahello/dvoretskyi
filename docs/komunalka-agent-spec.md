@@ -79,13 +79,13 @@ and the iOS app are just two channels for the same payment).
 
 | Provider | Category | mono «Комуналка»? | Logging |
 |---|---|---|---|
-| Холодна вода (Львівводоканал) | water | ✅ | auto (webhook) |
+| Холодна вода | water | ✅ | auto (webhook) |
 | Електроенергія (ЛЕЗ) | electricity | ✅ | auto |
 | Газ (постачання) | gas | ✅ | auto |
 | Газ (доставлення) | gas | ✅ | auto |
 | Мобільний | mobile | ➖ separate "Поповнення мобільного", still hits webhook | auto (operator match pattern) |
-| Інтернет (Колумбус, cabinet.gigabit.te.ua) | internet | ❌ | semi-auto* / manual |
-| Кварплата (ДАХ ОСББ) | housing | ❌ | semi-auto* / manual |
+| Інтернет (Gigabit+) | internet | ❌ | semi-auto* / manual |
+| Кварплата (ДАХ) | housing | ❌ | semi-auto* / manual |
 
 \* **"Manual" only means "not in mono's «Комуналка» list" — not "invisible to the
 webhook".** If paid with the **mono card** (via the provider's app/cabinet/IBAN),
@@ -93,7 +93,7 @@ the transaction still arrives in the webhook with a non-communal `description`.
 Handle these via the unmatched-tx flow below. Truly manual only if paid off-mono
 (Privat / другая card / cash).
 
-- **Колумбус:** fixed monthly amount → trivial to confirm; cabinet balance is
+- **Gigabit+:** fixed monthly amount → trivial to confirm; cabinet balance is
   scrapeable in Phase 2 for full automation; ISP-side card autopay also possible.
 - **ДАХ:** the genuinely sticky one — closed ОСББ app, amount varies month to
   month. Even if the payment is caught, the line-item breakdown needs the receipt.
@@ -112,8 +112,8 @@ Handle these via the unmatched-tx flow below. Truly manual only if paid off-mono
    with the mono card. Through EasyPay/Portmone the `description` becomes "EasyPay",
    breaking recipient categorization.
 6. **Unmatched transactions → categorize-and-learn.** Any webhook tx that matches
-   no provider pattern (e.g. Колумбус/ДАХ paid with the mono card) triggers a
-   one-tap prompt: «Це за щось із комуналки? [Колумбус][ДАХ][Інше][Ні]». On choice,
+   no provider pattern (e.g. Gigabit+/ДАХ paid with the mono card) triggers a
+   one-tap prompt: «Це за щось із комуналки? [Gigabit+][ДАХ][Інше][Ні]». On choice,
    store the new `description → provider` mapping so the next one auto-logs. This
    dissolves the "manual" category down to a single tap at first payment.
 7. **"Unpaid this month"** = providers whose `due_day` is in the current cycle with
@@ -129,7 +129,7 @@ Handle these via the unmatched-tx flow below. Truly manual only if paid off-mono
 - **Tools (function-calling):**
   - `get_unpaid(period)` — from L1 logs + schedule
   - `get_stats(period, breakdown)` — numbers + chart
-  - `log_payment_manual(provider, amount)` — for off-mono payments (ДАХ, Колумбус)
+  - `log_payment_manual(provider, amount)` — for off-mono payments (ДАХ, Gigabit+)
   - `submit_meter_reading(provider, value, photo)` — L2 (Phase 2)
   - `get_provider_balance(provider)` — L2 (Phase 2)
   - `set_reminder / snooze_reminder`
@@ -178,7 +178,7 @@ adult. Wit is seasoning, never the meal.
 | Reminder (near deadline) | `Світло — останній день. Далі нарахують по-своєму, а ми цього не любимо. Платимо?` |
 | Meter nudge (gas ≤5th) | `До 5-го — показники газу. Кинь фото лічильника, зчитаю й перевірю, чи не приписав ти зайвий куб.` |
 | Stats | `Травень — 3 920 ₴. Газ з'їв 41% і вкотре претендує на корону. 📊 скинути графіком?` |
-| Unmatched tx | `Прилетіло 250 ₴ — не з мого списку. Це що? [Колумбус] [ДАХ] [Інше] [Не комуналка]` |
+| Unmatched tx | `Прилетіло 250 ₴ — не з мого списку. Це що? [Gigabit+] [ДАХ] [Інше] [Не комуналка]` |
 | "Do I need to pay?" | `Відкрите: вода (≈180 ₴) і ДАХ (суму не знаю — вони щоразу імпровізують). Решта закрита.` |
 | ДАХ (variable amount) | `ДАХ традиційно плаває, тому не вгадую. Скільки вийшло — або кинь скрін квитанції, зчитаю.` |
 | Nothing due | `Усе оплачено, показники здані. Насолоджуйся рідкісним станом, коли державі ти нічого не винен.` |
@@ -257,7 +257,7 @@ Daily APScheduler job:
 
 ## 9. Open questions (resolve in discovery, before implementation)
 
-1. **Payment method for Колумбус & ДАХ:** mono card (→ webhook-visible, caught by
+1. **Payment method for Gigabit+ & ДАХ:** mono card (→ webhook-visible, caught by
    unmatched-tx flow) or off-mono (→ truly manual, scheduled-reminder prompt)?
 2. **Capture real mono `description` strings** per provider from live transactions
    to build the match map (one small payment to each, read the webhook payload).
