@@ -1,0 +1,13 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.env
+*.db
+*.sqlite
+*.sqlite3
+/charts/
+.idea/
+.DS_Store
