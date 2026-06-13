@@ -137,10 +137,20 @@ async def cmd_help(message: Message) -> None:
 
 @router.message(F.text)
 async def on_text(message: Message) -> None:
-    async with session_scope() as session:
-        reply = await agent_dispatcher.handle_message(
-            message.text or "", session, get_provider()
+    try:
+        async with session_scope() as session:
+            reply = await agent_dispatcher.handle_message(
+                message.text or "", session, get_provider()
+            )
+    except Exception:
+        # Anything from context-building, the LLM path, or the DB lands here.
+        # Log the traceback (otherwise it's swallowed → silent Telegram) and still
+        # reply, so the user never faces dead air.
+        log.exception("on_text failed for message %r", message.text)
+        await message.answer(
+            "Щось у моїх паперах заклинило — спробуйте ще раз за мить."
         )
+        return
     await message.answer(reply.text or "…")
     if reply.chart_path:
         await message.answer_photo(FSInputFile(reply.chart_path))

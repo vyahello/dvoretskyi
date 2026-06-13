@@ -4,6 +4,7 @@ import os
 from decimal import Decimal
 
 from komunalka import clock
+from komunalka.bot import app as bot_app
 from komunalka.bot.app import (
     _format_stats,
     _format_unpaid,
@@ -11,6 +12,7 @@ from komunalka.bot.app import (
     cmd_start,
     cmd_stats,
     cmd_unpaid,
+    on_text,
 )
 from komunalka.db.models import Payment, PaymentSource
 
@@ -118,3 +120,18 @@ async def test_cmd_stats_empty_sends_text(engine, providers):
 def test_format_stats_empty_unit():
     out = _format_stats({"period": "2026-06", "total": "0", "items": []})
     assert "порожньо" in out
+
+
+# --- free-text error path: never leave the user with silence ----------------
+
+
+async def test_on_text_replies_on_error(engine, monkeypatch):
+    async def boom(*a, **k):
+        raise RuntimeError("kaboom")
+
+    # Force a failure anywhere in the agent path (DB/context/LLM all funnel here).
+    monkeypatch.setattr(bot_app.agent_dispatcher, "handle_message", boom)
+
+    msg = FakeMessage(text="що треба заплатити?")
+    await on_text(msg)  # must not raise
+    assert msg.answers and "заклинило" in msg.answers[0]
