@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import httpx
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from komunalka.config import get_settings
@@ -69,21 +69,25 @@ async def test_non_candidate_ignored(session, providers):
 # --- HTTP route: secret + GET validation ----------------------------------
 
 
-def _client() -> TestClient:
+def _asgi_client() -> httpx.AsyncClient:
+    """Drive the ASGI app directly via httpx — no starlette.testclient (httpx2 dep)."""
     app = FastAPI()
     app.include_router(router)
     app.state.notifier = None
-    return TestClient(app)
+    transport = httpx.ASGITransport(app=app)
+    return httpx.AsyncClient(transport=transport, base_url="http://test")
 
 
-def test_get_validation_secret(engine):
+async def test_get_validation_secret(engine):
     secret = get_settings().mono_webhook_secret
-    client = _client()
-    assert client.get(f"/mono/webhook/{secret}").status_code == 200
-    assert client.get("/mono/webhook/wrong").status_code == 403
+    async with _asgi_client() as client:
+        assert (await client.get(f"/mono/webhook/{secret}")).status_code == 200
+        assert (await client.get("/mono/webhook/wrong")).status_code == 403
 
 
-def test_post_rejects_bad_secret(engine):
-    client = _client()
-    resp = client.post("/mono/webhook/wrong", json={"type": "StatementItem", "data": {}})
-    assert resp.status_code == 403
+async def test_post_rejects_bad_secret(engine):
+    async with _asgi_client() as client:
+        resp = await client.post(
+            "/mono/webhook/wrong", json={"type": "StatementItem", "data": {}}
+        )
+        assert resp.status_code == 403
