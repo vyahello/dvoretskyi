@@ -37,10 +37,10 @@ async def build_context(session: AsyncSession) -> dict:
     unpaid = await tools_mod.get_unpaid(session)
 
     recent_rows = (
-        await session.execute(
-            select(Payment).order_by(Payment.paid_at.desc()).limit(5)
-        )
-    ).scalars().all()
+        (await session.execute(select(Payment).order_by(Payment.paid_at.desc()).limit(5)))
+        .scalars()
+        .all()
+    )
     prov_names = {
         p.id: p.name for p in (await session.execute(select(Provider))).scalars()
     }

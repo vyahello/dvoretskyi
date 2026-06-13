@@ -8,11 +8,14 @@ Amounts are Decimal internally and stringified at the dict boundary.
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from komunalka import clock
 from komunalka.db.models import (
@@ -30,6 +33,7 @@ class ToolError(Exception):
 
 # --- helpers ---------------------------------------------------------------
 
+
 def _cycle_bounds(cycle: str) -> tuple[datetime, datetime]:
     """[start, end) tz-aware bounds for a 'YYYY-MM' cycle, in Kyiv tz."""
     year, month = (int(p) for p in cycle.split("-"))
@@ -43,7 +47,7 @@ def _cycle_bounds(cycle: str) -> tuple[datetime, datetime]:
 
 def _period_bounds(period: str | None) -> tuple[datetime | None, datetime | None]:
     """Resolve a stats period to [start, end) bounds. None ends = open."""
-    if period in (None, "", "all"):
+    if not period or period == "all":
         return None, None
     if len(period) == 4 and period.isdigit():  # "YYYY"
         year = int(period)
@@ -110,6 +114,7 @@ def _parse_until(value: object) -> datetime:
 
 # --- tools -----------------------------------------------------------------
 
+
 async def get_unpaid(session: AsyncSession, cycle: str | None = None) -> dict:
     """Providers with a due_day and no matched payment in the cycle."""
     cycle = cycle or clock.current_cycle()
@@ -117,10 +122,16 @@ async def get_unpaid(session: AsyncSession, cycle: str | None = None) -> dict:
     today = clock.now().day
 
     providers = (
-        await session.execute(
-            select(Provider).where(Provider.due_day.is_not(None)).order_by(Provider.due_day)
+        (
+            await session.execute(
+                select(Provider)
+                .where(Provider.due_day.is_not(None))
+                .order_by(Provider.due_day)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     open_items: list[dict] = []
     for prov in providers:
@@ -132,7 +143,9 @@ async def get_unpaid(session: AsyncSession, cycle: str | None = None) -> dict:
                 "provider": prov.name,
                 "category": prov.category.value,
                 "expected_amount": (
-                    str(prov.expected_amount) if prov.expected_amount is not None else None
+                    str(prov.expected_amount)
+                    if prov.expected_amount is not None
+                    else None
                 ),
                 "due_day": prov.due_day,
                 "days_left": days_left,
@@ -147,17 +160,13 @@ async def get_stats(
 ) -> dict:
     """Total spend + breakdown by provider or by month, with a PNG chart."""
     start, end = _period_bounds(period)
-    conds = [Payment.provider_id.is_not(None)]
+    conds: list[ColumnElement[bool]] = [Payment.provider_id.is_not(None)]
     if start is not None:
         conds.append(Payment.paid_at >= start)
     if end is not None:
         conds.append(Payment.paid_at < end)
 
-    payments = (
-        await session.execute(
-            select(Payment).where(*conds)
-        )
-    ).scalars().all()
+    payments = (await session.execute(select(Payment).where(*conds))).scalars().all()
 
     total = sum((p.amount_uah for p in payments), Decimal("0"))
 
@@ -172,7 +181,7 @@ async def get_stats(
             for prov in (await session.execute(select(Provider))).scalars()
         }
         for p in payments:
-            key = names.get(p.provider_id, "?")
+            key = names.get(p.provider_id, "?") if p.provider_id is not None else "?"
             buckets[key] = buckets.get(key, Decimal("0")) + p.amount_uah
 
     items = [
@@ -184,7 +193,9 @@ async def get_stats(
         for label, amount in sorted(buckets.items(), key=lambda kv: kv[1], reverse=True)
     ]
 
-    chart_path = _render_chart(buckets, period or clock.current_cycle()) if buckets else None
+    chart_path = (
+        _render_chart(buckets, period or clock.current_cycle()) if buckets else None
+    )
 
     return {
         "period": period or clock.current_cycle(),
@@ -211,7 +222,9 @@ def _render_chart(buckets: dict[str, Decimal], title: str) -> str:
     fig.autofmt_xdate(rotation=30)
     fig.tight_layout()
 
-    tmp = tempfile.NamedTemporaryFile(prefix="komunalka_stats_", suffix=".png", delete=False)
+    tmp = tempfile.NamedTemporaryFile(
+        prefix="komunalka_stats_", suffix=".png", delete=False
+    )
     fig.savefig(tmp.name, dpi=120)
     plt.close(fig)
     return tmp.name
@@ -247,9 +260,7 @@ async def categorize_payment(
 ) -> dict:
     """Assign an uncategorized webhook payment to a provider and learn its pattern."""
     payment = (
-        await session.execute(
-            select(Payment).where(Payment.mono_tx_id == mono_tx_id)
-        )
+        await session.execute(select(Payment).where(Payment.mono_tx_id == mono_tx_id))
     ).scalar_one_or_none()
     if payment is None:
         raise ToolError(f"Платіж не знайдено: {mono_tx_id}")
@@ -302,6 +313,7 @@ async def snooze_reminder(
 
 # --- Phase-2 stubs (signatures only) ---------------------------------------
 
+
 async def submit_meter_reading(
     session: AsyncSession, provider_name: str, value: object, photo: object = None
 ) -> dict:
@@ -312,7 +324,9 @@ async def get_provider_balance(session: AsyncSession, provider_name: str) -> dic
     raise NotImplementedError("Provider-side balance reads are Phase 2.")
 
 
-TOOLS = {
+Tool = Callable[..., Awaitable[dict[str, Any]]]
+
+TOOLS: dict[str, Tool] = {
     "get_unpaid": get_unpaid,
     "get_stats": get_stats,
     "log_payment_manual": log_payment_manual,

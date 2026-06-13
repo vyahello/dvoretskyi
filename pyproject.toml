@@ -22,6 +22,8 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "ruff>=0.15",
+    "mypy>=1.13",
 ]
 
 [project.scripts]
@@ -39,3 +41,25 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
 filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 90
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# pycodestyle(E,W), pyflakes(F), isort(I), pyupgrade(UP), flake8-bugbear(B)
+select = ["E", "W", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# persona.py is the Ukrainian system prompt — long prose lines are intentional.
+"src/komunalka/agent/persona.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src"]
+ignore_missing_imports = true   # aiogram/apscheduler/etc. ship partial or no stubs
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true

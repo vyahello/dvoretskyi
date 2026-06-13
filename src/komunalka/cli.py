@@ -1,7 +1,7 @@
 """Admin CLI: seed providers, learn patterns, register the mono webhook.
 
 Usage:
-  komunalka init-db                       # create tables (dev convenience; prefer alembic)
+  komunalka init-db                       # create tables (dev; prefer alembic)
   komunalka seed-providers                # seed the 6 providers (idempotent)
   komunalka learn-pattern "<provider>" "<substr>"
   komunalka register-mono-webhook [--dry-run]
@@ -28,18 +28,54 @@ from komunalka.mono import client
 # The 6 providers (spec §3a, prompt §Seed data). Patterns are TODO placeholders —
 # real mono `description` strings are captured live and added via learn-pattern/bot.
 SEED_PROVIDERS = [
-    dict(name="Холодна вода", category=Category.water, pay_channel=PayChannel.mono_communal,
-         auto_logged=True, due_day=20, expected_amount=None),
-    dict(name="Електроенергія (ЛЕЗ)", category=Category.electricity, pay_channel=PayChannel.mono_communal,
-         auto_logged=True, due_day=20, expected_amount=None),
-    dict(name="Газ (постачання)", category=Category.gas, pay_channel=PayChannel.mono_communal,
-         auto_logged=True, due_day=20, expected_amount=None),
-    dict(name="Газ (доставлення)", category=Category.gas, pay_channel=PayChannel.mono_communal,
-         auto_logged=True, due_day=20, expected_amount=None),
-    dict(name="Інтернет (Колумбус)", category=Category.internet, pay_channel=PayChannel.mono_card,
-         auto_logged=False, due_day=20, expected_amount=None),
-    dict(name="Кварплата (ДАХ)", category=Category.housing, pay_channel=PayChannel.mono_card,
-         auto_logged=False, due_day=20, expected_amount=None),
+    dict(
+        name="Холодна вода",
+        category=Category.water,
+        pay_channel=PayChannel.mono_communal,
+        auto_logged=True,
+        due_day=20,
+        expected_amount=None,
+    ),
+    dict(
+        name="Електроенергія (ЛЕЗ)",
+        category=Category.electricity,
+        pay_channel=PayChannel.mono_communal,
+        auto_logged=True,
+        due_day=20,
+        expected_amount=None,
+    ),
+    dict(
+        name="Газ (постачання)",
+        category=Category.gas,
+        pay_channel=PayChannel.mono_communal,
+        auto_logged=True,
+        due_day=20,
+        expected_amount=None,
+    ),
+    dict(
+        name="Газ (доставлення)",
+        category=Category.gas,
+        pay_channel=PayChannel.mono_communal,
+        auto_logged=True,
+        due_day=20,
+        expected_amount=None,
+    ),
+    dict(
+        name="Інтернет (Колумбус)",
+        category=Category.internet,
+        pay_channel=PayChannel.mono_card,
+        auto_logged=False,
+        due_day=20,
+        expected_amount=None,
+    ),
+    dict(
+        name="Кварплата (ДАХ)",
+        category=Category.housing,
+        pay_channel=PayChannel.mono_card,
+        auto_logged=False,
+        due_day=20,
+        expected_amount=None,
+    ),
 ]
 
 
@@ -55,7 +91,9 @@ async def _seed_providers() -> None:
     async with session_scope() as session:
         for spec in SEED_PROVIDERS:
             exists = (
-                await session.execute(select(Provider).where(Provider.name == spec["name"]))
+                await session.execute(
+                    select(Provider).where(Provider.name == spec["name"])
+                )
             ).scalar_one_or_none()
             if exists is not None:
                 continue
@@ -70,7 +108,10 @@ async def _seed_providers() -> None:
                 )
             )
             created += 1
-    print(f"Seeded {created} new provider(s); {len(SEED_PROVIDERS) - created} already present.")
+    print(
+        f"Seeded {created} new provider(s); "
+        f"{len(SEED_PROVIDERS) - created} already present."
+    )
 
 
 async def _learn_pattern(provider_name: str, pattern: str) -> None:
@@ -93,7 +134,9 @@ async def _learn_pattern(provider_name: str, pattern: str) -> None:
             print("Pattern already present.")
             return
         session.add(
-            ProviderPattern(provider_id=prov.id, pattern=token, source=PatternSource.learned)
+            ProviderPattern(
+                provider_id=prov.id, pattern=token, source=PatternSource.learned
+            )
         )
     print(f"Learned pattern {token!r} → {provider_name}.")
 
@@ -118,8 +161,12 @@ def main(argv: list[str] | None = None) -> None:
     lp.add_argument("provider")
     lp.add_argument("pattern")
 
-    rw = sub.add_parser("register-mono-webhook", help="register the webhook URL with mono")
-    rw.add_argument("--dry-run", action="store_true", help="print the request, don't send")
+    rw = sub.add_parser(
+        "register-mono-webhook", help="register the webhook URL with mono"
+    )
+    rw.add_argument(
+        "--dry-run", action="store_true", help="print the request, don't send"
+    )
 
     args = parser.parse_args(argv)
 

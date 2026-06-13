@@ -19,9 +19,7 @@ from komunalka.config import get_settings
 
 log = logging.getLogger(__name__)
 
-_SAFE_FALLBACK = (
-    "Щось пішло не так із моїм мисленнєвим апаратом. Спробуй ще раз за мить."
-)
+_SAFE_FALLBACK = "Щось пішло не так із моїм мисленнєвим апаратом. Спробуй ще раз за мить."
 
 
 @dataclass
@@ -111,7 +109,7 @@ class ClaudeCodeProvider(LLMProvider):
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(prompt.encode("utf-8")), timeout=self.timeout
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             log.warning("claude invocation timed out after %ss", self.timeout)
             return None
         except (FileNotFoundError, OSError) as exc:
@@ -119,7 +117,11 @@ class ClaudeCodeProvider(LLMProvider):
             return None
 
         if proc.returncode != 0:
-            log.warning("claude exited %s: %s", proc.returncode, stderr.decode("utf-8", "replace")[:500])
+            log.warning(
+                "claude exited %s: %s",
+                proc.returncode,
+                stderr.decode("utf-8", "replace")[:500],
+            )
             return None
 
         try:
@@ -146,7 +148,7 @@ class ClaudeCodeProvider(LLMProvider):
 
 
 class AnthropicAPIProvider(LLMProvider):
-    """Drop-in alternative using the Anthropic API directly. Implemented in a later phase."""
+    """Drop-in Anthropic API alternative. Implemented in a later phase."""
 
     async def decide(self, user_text: str, context: dict) -> Decision:
         raise NotImplementedError(

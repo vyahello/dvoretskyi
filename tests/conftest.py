@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -57,22 +56,53 @@ async def session(engine) -> AsyncSession:
 async def providers(session) -> dict[str, Provider]:
     """Seed a small provider set with real (test) match patterns."""
     specs = [
-        ("Газ (постачання)", Category.gas, PayChannel.mono_communal, True, 15, None, ["naftogaz"]),
-        ("Холодна вода", Category.water, PayChannel.mono_communal, True, 20, Decimal("180.00"), ["vodokanal"]),
-        ("Інтернет (Колумбус)", Category.internet, PayChannel.mono_card, False, 10, Decimal("250.00"), []),
+        (
+            "Газ (постачання)",
+            Category.gas,
+            PayChannel.mono_communal,
+            True,
+            15,
+            None,
+            ["naftogaz"],
+        ),
+        (
+            "Холодна вода",
+            Category.water,
+            PayChannel.mono_communal,
+            True,
+            20,
+            Decimal("180.00"),
+            ["vodokanal"],
+        ),
+        (
+            "Інтернет (Колумбус)",
+            Category.internet,
+            PayChannel.mono_card,
+            False,
+            10,
+            Decimal("250.00"),
+            [],
+        ),
         ("Кварплата (ДАХ)", Category.housing, PayChannel.mono_card, False, 25, None, []),
     ]
     out: dict[str, Provider] = {}
     for name, cat, ch, auto, due, expected, patterns in specs:
         prov = Provider(
-            name=name, category=cat, pay_channel=ch, auto_logged=auto,
-            due_day=due, expected_amount=expected, account_number=None,
+            name=name,
+            category=cat,
+            pay_channel=ch,
+            auto_logged=auto,
+            due_day=due,
+            expected_amount=expected,
+            account_number=None,
         )
         session.add(prov)
         await session.flush()
         for pat in patterns:
             session.add(
-                ProviderPattern(provider_id=prov.id, pattern=pat, source=PatternSource.seed)
+                ProviderPattern(
+                    provider_id=prov.id, pattern=pat, source=PatternSource.seed
+                )
             )
         out[name] = prov
     await session.commit()

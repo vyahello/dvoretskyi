@@ -12,12 +12,14 @@ from decimal import Decimal
 from sqlalchemy import (
     Boolean,
     DateTime,
-    Enum as SAEnum,
     ForeignKey,
     Integer,
     Numeric,
     String,
     UniqueConstraint,
+)
+from sqlalchemy import (
+    Enum as SAEnum,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -26,7 +28,7 @@ class Base(DeclarativeBase):
     pass
 
 
-class Category(str, enum.Enum):
+class Category(enum.StrEnum):
     water = "water"
     electricity = "electricity"
     gas = "gas"
@@ -35,23 +37,23 @@ class Category(str, enum.Enum):
     mobile = "mobile"
 
 
-class PayChannel(str, enum.Enum):
+class PayChannel(enum.StrEnum):
     mono_communal = "mono_communal"
     mono_card = "mono_card"
     off_mono = "off_mono"
 
 
-class PatternSource(str, enum.Enum):
+class PatternSource(enum.StrEnum):
     seed = "seed"
     learned = "learned"
 
 
-class PaymentSource(str, enum.Enum):
+class PaymentSource(enum.StrEnum):
     mono_webhook = "mono_webhook"
     manual = "manual"
 
 
-class NudgeKind(str, enum.Enum):
+class NudgeKind(enum.StrEnum):
     payment = "payment"
     meter = "meter"  # scaffolded; inactive in Phase 1
 
@@ -82,12 +84,18 @@ class Provider(Base):
 
 class ProviderPattern(Base):
     __tablename__ = "provider_patterns"
-    __table_args__ = (UniqueConstraint("provider_id", "pattern", name="uq_provider_pattern"),)
+    __table_args__ = (
+        UniqueConstraint("provider_id", "pattern", name="uq_provider_pattern"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    provider_id: Mapped[int] = mapped_column(ForeignKey("providers.id", ondelete="CASCADE"))
+    provider_id: Mapped[int] = mapped_column(
+        ForeignKey("providers.id", ondelete="CASCADE")
+    )
     pattern: Mapped[str] = mapped_column(String(255))
-    source: Mapped[PatternSource] = mapped_column(SAEnum(PatternSource, name="pattern_source"))
+    source: Mapped[PatternSource] = mapped_column(
+        SAEnum(PatternSource, name="pattern_source")
+    )
 
     provider: Mapped[Provider] = relationship(back_populates="patterns")
 
@@ -101,7 +109,9 @@ class Payment(Base):
     )  # null = uncategorized
     amount_uah: Mapped[Decimal] = mapped_column(_Money)
     paid_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    source: Mapped[PaymentSource] = mapped_column(SAEnum(PaymentSource, name="payment_source"))
+    source: Mapped[PaymentSource] = mapped_column(
+        SAEnum(PaymentSource, name="payment_source")
+    )
     raw_description: Mapped[str] = mapped_column(String(512), default="")
     mcc: Mapped[int | None] = mapped_column(Integer, default=None)
     mono_tx_id: Mapped[str | None] = mapped_column(
@@ -115,7 +125,9 @@ class NudgeLog(Base):
     __tablename__ = "nudge_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    provider_id: Mapped[int] = mapped_column(ForeignKey("providers.id", ondelete="CASCADE"))
+    provider_id: Mapped[int] = mapped_column(
+        ForeignKey("providers.id", ondelete="CASCADE")
+    )
     cycle: Mapped[str] = mapped_column(String(7))  # "YYYY-MM"
     kind: Mapped[NudgeKind] = mapped_column(SAEnum(NudgeKind, name="nudge_kind"))
     nudged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

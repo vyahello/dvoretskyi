@@ -21,7 +21,9 @@ async def _count_payments(session) -> int:
 
 
 async def test_known_pattern_auto_logs(session, providers):
-    res = await process_statement_item(session, _item(description="NAFTOGAZ оплата", amount=-48000))
+    res = await process_statement_item(
+        session, _item(description="NAFTOGAZ оплата", amount=-48000)
+    )
     assert res.action is Action.LOGGED
     assert res.provider.name == "Газ (постачання)"
     assert res.payment.amount_uah == __import__("decimal").Decimal("480.00")
@@ -38,7 +40,9 @@ async def test_idempotent_duplicate_ignored(session, providers):
 
 
 async def test_inflow_ignored(session, providers):
-    res = await process_statement_item(session, _item(description="NAFTOGAZ", amount=48000))
+    res = await process_statement_item(
+        session, _item(description="NAFTOGAZ", amount=48000)
+    )
     assert res.action is Action.INFLOW
     assert await _count_payments(session) == 0
 
@@ -46,7 +50,8 @@ async def test_inflow_ignored(session, providers):
 async def test_utility_candidate_unmatched_uncategorized(session, providers):
     # Unmatched description but utility MCC → stored uncategorized for a prompt.
     res = await process_statement_item(
-        session, _item(id="tx-9", description="EASYPAY *Columbus", mcc=4814, amount=-25000)
+        session,
+        _item(id="tx-9", description="EASYPAY *Columbus", mcc=4814, amount=-25000),
     )
     assert res.action is Action.UNCATEGORIZED
     assert res.payment.provider_id is None
@@ -62,6 +67,7 @@ async def test_non_candidate_ignored(session, providers):
 
 
 # --- HTTP route: secret + GET validation ----------------------------------
+
 
 def _client() -> TestClient:
     app = FastAPI()

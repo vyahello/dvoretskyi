@@ -25,12 +25,12 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 
-class Action(str, enum.Enum):
-    LOGGED = "logged"                  # matched a provider, payment recorded
-    UNCATEGORIZED = "uncategorized"    # utility candidate, needs a categorize prompt
-    DUPLICATE = "duplicate"            # mono_tx_id already seen
-    INFLOW = "inflow"                  # top-up/refund, ignored
-    NOT_CANDIDATE = "not_candidate"    # not комуналка (e.g. groceries), ignored
+class Action(enum.StrEnum):
+    LOGGED = "logged"  # matched a provider, payment recorded
+    UNCATEGORIZED = "uncategorized"  # utility candidate, needs a categorize prompt
+    DUPLICATE = "duplicate"  # mono_tx_id already seen
+    INFLOW = "inflow"  # top-up/refund, ignored
+    NOT_CANDIDATE = "not_candidate"  # not комуналка (e.g. groceries), ignored
 
 
 @dataclass
@@ -46,9 +46,7 @@ async def process_statement_item(
     """Idempotent, outflow-only categorize-and-learn for one transaction."""
     # 3. Idempotency.
     existing = (
-        await session.execute(
-            select(Payment).where(Payment.mono_tx_id == item.id)
-        )
+        await session.execute(select(Payment).where(Payment.mono_tx_id == item.id))
     ).scalar_one_or_none()
     if existing is not None:
         return ProcessResult(Action.DUPLICATE, payment=existing, provider=None)

@@ -11,16 +11,16 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
-from aiogram.types import CallbackQuery, FSInputFile, Message, TelegramObject, Update
+from aiogram.types import CallbackQuery, FSInputFile, Message, TelegramObject
 from sqlalchemy import select
 
 from komunalka.agent import dispatcher as agent_dispatcher
 from komunalka.agent.provider import get_provider
 from komunalka.agent.tools import ToolError, categorize_payment, snooze_reminder
+from komunalka.bot import keyboards
 from komunalka.config import get_settings
 from komunalka.db.models import Payment, Provider
 from komunalka.db.session import session_scope
-from komunalka.bot import keyboards
 from komunalka.mono.webhook import Action, Notice
 
 log = logging.getLogger(__name__)
@@ -56,8 +56,19 @@ async def on_text(message: Message) -> None:
         await message.answer_photo(FSInputFile(reply.chart_path))
 
 
+async def _edit(callback: CallbackQuery, text: str) -> None:
+    """Edit the originating message if it's still accessible; else send a fresh one."""
+    if isinstance(callback.message, Message):
+        await callback.message.edit_text(text)
+    elif callback.bot is not None and callback.message is not None:
+        await callback.bot.send_message(callback.message.chat.id, text)
+
+
 @router.callback_query(F.data.startswith("c:"))
 async def on_categorize(callback: CallbackQuery) -> None:
+    if not callback.data:
+        await callback.answer()
+        return
     _, payment_id_s, choice = callback.data.split(":", 2)
     payment_id = int(payment_id_s)
 
@@ -76,14 +87,20 @@ async def on_categorize(callback: CallbackQuery) -> None:
                 await callback.answer("Не вдалося.")
                 return
             result = await categorize_payment(session, payment.mono_tx_id, provider.name)
-            text = f"✅ {result['provider']} — {result['amount_uah']} ₴, записав і запам'ятав."
+            text = (
+                f"✅ {result['provider']} — {result['amount_uah']} ₴, "
+                "записав і запам'ятав."
+            )
 
-    await callback.message.edit_text(text)
+    await _edit(callback, text)
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("s:"))
 async def on_snooze(callback: CallbackQuery) -> None:
+    if not callback.data:
+        await callback.answer()
+        return
     _, provider_id_s, days_s = callback.data.split(":", 2)
     async with session_scope() as session:
         provider = await session.get(Provider, int(provider_id_s))
@@ -95,8 +112,8 @@ async def on_snooze(callback: CallbackQuery) -> None:
         except ToolError as exc:
             await callback.answer(str(exc))
             return
-    await callback.message.edit_text(
-        f"Відклав нагадування по «{result['provider']}». Повернуся пізніше."
+    await _edit(
+        callback, f"Відклав нагадування по «{result['provider']}». Повернуся пізніше."
     )
     await callback.answer()
 
@@ -115,6 +132,7 @@ def build_bot() -> Bot:
 
 # --- webhook → Telegram notifier ------------------------------------------
 
+
 def make_notifier(bot: Bot) -> Callable[[Notice], Awaitable[None]]:
     """An async callable the mono webhook uses to push confirmations/prompts."""
     settings = get_settings()
@@ -126,11 +144,13 @@ def make_notifier(bot: Bot) -> Callable[[Notice], Awaitable[None]]:
                 chat_id,
                 f"✅ {notice.provider_name} — {notice.amount_uah} ₴, записав.",
             )
-        elif notice.action is Action.UNCATEGORIZED:
+        elif notice.action is Action.UNCATEGORIZED and notice.payment_id is not None:
             async with session_scope() as session:
                 providers = (
-                    await session.execute(select(Provider).order_by(Provider.id))
-                ).scalars().all()
+                    (await session.execute(select(Provider).order_by(Provider.id)))
+                    .scalars()
+                    .all()
+                )
             kb = keyboards.categorize_keyboard(notice.payment_id, providers)
             await bot.send_message(
                 chat_id,

@@ -26,11 +26,7 @@ class WebhookRequest:
         if "X-Token" in safe_headers:
             tok = safe_headers["X-Token"]
             safe_headers["X-Token"] = (tok[:4] + "…") if tok else "(empty)"
-        return (
-            f"{self.method} {self.url}\n"
-            f"headers={safe_headers}\n"
-            f"json={self.json}"
-        )
+        return f"{self.method} {self.url}\nheaders={safe_headers}\njson={self.json}"
 
 
 def build_webhook_request(public_base_url: str | None = None) -> WebhookRequest:

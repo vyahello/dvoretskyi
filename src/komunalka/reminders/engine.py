@@ -80,14 +80,16 @@ async def compute_pending_nudges(
     today = now.day
 
     providers = (
-        await session.execute(
-            select(Provider).where(Provider.due_day.is_not(None))
-        )
-    ).scalars().all()
+        (await session.execute(select(Provider).where(Provider.due_day.is_not(None))))
+        .scalars()
+        .all()
+    )
 
     pending: list[PendingNudge] = []
     for prov in providers:
         due = prov.due_day
+        if due is None:  # filtered in SQL, but keep the type checker honest
+            continue
         # Inside the nudge window: due_day-3 … due_day.
         if not (due - NUDGE_WINDOW_DAYS <= today <= due):
             continue
@@ -105,7 +107,10 @@ async def compute_pending_nudges(
         ).scalar_one_or_none()
 
         if nudge is not None:
-            if nudge.snoozed_until is not None and clock.ensure_aware(nudge.snoozed_until) > now:
+            if (
+                nudge.snoozed_until is not None
+                and clock.ensure_aware(nudge.snoozed_until) > now
+            ):
                 continue  # snoozed
             nudged_day = clock.ensure_aware(nudge.nudged_at).astimezone(clock.KYIV).date()
             if nudged_day == now.astimezone(clock.KYIV).date():
@@ -117,7 +122,9 @@ async def compute_pending_nudges(
                 provider_name=prov.name,
                 due_day=due,
                 expected_amount=(
-                    str(prov.expected_amount) if prov.expected_amount is not None else None
+                    str(prov.expected_amount)
+                    if prov.expected_amount is not None
+                    else None
                 ),
                 near_deadline=today >= due - 1,
             )
@@ -163,6 +170,7 @@ async def run_payment_nudges(
 
 # --- meter nudges: scaffolded, inactive in Phase 1 ------------------------
 
+
 async def run_meter_nudges(
     send: Callable[[int, str], Awaitable[None]], now: datetime | None = None
 ) -> list[PendingNudge]:
@@ -172,13 +180,14 @@ async def run_meter_nudges(
 
 # --- scheduler wiring ------------------------------------------------------
 
+
 def build_scheduler() -> AsyncIOScheduler:
     """AsyncIO scheduler with a Redis jobstore, falling back to memory if unreachable."""
     settings = get_settings()
     scheduler = AsyncIOScheduler(timezone=settings.tz)
     try:
-        from redis import Redis
         from apscheduler.jobstores.redis import RedisJobStore
+        from redis import Redis
 
         client = Redis.from_url(settings.redis_url)
         client.ping()  # probe connectivity so we can fall back cleanly

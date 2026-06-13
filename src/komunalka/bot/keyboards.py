@@ -8,17 +8,23 @@ Callback grammar:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from komunalka.db.models import Provider
 
 
-def categorize_keyboard(payment_id: int, providers: list[Provider]) -> InlineKeyboardMarkup:
+def categorize_keyboard(
+    payment_id: int, providers: Sequence[Provider]
+) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
     for prov in providers:
         row.append(
-            InlineKeyboardButton(text=prov.name, callback_data=f"c:{payment_id}:{prov.id}")
+            InlineKeyboardButton(
+                text=prov.name, callback_data=f"c:{payment_id}:{prov.id}"
+            )
         )
         if len(row) == 2:
             rows.append(row)

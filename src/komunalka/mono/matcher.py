@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from komunalka.config import get_settings
-from komunalka.db.models import Provider, ProviderPattern, PatternSource
+from komunalka.db.models import PatternSource, Provider, ProviderPattern
 
 # Keyword signals that an unmatched tx is probably комуналка even when no MCC hint.
 UTILITY_KEYWORDS: tuple[str, ...] = (
@@ -44,10 +44,10 @@ async def match(session: AsyncSession, description: str) -> Provider | None:
     """
     desc = (description or "").casefold()
     rows = (
-        await session.execute(
-            select(ProviderPattern).order_by(ProviderPattern.id)
-        )
-    ).scalars().all()
+        (await session.execute(select(ProviderPattern).order_by(ProviderPattern.id)))
+        .scalars()
+        .all()
+    )
 
     best: ProviderPattern | None = None
     for row in rows:
@@ -84,7 +84,7 @@ def stable_token(description: str) -> str:
 async def learn_pattern(
     session: AsyncSession, provider_id: int, raw_description: str
 ) -> ProviderPattern | None:
-    """Insert a learned pattern from a tx description so the next identical payee auto-logs.
+    """Learn a pattern from a tx description so the next identical payee auto-logs.
 
     Idempotent: skips if an identical (provider, pattern) already exists. Returns the
     new pattern, or None if nothing usable / already present.

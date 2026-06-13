@@ -33,8 +33,12 @@ async def test_paid_suppresses_nudge(session, providers):
     gas = providers["Газ (постачання)"]
     session.add(
         Payment(
-            provider_id=gas.id, amount_uah=Decimal("480.00"), paid_at=NOW,
-            source=PaymentSource.mono_webhook, raw_description="", mono_tx_id="p1",
+            provider_id=gas.id,
+            amount_uah=Decimal("480.00"),
+            paid_at=NOW,
+            source=PaymentSource.mono_webhook,
+            raw_description="",
+            mono_tx_id="p1",
         )
     )
     await session.commit()
@@ -46,8 +50,11 @@ async def test_snoozed_suppresses_nudge(session, providers):
     gas = providers["Газ (постачання)"]
     session.add(
         NudgeLog(
-            provider_id=gas.id, cycle=_cycle(), kind=NudgeKind.payment,
-            nudged_at=NOW - timedelta(days=2), snoozed_until=NOW + timedelta(days=2),
+            provider_id=gas.id,
+            cycle=_cycle(),
+            kind=NudgeKind.payment,
+            nudged_at=NOW - timedelta(days=2),
+            snoozed_until=NOW + timedelta(days=2),
         )
     )
     await session.commit()
@@ -59,8 +66,11 @@ async def test_already_nudged_today_suppressed(session, providers):
     gas = providers["Газ (постачання)"]
     session.add(
         NudgeLog(
-            provider_id=gas.id, cycle=_cycle(), kind=NudgeKind.payment,
-            nudged_at=NOW - timedelta(hours=2), snoozed_until=None,
+            provider_id=gas.id,
+            cycle=_cycle(),
+            kind=NudgeKind.payment,
+            nudged_at=NOW - timedelta(hours=2),
+            snoozed_until=None,
         )
     )
     await session.commit()

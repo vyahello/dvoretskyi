@@ -54,11 +54,13 @@ async def test_get_stats_aggregates_by_provider(session, providers):
     gas = providers["Газ (постачання)"]
     water = providers["Холодна вода"]
     now = clock.now()
-    session.add_all([
-        _payment(gas.id, "480.00", now, tx="s1"),
-        _payment(gas.id, "20.00", now, tx="s2"),
-        _payment(water.id, "180.00", now, tx="s3"),
-    ])
+    session.add_all(
+        [
+            _payment(gas.id, "480.00", now, tx="s1"),
+            _payment(gas.id, "20.00", now, tx="s2"),
+            _payment(water.id, "180.00", now, tx="s3"),
+        ]
+    )
     await session.commit()
 
     res = await tools.get_stats(session, period="all", breakdown="provider")
@@ -71,10 +73,12 @@ async def test_get_stats_aggregates_by_provider(session, providers):
 
 async def test_get_stats_breakdown_by_month(session, providers):
     gas = providers["Газ (постачання)"]
-    session.add_all([
-        _payment(gas.id, "100.00", datetime(2026, 1, 5, tzinfo=clock.KYIV), tx="m1"),
-        _payment(gas.id, "200.00", datetime(2026, 2, 5, tzinfo=clock.KYIV), tx="m2"),
-    ])
+    session.add_all(
+        [
+            _payment(gas.id, "100.00", datetime(2026, 1, 5, tzinfo=clock.KYIV), tx="m1"),
+            _payment(gas.id, "200.00", datetime(2026, 2, 5, tzinfo=clock.KYIV), tx="m2"),
+        ]
+    )
     await session.commit()
     res = await tools.get_stats(session, period="2026", breakdown="month")
     labels = {i["label"] for i in res["items"]}
@@ -101,7 +105,9 @@ async def test_log_payment_manual_bad_amount(session, providers):
 
 async def test_categorize_payment_learns_pattern(session, providers):
     # Uncategorized webhook payment lands first.
-    session.add(_payment(None, "250.00", clock.now(), tx="uc1", desc="EASYPAY columbus net"))
+    session.add(
+        _payment(None, "250.00", clock.now(), tx="uc1", desc="EASYPAY columbus net")
+    )
     await session.commit()
 
     res = await tools.categorize_payment(session, "uc1", "Інтернет (Колумбус)")
