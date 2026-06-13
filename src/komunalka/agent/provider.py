@@ -14,7 +14,7 @@ import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
-from komunalka.agent.persona import PLATON_SYSTEM_PROMPT, TOOL_CATALOG
+from komunalka.agent.persona import BUTLER_SYSTEM_PROMPT, TOOL_CATALOG
 from komunalka.config import get_settings
 
 log = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ class ClaudeCodeProvider(LLMProvider):
             "--allowed-tools",
             "",
             "--append-system-prompt",
-            PLATON_SYSTEM_PROMPT,
+            BUTLER_SYSTEM_PROMPT,
         ]
         try:
             proc = await asyncio.create_subprocess_exec(

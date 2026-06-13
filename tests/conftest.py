@@ -75,7 +75,7 @@ async def providers(session) -> dict[str, Provider]:
             ["vodokanal"],
         ),
         (
-            "Інтернет (Колумбус)",
+            "Інтернет (Gigabit+)",
             Category.internet,
             PayChannel.mono_card,
             False,

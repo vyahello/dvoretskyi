@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Komunalka — Платон", lifespan=lifespan)
+    app = FastAPI(title="Komunalka — Комунальний Дворецький", lifespan=lifespan)
     app.include_router(mono_router)
 
     @app.get("/health")

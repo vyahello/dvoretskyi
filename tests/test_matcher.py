@@ -28,23 +28,23 @@ def test_is_utility_candidate_by_keyword():
 
 
 def test_stable_token_picks_distinctive_word():
-    assert matcher.stable_token("COLUMBUS payment 250.00 12.06") == "columbus"
+    assert matcher.stable_token("GIGABITPLUS payment 250.00 12.06") == "gigabitplus"
 
 
 async def test_learn_then_match(session, providers):
-    columbus = providers["Інтернет (Колумбус)"]
-    learned = await matcher.learn_pattern(session, columbus.id, "COLUMBUS internet 250")
+    gigabit = providers["Інтернет (Gigabit+)"]
+    learned = await matcher.learn_pattern(session, gigabit.id, "GIGABITPLUS internet 250")
     assert learned is not None
     await session.commit()
 
-    prov = await matcher.match(session, "COLUMBUS internet 250.00 наступний місяць")
-    assert prov is not None and prov.name == "Інтернет (Колумбус)"
+    prov = await matcher.match(session, "GIGABITPLUS internet 250.00 наступний місяць")
+    assert prov is not None and prov.name == "Інтернет (Gigabit+)"
 
 
 async def test_learn_pattern_idempotent(session, providers):
-    columbus = providers["Інтернет (Колумбус)"]
-    first = await matcher.learn_pattern(session, columbus.id, "columbus 1")
+    gigabit = providers["Інтернет (Gigabit+)"]
+    first = await matcher.learn_pattern(session, gigabit.id, "gigabitplus 1")
     assert first is not None
-    second = await matcher.learn_pattern(session, columbus.id, "columbus 2")
-    # same stable token "columbus" → no duplicate inserted
+    second = await matcher.learn_pattern(session, gigabit.id, "gigabitplus 2")
+    # same stable token "gigabitplus" → no duplicate inserted
     assert second is None

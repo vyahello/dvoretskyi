@@ -51,7 +51,7 @@ async def test_utility_candidate_unmatched_uncategorized(session, providers):
     # Unmatched description but utility MCC → stored uncategorized for a prompt.
     res = await process_statement_item(
         session,
-        _item(id="tx-9", description="EASYPAY *Columbus", mcc=4814, amount=-25000),
+        _item(id="tx-9", description="EASYPAY *Gigabit", mcc=4814, amount=-25000),
     )
     assert res.action is Action.UNCATEGORIZED
     assert res.payment.provider_id is None

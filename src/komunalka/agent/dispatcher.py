@@ -1,4 +1,4 @@
-"""Free-text → LLM decision → deterministic tool routing → Платон's reply.
+"""Free-text → LLM decision → deterministic tool routing → the butler's reply.
 
 Tool routing is deterministic (Python decides whether/which TOOL runs based on the
 LLM's structured choice). The persona governs only `message`; we never let the model

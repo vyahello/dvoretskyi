@@ -61,7 +61,7 @@ SEED_PROVIDERS = [
         expected_amount=None,
     ),
     dict(
-        name="Інтернет (Колумбус)",
+        name="Інтернет (Gigabit+)",
         category=Category.internet,
         pay_channel=PayChannel.mono_card,
         auto_logged=False,

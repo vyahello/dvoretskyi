@@ -106,18 +106,18 @@ async def test_log_payment_manual_bad_amount(session, providers):
 async def test_categorize_payment_learns_pattern(session, providers):
     # Uncategorized webhook payment lands first.
     session.add(
-        _payment(None, "250.00", clock.now(), tx="uc1", desc="EASYPAY columbus net")
+        _payment(None, "250.00", clock.now(), tx="uc1", desc="EASYPAY gigabitplus net")
     )
     await session.commit()
 
-    res = await tools.categorize_payment(session, "uc1", "Інтернет (Колумбус)")
-    assert res["ok"] and res["provider"] == "Інтернет (Колумбус)"
-    assert res["learned_pattern"] == "columbus"  # longest letter-run wins
+    res = await tools.categorize_payment(session, "uc1", "Інтернет (Gigabit+)")
+    assert res["ok"] and res["provider"] == "Інтернет (Gigabit+)"
+    assert res["learned_pattern"] == "gigabitplus"  # longest letter-run wins
     await session.commit()
 
     # Next identical payee now auto-matches.
-    prov = await matcher.match(session, "EASYPAY columbus 250 знову")
-    assert prov is not None and prov.name == "Інтернет (Колумбус)"
+    prov = await matcher.match(session, "EASYPAY gigabitplus 250 знову")
+    assert prov is not None and prov.name == "Інтернет (Gigabit+)"
 
 
 async def test_snooze_reminder(session, providers):

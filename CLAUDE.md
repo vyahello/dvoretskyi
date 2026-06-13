@@ -1,6 +1,7 @@
-# CLAUDE.md — Komunalka / Платон (operational notes)
+# CLAUDE.md — Komunalka / Комунальний Дворецький (operational notes)
 
-Single-user Telegram utility butler ("Платон"). **Phase 1 scope only:** money + stats
+Single-user Telegram utility butler ("Комунальний Дворецький" — no personal name).
+**Phase 1 scope only:** money + stats
 + reminders + conversational agent, sourced from the monobank webhook. No provider
 scraping, no meter OCR/submission, no payment initiation. See `docs/` for the spec
 and the Phase 1 build prompt.
@@ -18,7 +19,7 @@ via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
 - `db/` — SQLAlchemy 2.0 async models + session (`session_scope()`).
 - `mono/` — `schemas` (StatementItem), `matcher` (match/candidate/learn), `webhook`
   (`process_statement_item` is bot-agnostic + the FastAPI router), `client` (register).
-- `agent/` — `persona` (PLATON_SYSTEM_PROMPT), `provider` (LLMProvider ABC +
+- `agent/` — `persona` (BUTLER_SYSTEM_PROMPT), `provider` (LLMProvider ABC +
   ClaudeCodeProvider + AnthropicAPIProvider stub), `tools` (TOOLS registry),
   `dispatcher` (handle_message: deterministic tool routing).
 - `bot/` — aiogram 3 bot, allowlist middleware, text + callback handlers, keyboards,
@@ -78,6 +79,11 @@ reminder logic (no time-freezing dependency). Formatting/linting is **Ruff**
 
 ## Conventions
 - Conventional commits, one logical change each.
+- Brand/persona: **Комунальний Дворецький** — a butler with **no personal name**
+  (never invent one). System prompt = `agent/persona.py::BUTLER_SYSTEM_PROMPT`.
+- The 6 seed providers (see `cli.py::SEED_PROVIDERS`): Холодна вода,
+  Електроенергія (ЛЕЗ), Газ (постачання), Газ (доставлення), **Інтернет (Gigabit+)**,
+  Кварплата (ДАХ).
 - Ukrainian for all user-facing copy; English for code/logs.
 - Tool routing is deterministic in Python; the LLM only picks `{tool,args}` and writes
   the `message`. Never let the model fabricate amounts/balances/"paid" status.
