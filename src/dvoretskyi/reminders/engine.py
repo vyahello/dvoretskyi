@@ -328,26 +328,50 @@ def build_scheduler() -> AsyncIOScheduler:
     return scheduler
 
 
+# Module-level notifier so the scheduled jobs stay picklable for the Redis jobstore.
+# A closure over the live Bot (e.g. lifespan's `_send`) cannot be pickled, so we keep
+# the sender here and schedule module-level wrapper jobs that carry no closure args.
+_notify: Callable[[int, str], Awaitable[None]] | None = None
+
+
+def set_notifier(send: Callable[[int, str], Awaitable[None]]) -> None:
+    global _notify
+    _notify = send
+
+
+async def _payment_nudge_job() -> None:
+    if _notify is not None:
+        await run_payment_nudges(_notify)
+
+
+async def _meter_nudge_job() -> None:
+    if _notify is not None:
+        await run_meter_nudges(_notify)
+
+
 def schedule_jobs(
     scheduler: AsyncIOScheduler, send: Callable[[int, str], Awaitable[None]]
 ) -> None:
-    """Register the daily payment-nudge job."""
+    """Register the daily payment + meter nudge jobs.
+
+    Jobs reference module-level coroutines with no args so they pickle cleanly into the
+    Redis jobstore; the Bot sender is held in the module-level notifier (set here).
+    """
+    set_notifier(send)
     scheduler.add_job(
-        run_payment_nudges,
+        _payment_nudge_job,
         trigger="cron",
         hour=10,
         minute=0,
-        args=[send],
         id="payment_nudges",
         replace_existing=True,
         misfire_grace_time=3600,
     )
     scheduler.add_job(
-        run_meter_nudges,
+        _meter_nudge_job,
         trigger="cron",
         hour=9,
         minute=0,
-        args=[send],
         id="meter_nudges",
         replace_existing=True,
         misfire_grace_time=3600,
