@@ -8,9 +8,6 @@ Type=simple
 User=cax
 WorkingDirectory=/home/cax/dvoretskyi
 EnvironmentFile=/home/cax/dvoretskyi/.env
-# Keep ANTHROPIC_API_KEY blank so Claude Code always uses the Max subscription
-# (CLAUDE_CODE_OAUTH_TOKEN) and can never silently fall back to paid API billing.
-Environment="ANTHROPIC_API_KEY="
 ExecStart=/home/cax/dvoretskyi/venv/bin/uvicorn dvoretskyi.app:app --host 127.0.0.1 --port 8100
 Restart=always
 RestartSec=5

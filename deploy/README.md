@@ -35,7 +35,6 @@ pip install -e ".[dev]"
 #    REDIS_URL=redis://127.0.0.1:6800/3      # Redis in Docker, logical DB 3
 #    PUBLIC_BASE_URL=https://dvoretskyi.duckdns.org
 #    TZ=Europe/Kyiv
-#    Do NOT add ANTHROPIC_API_KEY — the systemd unit pins it empty.
 cp .env.example .env && nano .env
 chmod 600 .env
 
