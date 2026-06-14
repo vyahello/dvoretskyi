@@ -1,7 +1,7 @@
-# Claude Code — Phase 1 Implementation Prompt: Komunalka Agent
+# Claude Code — Phase 1 Implementation Prompt: Комунальний Дворецький
 
 > Paste this into a Claude Code session at the repo root. The architecture spec is
-> at `docs/komunalka-agent-spec.md` — **read it first**; this prompt is the build
+> at `docs/dvoretskyi-agent-spec.md` — **read it first**; this prompt is the build
 > order and the hard contracts for Phase 1 only.
 
 ---
@@ -50,7 +50,7 @@ If you find yourself reaching outside this list, stop and ask.
 ## Project structure
 
 ```
-src/komunalka/
+src/dvoretskyi/
   config.py              # pydantic-settings Settings
   app.py                 # FastAPI app; lifespan starts bot polling + scheduler
   cli.py                 # admin CLI: seed-providers, register-mono-webhook (--dry-run)

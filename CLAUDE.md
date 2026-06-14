@@ -1,4 +1,4 @@
-# CLAUDE.md — Komunalka / Комунальний Дворецький (operational notes)
+# CLAUDE.md — Комунальний Дворецький (operational notes)
 
 Single-user Telegram utility butler ("Комунальний Дворецький" — no personal name).
 **Phase 1 (done):** money + stats + reminders + conversational agent from the monobank
@@ -45,8 +45,8 @@ cp .env.example .env                 # fill in tokens; DO NOT add ANTHROPIC_API_
 ## DB / migrations
 ```bash
 alembic upgrade head                 # apply schema (uses DATABASE_URL from settings)
-komunalka init-db                    # dev shortcut: create_all (prefer alembic in prod)
-komunalka seed-providers             # seed the 6 providers (idempotent)
+dvoretskyi init-db                    # dev shortcut: create_all (prefer alembic in prod)
+dvoretskyi seed-providers             # seed the 6 providers (idempotent)
 ```
 Money is `Decimal` only. All datetimes tz-aware Europe/Kyiv. SQLite returns naive
 datetimes on read → normalize with `clock.ensure_aware()` before comparing.
@@ -55,7 +55,7 @@ datetimes on read → normalize with `clock.ensure_aware()` before comparing.
 Seed patterns are TODO placeholders that never match — real mono `description` strings
 are captured live. Add them as you see transactions:
 ```bash
-komunalka learn-pattern "Газ (постачання)" "naftogaz"
+dvoretskyi learn-pattern "Газ (постачання)" "naftogaz"
 ```
 or tap a provider on the bot's categorize prompt (auto-learns the stable token).
 
@@ -77,9 +77,9 @@ zero / spike vs history → `needs_confirm`) → store `MeterReading` → submit
 
 ## Run
 ```bash
-komunalka register-mono-webhook --dry-run   # inspect the request (token masked)
-komunalka register-mono-webhook             # actually register with mono
-uvicorn komunalka.app:app --host 0.0.0.0 --port 8000   # webhook + bot polling + scheduler
+dvoretskyi register-mono-webhook --dry-run   # inspect the request (token masked)
+dvoretskyi register-mono-webhook             # actually register with mono
+uvicorn dvoretskyi.app:app --host 0.0.0.0 --port 8000   # webhook + bot polling + scheduler
 ```
 The mono webhook must be reachable over public HTTPS at
 `${PUBLIC_BASE_URL}/mono/webhook/${MONO_WEBHOOK_SECRET}`.

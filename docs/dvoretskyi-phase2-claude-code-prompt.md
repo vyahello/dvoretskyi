@@ -1,7 +1,7 @@
 # Claude Code — Phase 2 Implementation Prompt: Meter Readings
 
 > Paste into a Claude Code session at the repo root **after Phase 1 is live**.
-> Spec: `docs/komunalka-agent-spec.md` (read §3, §5a, §6, §7 first). This prompt is
+> Spec: `docs/dvoretskyi-agent-spec.md` (read §3, §5a, §6, §7 first). This prompt is
 > the build order and hard contracts for Phase 2.
 
 ---

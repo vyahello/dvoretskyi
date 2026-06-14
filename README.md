@@ -1,4 +1,4 @@
-# Komunalka — Комунальний Дворецький
+# Комунальний Дворецький
 
 A single-user Telegram **utility-butler agent**: it tracks every household utility
 payment from the monobank webhook, answers "what's still unpaid?", builds spend
@@ -22,19 +22,20 @@ headless Claude Code CLI (`claude -p`). Tooling: pytest · Ruff (lint + format) 
 
 ## Quick start
 ```bash
+git clone git@github.com:vyahello/dvoretskyi.git && cd dvoretskyi
 python -m venv venv && source venv/bin/activate
 uv pip install -e ".[dev]"          # or: pip install -e ".[dev]"
 cp .env.example .env                # fill tokens — do NOT add ANTHROPIC_API_KEY
 
 alembic upgrade head                # create schema
-komunalka seed-providers            # seed the 6 providers (idempotent)
+dvoretskyi seed-providers            # seed the 6 providers (idempotent)
 
 # register the mono webhook (inspect first, then send)
-komunalka register-mono-webhook --dry-run
-komunalka register-mono-webhook
+dvoretskyi register-mono-webhook --dry-run
+dvoretskyi register-mono-webhook
 
 # run webhook + Telegram polling + reminder scheduler
-uvicorn komunalka.app:app --host 0.0.0.0 --port 8000
+uvicorn dvoretskyi.app:app --host 0.0.0.0 --port 8000
 ```
 The mono webhook must be reachable over public HTTPS at
 `${PUBLIC_BASE_URL}/mono/webhook/${MONO_WEBHOOK_SECRET}`.
@@ -42,7 +43,7 @@ The mono webhook must be reachable over public HTTPS at
 Teach the matcher real payee strings as you see them (or tap a provider on the bot's
 categorize prompt, which auto-learns):
 ```bash
-komunalka learn-pattern "Газ (постачання)" "naftogaz"
+dvoretskyi learn-pattern "Газ (постачання)" "naftogaz"
 ```
 
 ## Commands
@@ -84,7 +85,7 @@ window logic.
 
 ## Repo map
 ```
-src/komunalka/  config·clock·app(FastAPI lifespan)·cli
+src/dvoretskyi/  config·clock·app(FastAPI lifespan)·cli
   db/   models (SQLAlchemy 2.0) + async session
   mono/ schemas · matcher · webhook · client
   agent/ persona · provider (LLMProvider) · tools · dispatcher

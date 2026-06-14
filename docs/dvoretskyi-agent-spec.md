@@ -1,4 +1,4 @@
-# Komunalka Agent — Architecture & Discovery Spec
+# Комунальний Дворецький — Architecture & Discovery Spec
 
 > Single Telegram bot as the **one entry point** for all household utility
 > obligations: payment tracking, statistics, reminders, meter submissions.
