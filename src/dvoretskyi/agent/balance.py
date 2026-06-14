@@ -55,6 +55,14 @@ def gigabit_pay_link() -> str:
     )
 
 
+def mobile_pay_link() -> str:
+    """Mobile top-up link. There's no balance API for mobile, so this is purely a "pay"
+    link — the operator's Portmone page, with the phone (from mobile_account) substituted
+    if the template uses `{phone}`."""
+    st = get_settings()
+    return st.mobile_pay_url_template.format(phone=st.mobile_account)
+
+
 def _to_decimal(value: object) -> Decimal | None:
     try:
         return Decimal(str(value)).quantize(Decimal("0.01"))

@@ -551,13 +551,31 @@ async def get_meter_history(
 
 
 async def get_provider_balance(session: AsyncSession, provider_name: str) -> dict:
-    """Read a provider-side balance. Implemented for Gigabit+ (cabinet scraper);
-    other providers have no balance source yet."""
+    """Provider balance / top-up link. Gigabit+ → scraped balance + «треба платити?».
+    Mobile → just a top-up link (no balance API). Others → not configured."""
     prov = await _provider_by_name(session, provider_name)
-    if "gigabit" not in prov.name.casefold():
-        raise NotImplementedError(f"Balance source not configured for {prov.name}.")
+    name = prov.name.casefold()
 
-    from dvoretskyi.agent.balance import fetch_gigabit_balance, gigabit_pay_link
+    from dvoretskyi.agent.balance import (
+        fetch_gigabit_balance,
+        gigabit_pay_link,
+        mobile_pay_link,
+    )
+
+    if "мобільн" in name:
+        link = mobile_pay_link()
+        return {
+            "ok": True,
+            "provider": prov.name,
+            "pay_link": link,
+            "pay_label": "💳 Поповнити мобільний",
+            "message": (
+                "Баланс мобільного оператор не показує — але ось куди поповнити:"
+            ),
+        }
+
+    if "gigabit" not in name:
+        raise NotImplementedError(f"Balance source not configured for {prov.name}.")
 
     settings = get_settings()
     bal = await fetch_gigabit_balance()

@@ -6,7 +6,12 @@ import httpx
 import pytest
 
 from dvoretskyi.agent import balance
-from dvoretskyi.agent.balance import Balance, fetch_gigabit_balance, gigabit_pay_link
+from dvoretskyi.agent.balance import (
+    Balance,
+    fetch_gigabit_balance,
+    gigabit_pay_link,
+    mobile_pay_link,
+)
 from dvoretskyi.config import get_settings
 
 _LOGIN_HTML = (
@@ -76,6 +81,33 @@ def test_pay_link_falls_back_without_account(monkeypatch):
     monkeypatch.setattr(st, "gigabit_login", "")
     monkeypatch.setattr(st, "gigabit_account", "")
     assert gigabit_pay_link() == st.gigabit_base_url
+
+
+def test_mobile_pay_link_uses_template(monkeypatch):
+    st = get_settings()
+    monkeypatch.setattr(st, "mobile_account", "0000000000")
+    # default template has no {phone} → returns the operator page as-is
+    assert mobile_pay_link() == "https://www.portmone.com.ua/r3/kyivstar"
+    # a prefilling template substitutes the phone
+    monkeypatch.setattr(st, "mobile_pay_url_template", "https://pay.example/?n={phone}")
+    assert mobile_pay_link() == "https://pay.example/?n=0000000000"
+
+
+async def test_mobile_get_provider_balance_returns_pay_link(session, providers):
+    from dvoretskyi.agent import tools
+    from dvoretskyi.db.models import Category, PayChannel, Provider
+
+    session.add(
+        Provider(
+            name="Мобільний",
+            category=Category.mobile,
+            pay_channel=PayChannel.mono_communal,
+            due_day=20,
+        )
+    )
+    await session.commit()
+    res = await tools.get_provider_balance(session, "Мобільний")
+    assert res["ok"] and res["pay_link"] and res["pay_label"] == "💳 Поповнити мобільний"
 
 
 async def test_missing_credentials_returns_not_ok(monkeypatch):

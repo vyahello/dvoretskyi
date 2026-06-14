@@ -87,6 +87,10 @@ class Settings(BaseSettings):
         "https://www.portmone.com.ua/r3/popovnyty-internet-gigabitplus-lviv"
         "?contract_number_terminal={account}&contract_bill_amount={amount}"
     )
+    # Mobile top-up link. No balance API for mobile — this is just a "pay" link. Default
+    # is the operator's Portmone page (093 = Kyivstar); {phone} (from mobile_account) is
+    # substituted if the template uses it. Replace with a prefilled link if you have one.
+    mobile_pay_url_template: str = "https://www.portmone.com.ua/r3/kyivstar"
 
     # --- misc ---
     tz: str = "Europe/Kyiv"

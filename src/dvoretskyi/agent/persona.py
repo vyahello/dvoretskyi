@@ -62,6 +62,6 @@ TOOL_CATALOG = """\
 - snooze_reminder(provider_name: str, until: "YYYY-MM-DD"|N) — відкласти нагадування.
 - confirm_meter_reading(reading_id: int) — підтвердити сумнівний показник лічильника (далі — передати).
 - get_meter_history(provider_name: str) — останні показники й споживання.
-- get_provider_balance(provider_name: str) — баланс провайдера (наразі лише Інтернет Gigabit+): чи треба поповнювати.
+- get_provider_balance(provider_name: str) — Інтернет (Gigabit+): баланс і чи треба поповнювати; Мобільний: лінк на поповнення.
 Показники лічильника здаються фотографією (газ, вода) — це окремий потік, не через цей JSON.
 """

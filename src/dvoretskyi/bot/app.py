@@ -169,8 +169,11 @@ async def on_text(message: Message) -> None:
         log.exception("on_text failed for message %r", message.text)
         await message.answer("Щось у моїх паперах заклинило — спробуйте ще раз за мить.")
         return
-    pay_link = reply.tool_result.get("pay_link") if reply.tool_result else None
-    markup = keyboards.pay_keyboard(pay_link) if pay_link else None
+    markup = None
+    if reply.tool_result and reply.tool_result.get("pay_link"):
+        markup = keyboards.pay_keyboard(
+            reply.tool_result["pay_link"], label=reply.tool_result.get("pay_label")
+        )
     await message.answer(reply.text or "…", reply_markup=markup)
     if reply.chart_path:
         await message.answer_photo(FSInputFile(reply.chart_path))
