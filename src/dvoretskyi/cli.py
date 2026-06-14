@@ -75,7 +75,7 @@ SEED_PROVIDERS = [
         auto_logged=False,
         due_day=20,
         expected_amount=None,
-        account_number=_settings.gigabit_account or None,  # contract no. from env
+        account_number=_settings.gigabit_login or None,  # contract no. from env
     ),
     dict(
         name="Кварплата (ДАХ)",

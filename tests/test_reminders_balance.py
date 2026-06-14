@@ -104,8 +104,7 @@ async def test_run_balance_nudges_sends_with_pay_link(session, providers, monkey
     from dvoretskyi.config import get_settings
 
     # Pin the contract so the Portmone link is deterministic regardless of ambient .env.
-    monkeypatch.setattr(get_settings(), "gigabit_login", "")
-    monkeypatch.setattr(get_settings(), "gigabit_account", "0000TEST")
+    monkeypatch.setattr(get_settings(), "gigabit_login", "0000TEST")
 
     sent: list[tuple[int, str, str | None]] = []
 

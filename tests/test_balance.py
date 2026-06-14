@@ -68,8 +68,7 @@ async def test_parses_balance_and_topup_date(monkeypatch):
 
 def test_pay_link_injects_contract_and_amount(monkeypatch):
     st = get_settings()
-    monkeypatch.setattr(st, "gigabit_login", "")
-    monkeypatch.setattr(st, "gigabit_account", "0000TEST")
+    monkeypatch.setattr(st, "gigabit_login", "0000TEST")
     link = gigabit_pay_link()
     assert "portmone" in link
     assert "contract_number_terminal=0000TEST" in link
@@ -79,7 +78,6 @@ def test_pay_link_injects_contract_and_amount(monkeypatch):
 def test_pay_link_falls_back_without_account(monkeypatch):
     st = get_settings()
     monkeypatch.setattr(st, "gigabit_login", "")
-    monkeypatch.setattr(st, "gigabit_account", "")
     assert gigabit_pay_link() == st.gigabit_base_url
 
 
@@ -90,8 +88,7 @@ def test_pay_link_for_by_category(monkeypatch):
     st = get_settings()
     monkeypatch.setattr(st, "monobank_pay_url", "https://mono.app")
     monkeypatch.setattr(st, "dah_pay_url", "https://dah.app")
-    monkeypatch.setattr(st, "gigabit_account", "0000TEST")
-    monkeypatch.setattr(st, "gigabit_login", "")
+    monkeypatch.setattr(st, "gigabit_login", "0000TEST")
 
     def prov(name, cat):
         return Provider(name=name, category=cat, pay_channel=PayChannel.mono_communal)
@@ -132,7 +129,6 @@ async def test_mobile_get_provider_balance_returns_pay_link(session, providers):
 async def test_missing_credentials_returns_not_ok(monkeypatch):
     st = get_settings()
     monkeypatch.setattr(st, "gigabit_login", "")
-    monkeypatch.setattr(st, "gigabit_account", "")
     monkeypatch.setattr(st, "gigabit_pwd", "")
     balance.clear_cache()
     bal = await fetch_gigabit_balance(use_cache=False)

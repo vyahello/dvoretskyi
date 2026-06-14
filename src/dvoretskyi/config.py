@@ -63,10 +63,6 @@ class Settings(BaseSettings):
     # (readings are due by the last day of the month). Seeds Provider.meter_window.
     meter_window_days: int = 3
 
-    # Personal account identifier — kept out of code/git, seeded into Provider.
-    # account_number. Empty = unknown (left null). gigabit = contract no.
-    gigabit_account: str = ""
-
     # --- pay links per provider (iOS apps / Portmone; no personal data) ---
     # Utilities paid in mono «Комунальні» → open the monobank app; ДАХ → the ДАХ app.
     monobank_pay_url: str = "https://apps.apple.com/app/id1287005205"
@@ -76,7 +72,9 @@ class Settings(BaseSettings):
     mobile_autopay_day: int = 20  # day-of-month the scheduled mono charge runs
 
     # --- Gigabit+ balance scraper (L2) — cabinet.gigabit.te.ua (Laravel CSRF form) ---
-    gigabit_login: str = ""  # login id; falls back to gigabit_account if empty
+    # Login id; doubles as the contract no. for the top-up link + Provider.account_number.
+    # Kept out of code/git (VPS .env only).
+    gigabit_login: str = ""
     gigabit_pwd: str = ""
     gigabit_base_url: str = "https://cabinet.gigabit.te.ua"
     gigabit_login_form_path: str = "/"  # GET → login form (+ CSRF _token)
@@ -88,7 +86,7 @@ class Settings(BaseSettings):
     gigabit_meta_csrf_regex: str = r'name="csrf-token"\s+content="([^"]+)"'
     gigabit_monthly_fee: Decimal = Decimal("200")  # monthly subscription, UAH
     gigabit_balance_ttl_seconds: int = 3600  # cache so we don't log in every call
-    # Top-up deep link. {account} (contract no., from gigabit_account/env) and {amount}
+    # Top-up deep link. {account} (contract no., from gigabit_login/env) and {amount}
     # are injected at runtime — no personal id in code. Empty account → cabinet base URL.
     gigabit_pay_url_template: str = (
         "https://www.portmone.com.ua/r3/popovnyty-internet-gigabitplus-lviv"
