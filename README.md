@@ -44,9 +44,17 @@ for the full spec and [`CLAUDE.md`](CLAUDE.md) for operational detail.
 > **🎩:** За травень — 3 920 ₴. Найбільше з'їв газ. Показати графіком?
 
 ## Stack
-Python 3.12+ · FastAPI · aiogram 3 · SQLAlchemy 2.0 (async) + Alembic · APScheduler
-(Redis jobstore, memory fallback) · pydantic-settings · Pillow · LLM + vision OCR via
-headless Claude Code CLI (`claude -p`). Tooling: pytest · Ruff (lint + format) · mypy.
+| Area | Tech |
+|---|---|
+| Language | Python 3.12+ |
+| Web / webhook | FastAPI |
+| Telegram | aiogram 3 |
+| Database | SQLAlchemy 2.0 (async) + Alembic |
+| Scheduler | APScheduler (Redis jobstore, memory fallback) |
+| Config | pydantic-settings |
+| Images | Pillow |
+| LLM + vision OCR | headless Claude Code CLI (`claude -p`) |
+| Tooling | pytest · Ruff (lint + format) · mypy |
 
 ## Quick start
 ```bash
