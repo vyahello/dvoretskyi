@@ -108,10 +108,39 @@ def test_main_keyboard_has_menu_buttons():
         assert lbl in labels
 
 
-async def test_menu_button_meters_prompts_for_photo(engine):
+async def test_menu_button_meters_empty_journal_hints_photo(engine, providers):
     msg = FakeMessage()
-    await bot_app.menu_meters(msg)  # tap «📷 Показники»
-    assert "фото лічильника" in msg.answers[0]
+    await bot_app.menu_meters(msg)  # tap «🔢 Мої показники» with nothing stored yet
+    assert "журнал чистий" in msg.answers[0]
+    assert "фото лічильника" in msg.answers[0]  # tells the user how to start one
+
+
+async def test_menu_button_meters_lists_stored_readings(engine, providers, session):
+    from dvoretskyi.db.models import MeterReading, MeterStatus
+
+    gas = providers["Газ (постачання)"]
+    session.add(
+        MeterReading(
+            provider_id=gas.id,
+            cycle="2026-06",
+            value=Decimal("1877.78"),
+            status=MeterStatus.validated,
+            created_at=clock.now(),
+        )
+    )
+    await session.commit()
+
+    msg = FakeMessage()
+    await bot_app.menu_meters(msg)
+    out = msg.answers[0]
+    assert "Газ (постачання)" in out
+    assert "1877.78" in out
+    assert "червень 2026" in out  # cycle rendered as a Ukrainian month
+
+
+def test_format_cycle_unit():
+    assert bot_app._format_cycle("2026-06") == "червень 2026"
+    assert bot_app._format_cycle("garbage") == "garbage"
 
 
 async def test_menu_button_hello_greets(engine):

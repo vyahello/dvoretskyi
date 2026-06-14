@@ -25,11 +25,11 @@ from dvoretskyi.config import get_settings
 from dvoretskyi.db.models import Provider
 
 # Persistent main menu (reply keyboard). Labels double as the routing key in bot/app.py.
-MENU_UNPAID = "📋 Що відкрито"
+MENU_HELLO = "🎩 Привіт"
+MENU_UNPAID = "💸 Що сплатити"
 MENU_STATS = "📊 Статистика"
 MENU_BALANCE = "🌐 Баланс інтернету"
-MENU_METERS = "📷 Показники"
-MENU_HELLO = "🎩 Привіт"
+MENU_METERS = "🔢 Мої показники"
 MENU_HELP = "❓ Довідка"
 
 
@@ -37,9 +37,9 @@ def main_keyboard() -> ReplyKeyboardMarkup:
     """Always-on tap menu above the text box (no need to type slash-commands)."""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=MENU_UNPAID), KeyboardButton(text=MENU_STATS)],
-            [KeyboardButton(text=MENU_BALANCE), KeyboardButton(text=MENU_METERS)],
-            [KeyboardButton(text=MENU_HELLO), KeyboardButton(text=MENU_HELP)],
+            [KeyboardButton(text=MENU_HELLO), KeyboardButton(text=MENU_UNPAID)],
+            [KeyboardButton(text=MENU_STATS), KeyboardButton(text=MENU_BALANCE)],
+            [KeyboardButton(text=MENU_METERS), KeyboardButton(text=MENU_HELP)],
         ],
         resize_keyboard=True,
         is_persistent=True,

@@ -34,6 +34,7 @@ from dvoretskyi.agent.tools import (
     ToolError,
     categorize_payment,
     confirm_meter_reading,
+    get_meter_history,
     get_provider_balance,
     get_stats,
     get_unpaid,
@@ -198,12 +199,59 @@ async def menu_balance(message: Message) -> None:
     await message.answer(res.get("message") or "…", reply_markup=markup)
 
 
+_UA_MONTHS = (
+    "",
+    "січень",
+    "лютий",
+    "березень",
+    "квітень",
+    "травень",
+    "червень",
+    "липень",
+    "серпень",
+    "вересень",
+    "жовтень",
+    "листопад",
+    "грудень",
+)
+
+
+def _format_cycle(cycle: str) -> str:
+    """'2026-06' → 'червень 2026'; fall back to the raw key if it's malformed."""
+    try:
+        year, month = cycle.split("-")
+        return f"{_UA_MONTHS[int(month)]} {year}"
+    except (ValueError, IndexError):
+        return cycle
+
+
+def _format_meters_overview(overview: list[tuple[str, list[dict]]]) -> str:
+    """Render the monthly meter journal I keep — one block per meter provider."""
+    blocks: list[str] = []
+    for name, readings in overview:
+        if not readings:
+            continue
+        lines = [name]
+        for r in readings:  # newest-first from get_meter_history
+            tail = f"  (спожито {r['consumption']})" if r.get("consumption") else ""
+            lines.append(f"• {_format_cycle(r['cycle'])}: {r['value']}{tail}")
+        blocks.append("\n".join(lines))
+    if not blocks:
+        return (
+            "Поки що показників нема — журнал чистий. 🔢\n"
+            "Кинь фото лічильника, і я зчитаю та збережу його щомісяця."
+        )
+    return "🔢 Показники, що я зберіг:\n\n" + "\n\n".join(blocks)
+
+
 @router.message(F.text == keyboards.MENU_METERS)
 async def menu_meters(message: Message) -> None:
-    await message.answer(
-        "📷 Кинь фото лічильника — газу чи води. Зчитаю показник сам; як буде "
-        "сумнів — перепитаю, перш ніж кудись подавати."
-    )
+    async with session_scope() as session:
+        overview: list[tuple[str, list[dict]]] = []
+        for prov in await _meter_providers(session):
+            hist = await get_meter_history(session, prov.name, limit=6)
+            overview.append((prov.name, hist["readings"]))
+    await message.answer(_format_meters_overview(overview))
 
 
 # Varied butler greetings (instant, no LLM) for the «🎩 Привіт» tap.
