@@ -93,6 +93,16 @@ class Settings(BaseSettings):
         "?contract_number_terminal={account}&contract_bill_amount={amount}"
     )
 
+    # --- infolviv.com.ua consumer portal (meter readings source, L2) ---
+    # Angular SPA + JSON API. Login field is `account` (an email); Bearer-token auth.
+    # Creds kept out of code/git (VPS .env only).
+    infolv_login: str = ""
+    infolv_pwd: str = ""
+    infolv_base_url: str = "https://infolviv.com.ua"
+    infolv_auth_path: str = "/api/account/authentication"  # POST {account,password}
+    infolv_counters_path: str = "/api/warehouse/consumer/counters/last-factors"  # GET
+    infolv_ttl_seconds: int = 1800  # cache so a button tap doesn't re-auth every time
+
     # --- misc ---
     tz: str = "Europe/Kyiv"
     public_base_url: str = "https://example.com"

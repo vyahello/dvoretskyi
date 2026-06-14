@@ -29,6 +29,7 @@ from sqlalchemy import select
 
 from dvoretskyi import clock
 from dvoretskyi.agent import dispatcher as agent_dispatcher
+from dvoretskyi.agent.infolviv import InfolvivReading, fetch_infolviv_readings
 from dvoretskyi.agent.provider import get_provider
 from dvoretskyi.agent.tools import (
     ToolError,
@@ -244,14 +245,52 @@ def _format_meters_overview(overview: list[tuple[str, list[dict]]]) -> str:
     return "🔢 Показники, що я зберіг:\n\n" + "\n\n".join(blocks)
 
 
-@router.message(F.text == keyboards.MENU_METERS)
-async def menu_meters(message: Message) -> None:
+_KIND_LABEL = {"water": "💧 Холодна вода", "gas": "🔥 Газ"}
+
+
+def _format_infolviv_readings(readings: list[InfolvivReading]) -> str:
+    """Render the readings filed on the infolviv portal — the authoritative record."""
+    blocks: list[str] = []
+    for r in readings:
+        label = _KIND_LABEL.get(r.kind, f"🔢 {r.service or 'Лічильник'}")
+        num = f" (№{r.counter_number})" if r.counter_number else ""
+        lines = [f"{label}{num}"]
+        if r.value is not None:
+            period = _format_cycle(r.period) if r.period else "останній період"
+            cons = f"  (спожито {r.difference})" if r.difference is not None else ""
+            lines.append(f"• {period}: {r.value}{cons}")
+        else:
+            lines.append("• показника ще нема")
+        if r.window_start_day and r.window_end_day:
+            lines.append(
+                f"🗓 подача: {r.window_start_day}–{r.window_end_day} число місяця"
+            )
+        blocks.append("\n".join(lines))
+    return "🔢 Показники з порталу infolviv:\n\n" + "\n\n".join(blocks)
+
+
+async def _local_journal() -> str:
+    """My own photo-journal — the fallback when the portal is unreachable."""
     async with session_scope() as session:
         overview: list[tuple[str, list[dict]]] = []
         for prov in await _meter_providers(session):
             hist = await get_meter_history(session, prov.name, limit=6)
             overview.append((prov.name, hist["readings"]))
-    await message.answer(_format_meters_overview(overview))
+    return _format_meters_overview(overview)
+
+
+@router.message(F.text == keyboards.MENU_METERS)
+async def menu_meters(message: Message) -> None:
+    try:
+        readings = await fetch_infolviv_readings()
+    except Exception:
+        log.exception("infolviv fetch raised")
+        readings = []
+    if readings:
+        await message.answer(_format_infolviv_readings(readings))
+    else:
+        # Portal not configured / unreachable → show what I've saved from photos.
+        await message.answer(await _local_journal())
 
 
 # Varied butler greetings (instant, no LLM) for the «🎩 Привіт» tap.

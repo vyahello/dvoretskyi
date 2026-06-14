@@ -1,0 +1,103 @@
+from __future__ import annotations
+
+from decimal import Decimal
+
+import httpx
+
+from dvoretskyi.agent import infolviv
+from dvoretskyi.agent.infolviv import fetch_infolviv_readings
+from dvoretskyi.config import get_settings
+
+# Trimmed to the fields the reader uses, in the shape the portal returns.
+_COUNTERS = [
+    {
+        "counterNumber": "10000001",  # fake — never a real account
+        "service": {"name": "Централізоване водопостачання (ХВ)"},
+        "serviceProvider": {"name": "ВОДОКАНАЛ (тест)"},
+        "counterType": {"id": 2, "name": "Холодна вода"},
+        "factorEditing": {"isEnabled": True, "startDay": 1, "endDay": 10},
+        "factors": [
+            {
+                "invoicePeriod": "2026-05-01T00:00:00Z",
+                "endFactor": 100.500,
+                "difference": 0.0,
+            }
+        ],
+    },
+    {
+        "counterNumber": "10000002",  # fake — never a real account
+        "service": {"name": "Розподіл газу"},
+        "serviceProvider": {"name": "Газорозподіл (тест)"},
+        "counterType": {"id": 1, "name": "Газовий"},
+        "factorEditing": {"isEnabled": True, "startDay": 4, "endDay": 10},
+        "factors": [
+            {
+                "invoicePeriod": "2026-05-01T00:00:00Z",
+                "endFactor": 2000.25,
+                "difference": 3.5,
+            }
+        ],
+    },
+]
+
+
+def _client(monkeypatch, *, auth=200, counters_resp=None, calls=None):
+    st = get_settings()
+    monkeypatch.setattr(st, "infolv_login", "user@example.com")
+    monkeypatch.setattr(st, "infolv_pwd", "secret")  # not real
+    monkeypatch.setattr(st, "infolv_auth_path", "/auth")
+    monkeypatch.setattr(st, "infolv_counters_path", "/counters")
+    infolviv.clear_cache()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if calls is not None:
+            calls.append(f"{request.method} {request.url.path}")
+        if request.url.path == "/auth":
+            if auth != 200:
+                return httpx.Response(auth)
+            return httpx.Response(
+                200, json={"accessToken": "jwt.t.t", "tokenType": "Bearer"}
+            )
+        if request.url.path == "/counters":
+            return counters_resp or httpx.Response(200, json=_COUNTERS)
+        return httpx.Response(404)
+
+    return httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://infolviv.example"
+    )
+
+
+async def test_parses_water_and_gas_readings(monkeypatch):
+    calls: list[str] = []
+    async with _client(monkeypatch, calls=calls) as c:
+        readings = await fetch_infolviv_readings(client=c, use_cache=False)
+
+    assert [r.kind for r in readings] == ["water", "gas"]
+    water, gas = readings
+    assert water.value == Decimal("100.500")
+    assert water.period == "2026-05"
+    assert (water.window_start_day, water.window_end_day) == (1, 10)
+    assert gas.value == Decimal("2000.25")
+    assert gas.difference == Decimal("3.5")
+    assert (gas.window_start_day, gas.window_end_day) == (4, 10)
+    # Auth precedes the counters read, and the token is attached.
+    assert calls == ["POST /auth", "GET /counters"]
+
+
+async def test_no_credentials_returns_empty(monkeypatch):
+    st = get_settings()
+    monkeypatch.setattr(st, "infolv_login", "")
+    monkeypatch.setattr(st, "infolv_pwd", "")
+    infolviv.clear_cache()
+    assert await fetch_infolviv_readings(use_cache=False) == []
+
+
+async def test_auth_failure_returns_empty_not_raises(monkeypatch):
+    async with _client(monkeypatch, auth=401) as c:
+        assert await fetch_infolviv_readings(client=c, use_cache=False) == []
+
+
+async def test_unexpected_payload_returns_empty(monkeypatch):
+    bad = httpx.Response(200, json={"oops": True})
+    async with _client(monkeypatch, counters_resp=bad) as c:
+        assert await fetch_infolviv_readings(client=c, use_cache=False) == []

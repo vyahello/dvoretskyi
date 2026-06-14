@@ -108,16 +108,56 @@ def test_main_keyboard_has_menu_buttons():
         assert lbl in labels
 
 
-async def test_menu_button_meters_empty_journal_hints_photo(engine, providers):
+async def test_menu_button_meters_shows_infolviv_when_available(engine, monkeypatch):
+    from dvoretskyi.agent.infolviv import InfolvivReading
+
+    async def fake_fetch():
+        return [
+            InfolvivReading(
+                kind="water",
+                counter_number="10000001",  # fake — never a real account
+                provider="ВОДОКАНАЛ (тест)",
+                service="Централізоване водопостачання (ХВ)",
+                period="2026-05",
+                value=Decimal("100.500"),
+                difference=Decimal("0.0"),
+                window_start_day=1,
+                window_end_day=10,
+                window_open=True,
+            )
+        ]
+
+    monkeypatch.setattr(bot_app, "fetch_infolviv_readings", fake_fetch)
     msg = FakeMessage()
-    await bot_app.menu_meters(msg)  # tap «🔢 Мої показники» with nothing stored yet
+    await bot_app.menu_meters(msg)
+    out = msg.answers[0]
+    assert "infolviv" in out
+    assert "Холодна вода" in out and "100.500" in out
+    assert "травень 2026" in out
+    assert "1–10 число" in out
+
+
+async def test_menu_button_meters_falls_back_to_journal(engine, providers, monkeypatch):
+    # Portal unreachable / not configured → show the local photo-journal instead.
+    async def empty_fetch():
+        return []
+
+    monkeypatch.setattr(bot_app, "fetch_infolviv_readings", empty_fetch)
+    msg = FakeMessage()
+    await bot_app.menu_meters(msg)  # nothing stored yet → empty-journal hint
     assert "журнал чистий" in msg.answers[0]
-    assert "фото лічильника" in msg.answers[0]  # tells the user how to start one
+    assert "фото лічильника" in msg.answers[0]
 
 
-async def test_menu_button_meters_lists_stored_readings(engine, providers, session):
+async def test_menu_button_meters_lists_stored_readings(
+    engine, providers, session, monkeypatch
+):
     from dvoretskyi.db.models import MeterReading, MeterStatus
 
+    async def empty_fetch():  # force the local-journal path
+        return []
+
+    monkeypatch.setattr(bot_app, "fetch_infolviv_readings", empty_fetch)
     gas = providers["Газ (постачання)"]
     session.add(
         MeterReading(
