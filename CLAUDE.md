@@ -1,10 +1,11 @@
 # CLAUDE.md — Komunalka / Комунальний Дворецький (operational notes)
 
 Single-user Telegram utility butler ("Комунальний Дворецький" — no personal name).
-**Phase 1 scope only:** money + stats
-+ reminders + conversational agent, sourced from the monobank webhook. No provider
-scraping, no meter OCR/submission, no payment initiation. See `docs/` for the spec
-and the Phase 1 build prompt.
+**Phase 1 (done):** money + stats + reminders + conversational agent from the monobank
+webhook. **Phase 2 (done):** meter readings — photo → OCR → delta-validate → submit
+(`ManualAssistChannel` default; no auto-submit) + meter-window reminders. Still **no
+payment initiation** (Phase 3), no provider balance scraping. See `docs/` for the spec
+and the per-phase build prompts.
 
 ## ⚠️ Hard rule: never set ANTHROPIC_API_KEY
 Claude Code prioritizes `ANTHROPIC_API_KEY` over the Max subscription and silently
@@ -21,12 +22,17 @@ via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
   (`process_statement_item` is bot-agnostic + the FastAPI router), `client` (register).
 - `agent/` — `persona` (BUTLER_SYSTEM_PROMPT), `provider` (LLMProvider ABC +
   ClaudeCodeProvider + AnthropicAPIProvider stub), `tools` (TOOLS registry),
-  `dispatcher` (handle_message: deterministic tool routing).
+  `dispatcher` (handle_message: deterministic tool routing). **L2 meters:** `vision`
+  (VisionProvider ABC + ClaudeCodeVisionProvider — `claude -p --allowed-tools "Read"`,
+  Pillow downscale, robust JSON extract), `meters` (pure delta `validate` + `window_open`),
+  `submission` (SubmissionChannel ABC + `ManualAssistChannel` default + Sms/WebForm
+  opt-in).
 - `bot/` — aiogram 3 bot, allowlist middleware, slash commands (`/start /unpaid
   /stats /help` — deterministic, registered before the free-text catch-all and
-  mirrored via `set_my_commands`), text + callback handlers, keyboards, and the
-  webhook→Telegram notifier.
-- `reminders/` — APScheduler daily payment nudges (Redis jobstore, memory fallback).
+  mirrored via `set_my_commands`), text + callback handlers, **photo handler**
+  (`F.photo` → meter pipeline), keyboards, and the webhook→Telegram notifier.
+- `reminders/` — APScheduler daily payment **and** meter nudges (Redis jobstore,
+  memory fallback).
 - `app.py` — FastAPI; lifespan starts bot long-polling + scheduler + notifier.
 
 ## Setup
@@ -53,6 +59,22 @@ komunalka learn-pattern "Газ (постачання)" "naftogaz"
 ```
 or tap a provider on the bot's categorize prompt (auto-learns the stable token).
 
+## Meters (L2, Phase 2)
+Send the bot a **photo** of a meter → OCR (`agent/vision.py` via `claude -p
+--allowed-tools "Read"`) → **delta validation** (`agent/meters.validate`: backwards /
+zero / spike vs history → `needs_confirm`) → store `MeterReading` → submit.
+- **Which meter?** Caption hint ("показники газу") → else the single meter provider in
+  its window → else ask `[Газ][Вода]` (an `ocr_pending` row holds the photo until the
+  tap routes it).
+- **Submission is `ManualAssistChannel` by default**: the bot hands back the validated
+  value + how/where to submit (gas→SMS 4647/gas.ua, water→ВК), marks the reading
+  `validated`; the **«Відправив ✓»** tap (`ms:`) flips it to `submitted`. **No
+  auto-submission** unless a channel is explicitly enabled in `SUBMISSION_CHANNELS`.
+- Only **gas** and **water** have meters (set `Provider.meter_window`). Electricity /
+  internet / housing have none. OCR failure → `value=None` → ask to retype (never guess).
+- Vision subprocess **also strips `ANTHROPIC_API_KEY`**; temp photos live in a private
+  dir and are deleted right after processing (image bytes never logged).
+
 ## Run
 ```bash
 komunalka register-mono-webhook --dry-run   # inspect the request (token masked)
@@ -64,20 +86,23 @@ The mono webhook must be reachable over public HTTPS at
 
 ## Test, lint, types
 ```bash
-pytest -q                       # 36 tests, in-memory SQLite, no network, no API key
+pytest -q                       # 70 tests, in-memory SQLite, no network, no API key
 ruff check src tests            # lint (E,W,F,I,UP,B)
 ruff format src tests           # format (black-compatible; the project standard)
 mypy                            # type-check src/ (config in pyproject)
 ```
-Tests use a fake `LLMProvider` (no real `claude` calls) and pass `now` explicitly to
-reminder logic (no time-freezing dependency). Formatting/linting is **Ruff**
+Tests use a fake `LLMProvider` **and a fake `VisionProvider`** (no real `claude` calls)
+and pass `now` explicitly to reminder/window logic (no time-freezing dependency). Formatting/linting is **Ruff**
 (`ruff format` replaces black); type-checking is **mypy** with `ignore_missing_imports`
 (aiogram/apscheduler ship partial/no stubs).
 
 ## Env vars (see `.env.example`)
 `MONO_TOKEN`, `MONO_WEBHOOK_SECRET`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID`,
 `DATABASE_URL`, `REDIS_URL`, `CLAUDE_BIN`, `LLM_PROVIDER` (claude_code|anthropic_api),
-`UTILITY_MCCS`, `TZ`, `PUBLIC_BASE_URL`. **Never** `ANTHROPIC_API_KEY`.
+`UTILITY_MCCS`, `TZ`, `PUBLIC_BASE_URL`. **Meters:** `CLAUDE_VISION_TIMEOUT_SECONDS`
+(vision is slower than text), `SUBMISSION_CHANNELS=gas:manual,water:manual`,
+`SMS_GATEWAY_URL` (empty → deep link only), `OCR_MAX_LONG_SIDE`, `DELTA_SPIKE_K`,
+`DELTA_ABS_CAP`, `GAS_METER_DAY`, `WATER_METER_DAY`. **Never** `ANTHROPIC_API_KEY`.
 
 ## Conventions
 - Conventional commits, one logical change each.
@@ -88,6 +113,9 @@ reminder logic (no time-freezing dependency). Formatting/linting is **Ruff**
   Кварплата (ДАХ).
 - Ukrainian for all user-facing copy; English for code/logs.
 - Tool routing is deterministic in Python; the LLM only picks `{tool,args}` and writes
-  the `message`. Never let the model fabricate amounts/balances/"paid" status.
-- Phase-2 stubs (`submit_meter_reading`, `get_provider_balance`, meter nudges) raise
-  `NotImplementedError` / are inactive — do not wire them up in Phase 1.
+  the `message`. Never let the model fabricate amounts/balances/"paid"/meter values.
+- Photo/meter taps call tools directly (deterministic), never through the LLM —
+  `submit_meter_reading` needs an `image_path` the model never has.
+- Still stubbed (raise `NotImplementedError`): `get_provider_balance` (no source —
+  spec §9) and `WebFormChannel` live submit (provider auth not reverse-engineered).
+  `AnthropicAPIProvider` is a drop-in swap, not yet implemented.
