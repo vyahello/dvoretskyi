@@ -270,32 +270,42 @@ def _render_chart(buckets: dict[str, Decimal], title: str) -> str:
     colors = [_CHART_PALETTE[i % len(_CHART_PALETTE)] for i in range(len(labels))]
     total = sum(values)
 
-    fig, ax = plt.subplots(figsize=(7.5, 0.6 * len(labels) + 1.6))
-    bars = ax.barh(labels, values, color=colors, edgecolor="white", height=0.7)
-    ax.set_title(f"Комуналка — {title} · {total:,.0f} ₴".replace(",", " "), fontsize=13)
+    fig, ax = plt.subplots(figsize=(8.5, 0.85 * len(labels) + 1.8))
+    bars = ax.barh(labels, values, color=colors, edgecolor="white", height=0.66)
+    ax.set_title(
+        f"Комуналка — {title}  ·  {total:,.0f} ₴".replace(",", " "),
+        fontsize=16,
+        fontweight="bold",
+        pad=14,
+    )
 
-    # Value (+ share) label at the end of each bar.
+    # Big, bold value + share label at the end of each bar.
     for bar, val in zip(bars, values, strict=False):
-        share = f"  {val / total:.0%}" if total else ""
+        share = f"   {val / total:.0%}" if total else ""
         ax.text(
             bar.get_width(),
             bar.get_y() + bar.get_height() / 2,
-            f" {val:,.0f} ₴{share}".replace(",", " "),
+            f"  {val:,.0f} ₴{share}".replace(",", " "),
             va="center",
             ha="left",
-            fontsize=10,
+            fontsize=14,
+            fontweight="bold",
+            color="#264653",
         )
 
-    ax.margins(x=0.18)  # room for the labels
+    ax.margins(x=0.22)  # room for the labels
     for side in ("top", "right", "bottom"):
         ax.spines[side].set_visible(False)
-    ax.tick_params(left=True, bottom=False, labelbottom=False)  # bars are self-labelled
+    # Big group labels on the left; bars are self-labelled so no x-axis.
+    ax.tick_params(left=False, bottom=False, labelbottom=False, labelsize=14)
+    for lbl in ax.get_yticklabels():
+        lbl.set_fontweight("bold")
     fig.tight_layout()
 
     tmp = tempfile.NamedTemporaryFile(
         prefix="dvoretskyi_stats_", suffix=".png", delete=False
     )
-    fig.savefig(tmp.name, dpi=140)
+    fig.savefig(tmp.name, dpi=150)
     plt.close(fig)
     return tmp.name
 
