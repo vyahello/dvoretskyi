@@ -96,7 +96,13 @@ to submit.
   categorize (and learns the pattern); non-utility → silently ignored.
 - **Agent tools:** `get_unpaid`, `get_stats` (+PNG chart), `log_payment_manual`,
   `categorize_payment`, `snooze_reminder`, `submit_meter_reading`,
-  `confirm_meter_reading`, `get_meter_history`.
+  `confirm_meter_reading`, `get_meter_history`, `get_provider_balance`.
+- **Provider balance (Gigabit+):** `get_provider_balance` logs into the ISP cabinet
+  (`cabinet.gigabit.te.ua`, JSON API) and reads the current balance + last top-up date.
+  Below the monthly fee → "треба поповнити" with a tappable **«💳 Поповнити N ₴»**
+  button (a Portmone deep link with the contract + amount pre-filled, built from env —
+  no card data ever touches the bot); above → "не треба, останнє поповнення …". Cached
+  ~1h. Credentials live only in the VPS `.env`.
 - **Meters (gas & water):** send a **photo** → OCR (`claude -p --allowed-tools "Read"`)
   → **delta validation** against history (backwards / zero / spike → asks you to
   confirm or re-photo before anything is submitted) → stored. Default submission is
@@ -104,13 +110,16 @@ to submit.
   submit (gas→SMS 4647/gas.ua, water→ВК) and the **«Відправив ✓»** tap marks it sent.
   **No auto-submission** unless a channel is enabled in `SUBMISSION_CHANNELS`. OCR
   failure → it asks you to retype, never guesses.
-- **Reminders:** daily jobs nudge unpaid providers inside their due-day window and
-  meters inside their submission window (gas ≤5, water ~25), once per cycle, respecting
-  snooze; payment copy escalates near the deadline.
+- **Reminders:** daily jobs nudge for (1) **payments** inside the due-day window
+  (escalating near the deadline), (2) **meters** inside the submission window (the last
+  `meter_window` days of the month), and (3) a **low Gigabit+ balance** (below the
+  monthly fee) — the balance nudge carries the same **«💳 Поповнити»** button. Each
+  fires once per day, respecting **snooze** (`snooze_reminder` / "відклади …" silences
+  payment + balance for that provider).
 
 ## Test & static analysis
 ```bash
-pytest -q              # 74 tests, in-memory SQLite, no network, no API key needed
+pytest -q              # 100 tests, in-memory SQLite, no network, no API key needed
 ruff check src tests   # lint (E,W,F,I,UP,B)
 ruff format src tests  # format (black-compatible; project standard)
 mypy                   # type-check src/
