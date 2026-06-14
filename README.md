@@ -132,6 +132,13 @@ tests/  conftest + matcher/webhook/tools/dispatcher/reminders + vision/meters/su
 alembic/  migrations (0001 schema · 0002 meter_readings · 0003 meter_decimals)
 ```
 
+## Deploy & ops
+CI/CD (`.github/workflows/ci.yml`) runs ruff + mypy + pytest on every push/PR to `main`,
+then deploys to the VPS on green. Full VPS setup, systemd/nginx templates, and a
+**[server troubleshooting guide](deploy/README.md#troubleshooting-on-the-vps-as-cax)**
+(logs, `.env` reload, Redis/Claude-auth/DB/webhook checks) live in
+[`deploy/README.md`](deploy/README.md).
+
 ---
 
 <div align="center"><sub>Built for one household and one butler. He'll let you know if the gas is overdue. 🎩</sub></div>
