@@ -25,8 +25,27 @@ from dvoretskyi.reminders.engine import build_scheduler, schedule_jobs
 log = logging.getLogger(__name__)
 
 
+def _configure_logging() -> None:
+    """Send `dvoretskyi.*` INFO logs to stderr (→ journald under systemd).
+
+    uvicorn configures only its own loggers; without this our app loggers propagate to
+    the root logger (level WARNING, last-resort handler), so INFO lines — e.g. the
+    per-tx `mono tx: …` visibility log — are silently dropped. Idempotent; `propagate`
+    is disabled so records aren't also emitted by the root handler (no duplicates).
+    """
+    logger = logging.getLogger("dvoretskyi")
+    if logger.handlers:
+        return
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _configure_logging()
     bot = build_bot()
     dp = build_dispatcher()
 
