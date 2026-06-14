@@ -7,6 +7,7 @@ the API key is stripped from the claude subprocess env (see agent/provider.py, s
 
 from __future__ import annotations
 
+from decimal import Decimal
 from functools import lru_cache
 from typing import Annotated
 
@@ -46,6 +47,20 @@ class Settings(BaseSettings):
         default_factory=lambda: {4900, 4814}
     )
 
+    # --- meters (L2, Phase 2) ---
+    # Per-category submission channel. Default is the safe ManualAssistChannel for all;
+    # sms/web_form are opt-in (Phase 2b). NoDecode: parse the "gas:manual,water:manual"
+    # CSV form ourselves rather than letting pydantic JSON-decode the dict.
+    submission_channels: Annotated[dict[str, str], NoDecode] = Field(
+        default_factory=lambda: {"gas": "manual", "water": "manual"}
+    )
+    sms_gateway_url: str = ""  # empty → SmsChannel emits an sms: deep link, never POSTs
+    ocr_max_long_side: int = 1600  # downscale photos to this long side before OCR
+    delta_spike_k: int = 3  # flag consumption > k × median(history)
+    delta_abs_cap: Decimal = Decimal("1000")  # …but never flag below this absolute jump
+    gas_meter_day: int = 5  # gas readings due by the 5th
+    water_meter_day: int = 25  # water (ВК) readings due ~end of month
+
     # --- misc ---
     tz: str = "Europe/Kyiv"
     public_base_url: str = "https://example.com"
@@ -56,6 +71,21 @@ class Settings(BaseSettings):
         """Accept "4900,4814" (env string) as well as a real iterable of ints."""
         if isinstance(value, str):
             return {int(part) for part in value.split(",") if part.strip()}
+        return value
+
+    @field_validator("submission_channels", mode="before")
+    @classmethod
+    def _parse_channels(cls, value: object) -> object:
+        """Accept "gas:manual,water:manual" (env string) or a real dict."""
+        if isinstance(value, str):
+            out: dict[str, str] = {}
+            for part in value.split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                key, _, chan = part.partition(":")
+                out[key.strip()] = chan.strip() or "manual"
+            return out
         return value
 
 
