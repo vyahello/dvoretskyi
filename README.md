@@ -1,5 +1,9 @@
 # Комунальний Дворецький
 
+<p align="center">
+  <img src="assets/dvoretskyi.png" alt="Комунальний Дворецький" width="220">
+</p>
+
 A single-user Telegram **utility-butler agent**: it tracks every household utility
 payment from the monobank webhook, answers "what's still unpaid?", builds spend
 stats, and nudges you before deadlines — all in a dry, deadpan Ukrainian butler voice
