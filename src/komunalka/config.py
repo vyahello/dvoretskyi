@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     llm_provider: str = "claude_code"
     claude_bin: str = "claude"
     claude_timeout_seconds: int = 60
+    # Vision OCR (reading a meter image) is markedly slower than a text turn — the CLI
+    # has to open the image and the model reasons over it. Give it a wider budget.
+    claude_vision_timeout_seconds: int = 150
 
     # --- matching ---
     # NoDecode: pydantic-settings would otherwise JSON-decode this complex field from
