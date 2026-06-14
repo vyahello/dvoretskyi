@@ -1,19 +1,44 @@
+<div align="center">
+
+<img src="assets/dvoretskyi.png" alt="Комунальний Дворецький" width="200">
+
 # Комунальний Дворецький
 
-<p align="center">
-  <img src="assets/dvoretskyi.png" alt="Комунальний Дворецький" width="220">
-</p>
+**_«До ваших послуг.»_** &nbsp;A single-user Telegram **utility butler** who tracks your
+bills, reads your meters from a photo, and nudges you before the deadline — with the
+minimum necessary enthusiasm.
 
-A single-user Telegram **utility-butler agent**: it tracks every household utility
-payment from the monobank webhook, answers "what's still unpaid?", builds spend
-stats, and nudges you before deadlines — all in a dry, deadpan Ukrainian butler voice
-(no personal name). Free-text chat is handled by an LLM that returns a structured
-`{tool, args, message}` decision; tool execution is deterministic Python.
+<sub>Python 3.12+ · FastAPI · aiogram 3 · SQLAlchemy 2.0 · Claude Code CLI</sub>
+
+![python](https://img.shields.io/badge/python-3.12+-3776AB?logo=python&logoColor=white)
+![tests](https://img.shields.io/badge/tests-74%20passing-2ea44f)
+![lint](https://img.shields.io/badge/ruff-clean-261230?logo=ruff&logoColor=white)
+![types](https://img.shields.io/badge/mypy-strict-2a6db2)
+![butler](https://img.shields.io/badge/enthusiasm-minimal-1f4d3f)
+
+</div>
+
+He watches your monobank webhook so you don't have to: logs every utility payment,
+answers "що треба заплатити?", draws spend charts, and reminds you about deadlines —
+all in a dry, deadpan Ukrainian voice (he has **no personal name**; a butler doesn't
+need one). Free-text chat goes to an LLM that returns a structured
+`{tool, args, message}` decision; the actual work is deterministic Python — the model
+never gets to invent your balance.
 
 **Scope:** money + stats + reminders + conversational agent over internal data
 (Phase 1), plus **meter readings** — photo → OCR → delta-validate → submit (Phase 2).
 No provider balance scraping, no payment initiation (Phase 3). See [`docs/`](docs/)
 for the full spec and [`CLAUDE.md`](CLAUDE.md) for operational detail.
+
+## A day with the butler
+> **You:** що треба заплатити?
+> **🎩:** Відкрите: вода (≈180 ₴) і ДАХ (суму поки не знаю). Решта оплачена.
+>
+> _\[you snap a photo of the gas meter\]_
+> **🎩:** ✅ Газ — 4827.05. Лишилось передати — SMS на 4647 з текстом «… 4827.05».
+>
+> **You:** скільки вийшло за травень?
+> **🎩:** За травень — 3 920 ₴. Найбільше з'їв газ. Показати графіком?
 
 ## Stack
 Python 3.12+ · FastAPI · aiogram 3 · SQLAlchemy 2.0 (async) + Alembic · APScheduler
@@ -78,7 +103,7 @@ to submit.
 
 ## Test & static analysis
 ```bash
-pytest -q              # 70 tests, in-memory SQLite, no network, no API key needed
+pytest -q              # 74 tests, in-memory SQLite, no network, no API key needed
 ruff check src tests   # lint (E,W,F,I,UP,B)
 ruff format src tests  # format (black-compatible; project standard)
 mypy                   # type-check src/
@@ -97,5 +122,10 @@ src/dvoretskyi/  config·clock·app(FastAPI lifespan)·cli
   bot/  aiogram bot + allowlist + keyboards + photo handler
   reminders/ APScheduler engine (payment + meter nudges)
 tests/  conftest + matcher/webhook/tools/dispatcher/reminders + vision/meters/submission/photo
-alembic/  migrations (0001 schema, 0002 meter_readings)
+alembic/  migrations (0001 schema · 0002 meter_readings · 0003 meter_decimals)
 ```
+
+---
+
+<div align="center"><sub>Built for one household and one butler. He'll let you know if the gas is overdue. 🎩</sub></div>
+
