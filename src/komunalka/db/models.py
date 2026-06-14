@@ -55,7 +55,16 @@ class PaymentSource(enum.StrEnum):
 
 class NudgeKind(enum.StrEnum):
     payment = "payment"
-    meter = "meter"  # scaffolded; inactive in Phase 1
+    meter = "meter"
+
+
+class MeterStatus(enum.StrEnum):
+    ocr_pending = "ocr_pending"  # captured, OCR/provider not yet resolved
+    needs_confirm = "needs_confirm"  # delta validation flagged it — ask the user
+    validated = "validated"  # accepted; ready to submit / handed back
+    submitted = "submitted"  # user (or a channel) submitted it to the provider
+    rejected = "rejected"  # user re-photographed / discarded
+    failed = "failed"  # OCR or submission failed unrecoverably
 
 
 # Numeric(12, 2) — UAH amounts; mapped to Decimal.
@@ -74,12 +83,16 @@ class Provider(Base):
     )
     expected_amount: Mapped[Decimal | None] = mapped_column(_Money, default=None)
     due_day: Mapped[int | None] = mapped_column(Integer, default=None)
+    # Day-of-month a meter reading is due (L2). Null = no meter (electricity, internet,
+    # housing). Gas ≤ 5, water per ВК schedule. Drives meter-window reminders.
+    meter_window: Mapped[int | None] = mapped_column(Integer, default=None)
     auto_logged: Mapped[bool] = mapped_column(Boolean, default=False)
 
     patterns: Mapped[list[ProviderPattern]] = relationship(
         back_populates="provider", cascade="all, delete-orphan"
     )
     payments: Mapped[list[Payment]] = relationship(back_populates="provider")
+    meter_readings: Mapped[list[MeterReading]] = relationship(back_populates="provider")
 
 
 class ProviderPattern(Base):
@@ -136,3 +149,30 @@ class NudgeLog(Base):
     )
 
     provider: Mapped[Provider] = relationship()
+
+
+class MeterReading(Base):
+    """L2 meter reading. `value`/`provider_id` are nullable so an `ocr_pending`
+    capture can exist before OCR runs and before the user routes an ambiguous photo
+    to a provider (same pattern as the uncategorized `Payment.provider_id`)."""
+
+    __tablename__ = "meter_readings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider_id: Mapped[int | None] = mapped_column(
+        ForeignKey("providers.id", ondelete="CASCADE"), default=None
+    )
+    cycle: Mapped[str] = mapped_column(String(7))  # "YYYY-MM"
+    value: Mapped[Decimal | None] = mapped_column(_Money, default=None)
+    ocr_raw: Mapped[str | None] = mapped_column(String(64), default=None)
+    consumption_delta: Mapped[Decimal | None] = mapped_column(_Money, default=None)
+    photo_ref: Mapped[str | None] = mapped_column(String(512), default=None)
+    status: Mapped[MeterStatus] = mapped_column(
+        SAEnum(MeterStatus, name="meter_status")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    submitted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+
+    provider: Mapped[Provider | None] = relationship(back_populates="meter_readings")

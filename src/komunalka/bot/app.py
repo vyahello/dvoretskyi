@@ -76,7 +76,7 @@ HELP_TEXT = (
 def _format_unpaid(result: dict) -> str:
     """Compact butler-voice rendering of get_unpaid output."""
     if result.get("all_clear"):
-        return "✅ Усе чисто — відкритих платежів цього місяця нема."
+        return "✅ Усе чисто — цього місяця все оплачено."
     lines = ["Відкрите цього місяця:"]
     for item in result["open"]:
         amount = (
@@ -267,7 +267,7 @@ def make_notifier(bot: Bot) -> Callable[[Notice], Awaitable[None]]:
             kb = keyboards.categorize_keyboard(notice.payment_id, providers)
             await bot.send_message(
                 chat_id,
-                f"Прилетіло {notice.amount_uah} ₴ — не з мого списку. Це що?",
+                f"Прилетіло {notice.amount_uah} ₴, а такого в мене нема. Це що?",
                 reply_markup=kb,
             )
 
