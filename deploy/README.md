@@ -17,6 +17,13 @@ in GitHub — those are VPS-only.)
 
 ## One-time VPS setup (Ubuntu 24.04, user `cax`)
 
+> CI self-heals a missing clone and venv (the deploy job clones into
+> `/home/cax/dvoretskyi` and `deploy.sh` creates the venv on first run) — **but only if
+> `cax`'s SSH key is authorized on GitHub** for the clone. Regardless, you must still do
+> these once before the first deploy can go green: create **`.env`** (secrets), install
+> the **systemd unit + sudoers rule** (the deploy's `systemctl restart` needs them). The
+> steps below cover the full manual path; doing them all up front is the simplest.
+
 ```bash
 # 1. Clone
 cd /home/cax

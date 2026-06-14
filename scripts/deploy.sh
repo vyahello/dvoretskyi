@@ -10,6 +10,11 @@ echo "==> Fetch + hard reset to origin/main"
 git fetch --all
 git reset --hard origin/main
 
+if [ ! -d venv ]; then
+  echo "==> Creating venv (first run)"
+  python3 -m venv venv
+fi
+
 echo "==> Activate venv + install"
 # shellcheck source=/dev/null
 source venv/bin/activate

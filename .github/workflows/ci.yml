@@ -38,4 +38,11 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script_stop: true
-          script: bash /home/cax/dvoretskyi/scripts/deploy.sh
+          script: |
+            set -e
+            APP_DIR="/home/cax/dvoretskyi"
+            if [ ! -d "$APP_DIR/.git" ]; then
+              echo "First run — cloning repo into $APP_DIR"
+              git clone git@github.com:vyahello/dvoretskyi.git "$APP_DIR"
+            fi
+            bash "$APP_DIR/scripts/deploy.sh"
