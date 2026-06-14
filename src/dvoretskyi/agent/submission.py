@@ -18,8 +18,8 @@ from dataclasses import dataclass
 
 import httpx
 
-from komunalka.config import get_settings
-from komunalka.db.models import Category, MeterReading, MeterStatus, Provider
+from dvoretskyi.config import get_settings
+from dvoretskyi.db.models import Category, MeterReading, MeterStatus, Provider
 
 log = logging.getLogger(__name__)
 

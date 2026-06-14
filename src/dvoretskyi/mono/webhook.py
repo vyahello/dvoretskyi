@@ -15,11 +15,11 @@ from fastapi import APIRouter, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from komunalka.config import get_settings
-from komunalka.db.models import Payment, PaymentSource, Provider
-from komunalka.db.session import session_scope
-from komunalka.mono import matcher
-from komunalka.mono.schemas import StatementItem, WebhookPayload
+from dvoretskyi.config import get_settings
+from dvoretskyi.db.models import Payment, PaymentSource, Provider
+from dvoretskyi.db.session import session_scope
+from dvoretskyi.mono import matcher
+from dvoretskyi.mono.schemas import StatementItem, WebhookPayload
 
 log = logging.getLogger(__name__)
 router = APIRouter()

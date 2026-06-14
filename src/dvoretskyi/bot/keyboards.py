@@ -16,7 +16,7 @@ from collections.abc import Sequence
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from komunalka.db.models import Provider
+from dvoretskyi.db.models import Provider
 
 
 def categorize_keyboard(

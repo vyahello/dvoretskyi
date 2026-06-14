@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from komunalka.config import get_settings
+from dvoretskyi.config import get_settings
 
 MONO_API_BASE = "https://api.monobank.ua"
 

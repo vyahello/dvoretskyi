@@ -17,12 +17,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from komunalka import clock
-from komunalka.agent import meters
-from komunalka.agent.submission import channel_for
-from komunalka.agent.vision import VisionProvider, get_vision_provider
-from komunalka.config import get_settings
-from komunalka.db.models import (
+from dvoretskyi import clock
+from dvoretskyi.agent import meters
+from dvoretskyi.agent.submission import channel_for
+from dvoretskyi.agent.vision import VisionProvider, get_vision_provider
+from dvoretskyi.config import get_settings
+from dvoretskyi.db.models import (
     MeterReading,
     MeterStatus,
     NudgeKind,
@@ -30,7 +30,7 @@ from komunalka.db.models import (
     PaymentSource,
     Provider,
 )
-from komunalka.mono import matcher
+from dvoretskyi.mono import matcher
 
 
 class ToolError(Exception):
@@ -229,7 +229,7 @@ def _render_chart(buckets: dict[str, Decimal], title: str) -> str:
     fig.tight_layout()
 
     tmp = tempfile.NamedTemporaryFile(
-        prefix="komunalka_stats_", suffix=".png", delete=False
+        prefix="dvoretskyi_stats_", suffix=".png", delete=False
     )
     fig.savefig(tmp.name, dpi=120)
     plt.close(fig)
@@ -287,7 +287,7 @@ async def snooze_reminder(
     session: AsyncSession, provider_name: str, until: object
 ) -> dict:
     """Snooze payment reminders for a provider until a given time."""
-    from komunalka.db.models import NudgeLog
+    from dvoretskyi.db.models import NudgeLog
 
     prov = await _provider_by_name(session, provider_name)
     until_dt = _parse_until(until)

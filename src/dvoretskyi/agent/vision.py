@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
-from komunalka.config import get_settings
+from dvoretskyi.config import get_settings
 
 log = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ def downscale(image_path: str, max_long_side: int) -> tuple[str, bool]:
             rgb = img.convert("RGB")
             rgb.thumbnail((max_long_side, max_long_side))
             tmp = tempfile.NamedTemporaryFile(
-                prefix="komunalka_ocr_", suffix=".jpg", delete=False
+                prefix="dvoretskyi_ocr_", suffix=".jpg", delete=False
             )
             rgb.save(tmp.name, format="JPEG", quality=85)
             return tmp.name, True

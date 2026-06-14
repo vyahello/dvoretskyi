@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from komunalka.agent import tools
-from komunalka.agent.submission import ManualAssistChannel, SmsChannel, channel_for
-from komunalka.db.models import (
+from dvoretskyi.agent import tools
+from dvoretskyi.agent.submission import ManualAssistChannel, SmsChannel, channel_for
+from dvoretskyi.db.models import (
     Category,
     MeterReading,
     MeterStatus,

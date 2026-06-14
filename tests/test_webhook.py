@@ -4,10 +4,10 @@ import httpx
 from fastapi import FastAPI
 from sqlalchemy import func, select
 
-from komunalka.config import get_settings
-from komunalka.db.models import Payment
-from komunalka.mono.schemas import StatementItem
-from komunalka.mono.webhook import Action, process_statement_item, router
+from dvoretskyi.config import get_settings
+from dvoretskyi.db.models import Payment
+from dvoretskyi.mono.schemas import StatementItem
+from dvoretskyi.mono.webhook import Action, process_statement_item, router
 
 
 def _item(**kw) -> StatementItem:

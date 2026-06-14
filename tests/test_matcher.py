@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from komunalka.mono import matcher
+from dvoretskyi.mono import matcher
 
 
 async def test_match_case_insensitive_substring(session, providers):

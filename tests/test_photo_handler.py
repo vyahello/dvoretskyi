@@ -5,9 +5,9 @@ from decimal import Decimal
 
 from aiogram.types import InlineKeyboardMarkup
 
-from komunalka import clock
-from komunalka.bot import app as bot_app
-from komunalka.db.models import MeterReading, MeterStatus
+from dvoretskyi import clock
+from dvoretskyi.bot import app as bot_app
+from dvoretskyi.db.models import MeterReading, MeterStatus
 from tests.conftest import FakeVisionProvider
 
 
@@ -33,7 +33,7 @@ def _patch_io(monkeypatch, value) -> FakeVisionProvider:
     vis = FakeVisionProvider(value)
 
     async def fake_download(message):
-        return "/tmp/komunalka_fake_meter.png"
+        return "/tmp/dvoretskyi_fake_meter.png"
 
     monkeypatch.setattr(bot_app, "_download_photo", fake_download)
     monkeypatch.setattr(bot_app, "get_vision_provider", lambda: vis)
@@ -94,4 +94,4 @@ async def test_ambiguous_capture_persists_ocr_pending_row(engine, providers, mon
         rows = (await session.execute(select(MeterReading))).scalars().all()
     assert len(rows) == 1
     assert rows[0].status is MeterStatus.ocr_pending
-    assert rows[0].photo_ref == "/tmp/komunalka_fake_meter.png"
+    assert rows[0].photo_ref == "/tmp/dvoretskyi_fake_meter.png"

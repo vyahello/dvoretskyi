@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from komunalka import clock
-from komunalka.db.models import MeterReading, MeterStatus, NudgeKind, NudgeLog
-from komunalka.reminders.engine import (
+from dvoretskyi import clock
+from dvoretskyi.db.models import MeterReading, MeterStatus, NudgeKind, NudgeLog
+from dvoretskyi.reminders.engine import (
     compute_pending_meter_nudges,
     run_meter_nudges,
 )

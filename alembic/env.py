@@ -1,4 +1,4 @@
-"""Alembic environment — async engine, URL sourced from komunalka settings."""
+"""Alembic environment — async engine, URL sourced from dvoretskyi settings."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from alembic import context
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.engine import Connection
 
-from komunalka.config import get_settings
-from komunalka.db.models import Base
+from dvoretskyi.config import get_settings
+from dvoretskyi.db.models import Base
 
 config = context.config
 if config.config_file_name is not None:

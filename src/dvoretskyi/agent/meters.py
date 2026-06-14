@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from komunalka.db.models import MeterStatus
+from dvoretskyi.db.models import MeterStatus
 
 METER_WINDOW_SPAN = 3  # nudge/route window: meter_window-SPAN … meter_window (inclusive)
 

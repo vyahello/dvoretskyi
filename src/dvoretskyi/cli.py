@@ -1,10 +1,10 @@
 """Admin CLI: seed providers, learn patterns, register the mono webhook.
 
 Usage:
-  komunalka init-db                       # create tables (dev; prefer alembic)
-  komunalka seed-providers                # seed the 6 providers (idempotent)
-  komunalka learn-pattern "<provider>" "<substr>"
-  komunalka register-mono-webhook [--dry-run]
+  dvoretskyi init-db                       # create tables (dev; prefer alembic)
+  dvoretskyi seed-providers                # seed the 6 providers (idempotent)
+  dvoretskyi learn-pattern "<provider>" "<substr>"
+  dvoretskyi register-mono-webhook [--dry-run]
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ import asyncio
 
 from sqlalchemy import select
 
-from komunalka.config import get_settings
-from komunalka.db.models import (
+from dvoretskyi.config import get_settings
+from dvoretskyi.db.models import (
     Base,
     Category,
     PatternSource,
@@ -23,8 +23,8 @@ from komunalka.db.models import (
     Provider,
     ProviderPattern,
 )
-from komunalka.db.session import get_engine, session_scope
-from komunalka.mono import client
+from dvoretskyi.db.session import get_engine, session_scope
+from dvoretskyi.mono import client
 
 # The 6 providers (spec §3a, prompt §Seed data). Patterns are TODO placeholders —
 # real mono `description` strings are captured live and added via learn-pattern/bot.
@@ -167,7 +167,7 @@ async def _register_webhook(dry_run: bool) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(prog="komunalka")
+    parser = argparse.ArgumentParser(prog="dvoretskyi")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("init-db", help="create tables (dev convenience)")

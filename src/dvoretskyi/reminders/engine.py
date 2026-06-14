@@ -20,10 +20,10 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from komunalka import clock
-from komunalka.agent import meters
-from komunalka.config import get_settings
-from komunalka.db.models import (
+from dvoretskyi import clock
+from dvoretskyi.agent import meters
+from dvoretskyi.config import get_settings
+from dvoretskyi.db.models import (
     Category,
     MeterReading,
     MeterStatus,
@@ -32,7 +32,7 @@ from komunalka.db.models import (
     Payment,
     Provider,
 )
-from komunalka.db.session import session_scope
+from dvoretskyi.db.session import session_scope
 
 log = logging.getLogger(__name__)
 
@@ -317,8 +317,8 @@ def build_scheduler() -> AsyncIOScheduler:
         client = Redis.from_url(settings.redis_url)
         client.ping()  # probe connectivity so we can fall back cleanly
         store = RedisJobStore(
-            jobs_key="komunalka.jobs",
-            run_times_key="komunalka.run_times",
+            jobs_key="dvoretskyi.jobs",
+            run_times_key="dvoretskyi.run_times",
         )
         store.redis = client
         scheduler.add_jobstore(store, alias="default")

@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from komunalka import clock
-from komunalka.db.models import NudgeKind, NudgeLog, Payment, PaymentSource
-from komunalka.reminders import engine
+from dvoretskyi import clock
+from dvoretskyi.db.models import NudgeKind, NudgeLog, Payment, PaymentSource
+from dvoretskyi.reminders import engine
 
 # Гас due_day=15. Pick a "now" inside the window (12..15), near deadline at 14/15.
 NOW = datetime(2026, 6, 14, 10, 0, tzinfo=clock.KYIV)

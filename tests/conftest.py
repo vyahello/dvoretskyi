@@ -13,10 +13,10 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from komunalka.agent.provider import Decision, LLMProvider
-from komunalka.agent.vision import MeterRead, VisionProvider
-from komunalka.db import session as db_session
-from komunalka.db.models import (
+from dvoretskyi.agent.provider import Decision, LLMProvider
+from dvoretskyi.agent.vision import MeterRead, VisionProvider
+from dvoretskyi.db import session as db_session
+from dvoretskyi.db.models import (
     Base,
     Category,
     PatternSource,

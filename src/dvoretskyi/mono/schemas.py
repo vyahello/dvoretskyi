@@ -7,7 +7,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict
 
-from komunalka.clock import KYIV
+from dvoretskyi.clock import KYIV
 
 
 class StatementItem(BaseModel):

@@ -12,8 +12,8 @@ import re
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from komunalka.config import get_settings
-from komunalka.db.models import PatternSource, Provider, ProviderPattern
+from dvoretskyi.config import get_settings
+from dvoretskyi.db.models import PatternSource, Provider, ProviderPattern
 
 # Keyword signals that an unmatched tx is probably комуналка even when no MCC hint.
 UTILITY_KEYWORDS: tuple[str, ...] = (

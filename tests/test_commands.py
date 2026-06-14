@@ -3,9 +3,9 @@ from __future__ import annotations
 import os
 from decimal import Decimal
 
-from komunalka import clock
-from komunalka.bot import app as bot_app
-from komunalka.bot.app import (
+from dvoretskyi import clock
+from dvoretskyi.bot import app as bot_app
+from dvoretskyi.bot.app import (
     _format_stats,
     _format_unpaid,
     cmd_help,
@@ -14,7 +14,7 @@ from komunalka.bot.app import (
     cmd_unpaid,
     on_text,
 )
-from komunalka.db.models import Payment, PaymentSource
+from dvoretskyi.db.models import Payment, PaymentSource
 
 
 class FakeMessage:

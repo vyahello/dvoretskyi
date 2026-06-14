@@ -6,11 +6,11 @@ from decimal import Decimal
 
 import pytest
 
-from komunalka import clock
-from komunalka.agent import tools
-from komunalka.agent.tools import ToolError
-from komunalka.db.models import Payment, PaymentSource
-from komunalka.mono import matcher
+from dvoretskyi import clock
+from dvoretskyi.agent import tools
+from dvoretskyi.agent.tools import ToolError
+from dvoretskyi.db.models import Payment, PaymentSource
+from dvoretskyi.mono import matcher
 
 
 def _payment(provider_id, amount, when, **kw):

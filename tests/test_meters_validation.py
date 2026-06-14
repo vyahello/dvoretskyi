@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from komunalka.agent.meters import validate
-from komunalka.db.models import MeterStatus
+from dvoretskyi.agent.meters import validate
+from dvoretskyi.db.models import MeterStatus
 
 
 def D(x: str | int) -> Decimal:

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from komunalka import clock
-from komunalka.agent import dispatcher
-from komunalka.agent.provider import Decision
-from komunalka.db.models import Payment, PaymentSource
+from dvoretskyi import clock
+from dvoretskyi.agent import dispatcher
+from dvoretskyi.agent.provider import Decision
+from dvoretskyi.db.models import Payment, PaymentSource
 from tests.conftest import FakeLLMProvider
 
 

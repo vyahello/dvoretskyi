@@ -14,8 +14,8 @@ import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
-from komunalka.agent.persona import BUTLER_SYSTEM_PROMPT, TOOL_CATALOG
-from komunalka.config import get_settings
+from dvoretskyi.agent.persona import BUTLER_SYSTEM_PROMPT, TOOL_CATALOG
+from dvoretskyi.config import get_settings
 
 log = logging.getLogger(__name__)
 

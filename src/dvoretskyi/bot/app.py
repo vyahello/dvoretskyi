@@ -26,11 +26,11 @@ from aiogram.types import (
 )
 from sqlalchemy import select
 
-from komunalka import clock
-from komunalka.agent import dispatcher as agent_dispatcher
-from komunalka.agent import meters
-from komunalka.agent.provider import get_provider
-from komunalka.agent.tools import (
+from dvoretskyi import clock
+from dvoretskyi.agent import dispatcher as agent_dispatcher
+from dvoretskyi.agent import meters
+from dvoretskyi.agent.provider import get_provider
+from dvoretskyi.agent.tools import (
     ToolError,
     categorize_payment,
     confirm_meter_reading,
@@ -40,10 +40,10 @@ from komunalka.agent.tools import (
     snooze_reminder,
     submit_meter_reading,
 )
-from komunalka.agent.vision import get_vision_provider
-from komunalka.bot import keyboards
-from komunalka.config import get_settings
-from komunalka.db.models import (
+from dvoretskyi.agent.vision import get_vision_provider
+from dvoretskyi.bot import keyboards
+from dvoretskyi.config import get_settings
+from dvoretskyi.db.models import (
     MeterReading,
     MeterStatus,
     NudgeKind,
@@ -51,11 +51,11 @@ from komunalka.db.models import (
     Payment,
     Provider,
 )
-from komunalka.db.session import session_scope
-from komunalka.mono.webhook import Action, Notice
+from dvoretskyi.db.session import session_scope
+from dvoretskyi.mono.webhook import Action, Notice
 
 # Private dir for in-flight meter photos; files are deleted right after processing.
-_MEDIA_DIR = Path(tempfile.gettempdir()) / "komunalka_meters"
+_MEDIA_DIR = Path(tempfile.gettempdir()) / "dvoretskyi_meters"
 
 log = logging.getLogger(__name__)
 router = Router()

@@ -4,9 +4,9 @@ from decimal import Decimal
 
 from sqlalchemy import select
 
-from komunalka.agent import tools
-from komunalka.agent.vision import _extract_json_object, _parse_meter_read
-from komunalka.db.models import MeterReading, MeterStatus
+from dvoretskyi.agent import tools
+from dvoretskyi.agent.vision import _extract_json_object, _parse_meter_read
+from dvoretskyi.db.models import MeterReading, MeterStatus
 from tests.conftest import FakeVisionProvider
 
 

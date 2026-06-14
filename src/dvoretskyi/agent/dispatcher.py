@@ -13,11 +13,11 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from komunalka import clock
-from komunalka.agent import tools as tools_mod
-from komunalka.agent.provider import Decision, LLMProvider
-from komunalka.agent.tools import ToolError
-from komunalka.db.models import MeterReading, MeterStatus, Payment, Provider
+from dvoretskyi import clock
+from dvoretskyi.agent import tools as tools_mod
+from dvoretskyi.agent.provider import Decision, LLMProvider
+from dvoretskyi.agent.tools import ToolError
+from dvoretskyi.db.models import MeterReading, MeterStatus, Payment, Provider
 
 log = logging.getLogger(__name__)
 

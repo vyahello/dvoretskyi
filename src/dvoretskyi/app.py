@@ -13,14 +13,14 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from komunalka.bot.app import (
+from dvoretskyi.bot.app import (
     build_bot,
     build_dispatcher,
     make_notifier,
     set_my_commands,
 )
-from komunalka.mono.webhook import router as mono_router
-from komunalka.reminders.engine import build_scheduler, schedule_jobs
+from dvoretskyi.mono.webhook import router as mono_router
+from dvoretskyi.reminders.engine import build_scheduler, schedule_jobs
 
 log = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ async def lifespan(app: FastAPI):
 
     # Telegram long polling as a background task.
     polling = asyncio.create_task(dp.start_polling(bot, handle_signals=False))
-    log.info("komunalka started: webhook + polling + scheduler")
+    log.info("dvoretskyi started: webhook + polling + scheduler")
 
     try:
         yield
@@ -64,11 +64,11 @@ async def lifespan(app: FastAPI):
             pass
         scheduler.shutdown(wait=False)
         await bot.session.close()
-        log.info("komunalka stopped")
+        log.info("dvoretskyi stopped")
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Komunalka — Комунальний Дворецький", lifespan=lifespan)
+    app = FastAPI(title="Комунальний Дворецький", lifespan=lifespan)
     app.include_router(mono_router)
 
     @app.get("/health")

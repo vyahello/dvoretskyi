@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     telegram_allowed_user_id: int = 0
 
     # --- infra ---
-    database_url: str = "sqlite+aiosqlite:///./komunalka.db"
+    database_url: str = "sqlite+aiosqlite:///./dvoretskyi.db"
     redis_url: str = "redis://localhost:6379/0"
 
     # --- LLM ---
