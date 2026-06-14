@@ -172,9 +172,16 @@ async def get_unpaid(session: AsyncSession, cycle: str | None = None) -> dict:
         .scalars()
         .all()
     )
+    autopay_day = get_settings().mobile_autopay_day
     for prov in mobile_provs:
         if not await _paid_in_cycle(session, prov.id, cycle):
-            auto_pending.append({"provider": prov.name, "category": prov.category.value})
+            auto_pending.append(
+                {
+                    "provider": prov.name,
+                    "category": prov.category.value,
+                    "autopay_day": autopay_day,
+                }
+            )
 
     return {
         "cycle": cycle,

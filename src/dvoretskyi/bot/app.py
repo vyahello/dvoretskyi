@@ -99,7 +99,8 @@ def _format_unpaid(result: dict) -> str:
     auto_note = ""
     if auto:
         names = ", ".join(i["provider"] for i in auto)
-        auto_note = f"\n⏳ {names} — автосписанням monobank, ще не пройшло."
+        day = auto[0].get("autopay_day") or get_settings().mobile_autopay_day
+        auto_note = f"\n⏳ {names} — автосписанням monobank {day}-го, ще не пройшло."
 
     if result.get("all_clear"):
         head = (

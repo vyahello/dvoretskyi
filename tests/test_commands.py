@@ -96,7 +96,7 @@ def test_format_unpaid_mentions_mobile_autopay():
     out = _format_unpaid(
         {"all_clear": True, "open": [], "auto_pending": [{"provider": "Мобільний"}]}
     )
-    assert "Мобільний" in out and "автосписанням" in out
+    assert "Мобільний" in out and "автосписанням" in out and "20-го" in out
     assert "цього місяця все оплачено" not in out
 
 

@@ -73,6 +73,7 @@ class Settings(BaseSettings):
     dah_pay_url: str = "https://apps.apple.com/app/id1444141366"
     # Mobile is auto-paid (scheduled mono payment); link is just for a manual top-up.
     mobile_pay_url: str = "https://www.portmone.com.ua/popovnyty-rakhunok-mobilnoho"
+    mobile_autopay_day: int = 20  # day-of-month the scheduled mono charge runs
 
     # --- Gigabit+ balance scraper (L2) — cabinet.gigabit.te.ua (Laravel CSRF form) ---
     gigabit_login: str = ""  # login id; falls back to gigabit_account if empty
