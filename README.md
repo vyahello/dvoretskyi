@@ -48,16 +48,12 @@ Python 3.12+ · FastAPI · aiogram 3 · SQLAlchemy 2.0 (async) + Alembic · APSc
 (Redis jobstore, memory fallback) · pydantic-settings · Pillow · LLM + vision OCR via
 headless Claude Code CLI (`claude -p`). Tooling: pytest · Ruff (lint + format) · mypy.
 
-> ⚠️ **Never set `ANTHROPIC_API_KEY`.** Claude Code prioritizes it over the Max
-> subscription and silently bills the API. The bot strips it from the `claude`
-> subprocess env; keep it out of `.env` and the service environment.
-
 ## Quick start
 ```bash
 git clone git@github.com:vyahello/dvoretskyi.git && cd dvoretskyi
 python -m venv venv && source venv/bin/activate
 uv pip install -e ".[dev]"          # or: pip install -e ".[dev]"
-cp .env.example .env                # fill tokens — do NOT add ANTHROPIC_API_KEY
+cp .env.example .env                # fill in your tokens
 
 alembic upgrade head                # create schema
 dvoretskyi seed-providers            # seed the 6 providers (idempotent)

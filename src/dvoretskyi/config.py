@@ -1,8 +1,6 @@
 """Application configuration via pydantic-settings.
 
-All secrets and tunables come from the environment / .env. Note: ANTHROPIC_API_KEY
-is deliberately NOT a setting here — Claude Code must use the Max subscription, and
-the API key is stripped from the claude subprocess env (see agent/provider.py, spec §8).
+All secrets and tunables come from the environment / .env.
 """
 
 from __future__ import annotations

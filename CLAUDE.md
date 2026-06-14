@@ -7,12 +7,8 @@ webhook. **Phase 2 (done):** meter readings — photo → OCR → delta-validate
 payment initiation** (Phase 3), no provider balance scraping. See `docs/` for the spec
 and the per-phase build prompts.
 
-## ⚠️ Hard rule: never set ANTHROPIC_API_KEY
-Claude Code prioritizes `ANTHROPIC_API_KEY` over the Max subscription and silently
-bills the API (documented ~$1,800-in-2-days footgun). The bot **strips it** from the
-`claude` subprocess env (`agent/provider.py::ClaudeCodeProvider._child_env`). Do not
-add it to `.env`, systemd unit, or shell profile of the service user. Auth Claude Code
-via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
+## Auth
+Auth Claude Code via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
 
 ## Layout
 - `config.py` — pydantic-settings (`get_settings()`), `.env`-driven.
@@ -39,7 +35,7 @@ via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
 ```bash
 python -m venv venv && source venv/bin/activate
 uv pip install -e ".[dev]"           # or: pip install -e ".[dev]"
-cp .env.example .env                 # fill in tokens; DO NOT add ANTHROPIC_API_KEY
+cp .env.example .env                 # fill in tokens
 ```
 
 ## DB / migrations
@@ -72,8 +68,8 @@ zero / spike vs history → `needs_confirm`) → store `MeterReading` → submit
   auto-submission** unless a channel is explicitly enabled in `SUBMISSION_CHANNELS`.
 - Only **gas** and **water** have meters (set `Provider.meter_window`). Electricity /
   internet / housing have none. OCR failure → `value=None` → ask to retype (never guess).
-- Vision subprocess **also strips `ANTHROPIC_API_KEY`**; temp photos live in a private
-  dir and are deleted right after processing (image bytes never logged).
+- Temp photos live in a private dir and are deleted right after processing (image bytes
+  never logged).
 
 ## Run
 ```bash
@@ -102,7 +98,7 @@ and pass `now` explicitly to reminder/window logic (no time-freezing dependency)
 `UTILITY_MCCS`, `TZ`, `PUBLIC_BASE_URL`. **Meters:** `CLAUDE_VISION_TIMEOUT_SECONDS`
 (vision is slower than text), `SUBMISSION_CHANNELS=gas:manual,water:manual`,
 `SMS_GATEWAY_URL` (empty → deep link only), `OCR_MAX_LONG_SIDE`, `DELTA_SPIKE_K`,
-`DELTA_ABS_CAP`, `GAS_METER_DAY`, `WATER_METER_DAY`. **Never** `ANTHROPIC_API_KEY`.
+`DELTA_ABS_CAP`, `GAS_METER_DAY`, `WATER_METER_DAY`.
 
 ## Conventions
 - Conventional commits, one logical change each.

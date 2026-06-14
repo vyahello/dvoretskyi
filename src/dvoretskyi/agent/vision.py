@@ -1,8 +1,7 @@
 """Vision OCR for meter photos, behind a `VisionProvider` abstraction.
 
 The default `ClaudeCodeVisionProvider` drives the first-party Claude Code CLI with the
-`Read` tool enabled so it can view the image at a path. Same env hardening as the text
-provider: `ANTHROPIC_API_KEY` is stripped so the Max subscription is used (spec §8).
+`Read` tool enabled so it can view the image at a path.
 
 On any failure the contract is `value=None` — the pipeline then asks the user to retype
 the reading rather than guessing. Image bytes are never logged.
@@ -137,11 +136,6 @@ class ClaudeCodeVisionProvider(VisionProvider):
         self.timeout = settings.claude_vision_timeout_seconds
         self.max_long_side = settings.ocr_max_long_side
 
-    @staticmethod
-    def _child_env() -> dict[str, str]:
-        # MANDATORY (spec §8): strip ANTHROPIC_API_KEY so the Max subscription is used.
-        return {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
-
     async def _invoke(self, prompt: str) -> str | None:
         args = [
             self.bin,
@@ -157,7 +151,6 @@ class ClaudeCodeVisionProvider(VisionProvider):
                 *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=self._child_env(),
             )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=self.timeout

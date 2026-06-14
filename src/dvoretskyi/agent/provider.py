@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
@@ -80,12 +79,6 @@ class ClaudeCodeProvider(LLMProvider):
             "Жодного тексту поза JSON."
         )
 
-    @staticmethod
-    def _child_env() -> dict[str, str]:
-        # MANDATORY: strip ANTHROPIC_API_KEY so Claude Code uses the Max subscription
-        # and never silently bills the API (spec §8).
-        return {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
-
     async def _invoke(self, prompt: str) -> str | None:
         """Run claude once; return the model's text (.result) or None on failure."""
         args = [
@@ -104,7 +97,6 @@ class ClaudeCodeProvider(LLMProvider):
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=self._child_env(),
             )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(prompt.encode("utf-8")), timeout=self.timeout
