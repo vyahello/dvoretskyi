@@ -45,11 +45,15 @@ NUDGE_WINDOW_DAYS = 3  # start nudging this many days before due_day
 
 
 class Notifier(Protocol):
-    """Sends a nudge to the user. `pay_link`, if given, is rendered as a tappable
-    button by the bot layer (the engine stays aiogram-free, passing only a URL str)."""
+    """Sends a nudge to the user. `pay_link`/`pay_label`, if given, render a tappable
+    button by the bot layer (the engine stays aiogram-free, passing only strings)."""
 
     async def __call__(
-        self, chat_id: int, text: str, pay_link: str | None = None
+        self,
+        chat_id: int,
+        text: str,
+        pay_link: str | None = None,
+        pay_label: str | None = None,
     ) -> None: ...
 
 
@@ -60,6 +64,8 @@ class PendingNudge:
     due_day: int
     expected_amount: str | None
     near_deadline: bool
+    pay_link: str | None = None
+    pay_label: str | None = None
 
     def message(self) -> str:
         amount = f" (≈{self.expected_amount} ₴)" if self.expected_amount else ""
@@ -108,6 +114,8 @@ async def compute_pending_nudges(
         .all()
     )
 
+    from dvoretskyi.agent.balance import pay_link_for
+
     pending: list[PendingNudge] = []
     for prov in providers:
         due = prov.due_day
@@ -139,6 +147,7 @@ async def compute_pending_nudges(
             if nudged_day == now.astimezone(clock.KYIV).date():
                 continue  # already nudged today
 
+        link, label = pay_link_for(prov)
         pending.append(
             PendingNudge(
                 provider_id=prov.id,
@@ -150,6 +159,8 @@ async def compute_pending_nudges(
                     else None
                 ),
                 near_deadline=today >= due - 1,
+                pay_link=link,
+                pay_label=label,
             )
         )
     return pending
@@ -187,7 +198,12 @@ async def run_payment_nudges(
 
     # Send outside the DB transaction.
     for item in pending:
-        await send(get_settings().telegram_allowed_user_id, item.message())
+        await send(
+            get_settings().telegram_allowed_user_id,
+            item.message(),
+            pay_link=item.pay_link,
+            pay_label=item.pay_label,
+        )
     return pending
 
 

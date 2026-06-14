@@ -113,9 +113,12 @@ to submit.
 - **Reminders:** daily jobs nudge for (1) **payments** inside the due-day window
   (escalating near the deadline), (2) **meters** inside the submission window (the last
   `meter_window` days of the month), and (3) a **low Gigabit+ balance** (below the
-  monthly fee) — the balance nudge carries the same **«💳 Поповнити»** button. Each
-  fires once per day, respecting **snooze** (`snooze_reminder` / "відклади …" silences
-  payment + balance for that provider).
+  monthly fee). Each fires once per day, respecting **snooze**. Nudges carry a tappable
+  **pay button** to the right place: utilities → the **monobank** app, Кварплата → the
+  **ДАХ** app, Gigabit+ → its prefilled **Portmone** top-up (iOS App Store / universal
+  links; no card data touches the bot). Mobile is **auto-paid** (a scheduled monobank
+  payment) so it has no reminder — top-ups still arrive via the webhook, and a manual
+  top-up link is available on request.
 
 ## Test & static analysis
 ```bash

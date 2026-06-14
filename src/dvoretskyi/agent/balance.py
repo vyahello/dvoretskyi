@@ -18,10 +18,14 @@ import re
 import time
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from typing import TYPE_CHECKING
 
 import httpx
 
 from dvoretskyi.config import get_settings
+
+if TYPE_CHECKING:
+    from dvoretskyi.db.models import Provider
 
 log = logging.getLogger(__name__)
 
@@ -56,13 +60,27 @@ def gigabit_pay_link() -> str:
 
 
 def mobile_pay_link() -> str:
-    """Mobile top-up link. There's no balance API for mobile, so this is purely a "pay"
-    link — the operator's Portmone page, with the phone (from mobile_account) and the
-    default top-up amount substituted if the template uses `{phone}` / `{amount}`."""
+    """Static mobile top-up link (Portmone). No phone number is used or stored."""
+    return get_settings().mobile_pay_url
+
+
+def pay_link_for(provider: Provider) -> tuple[str | None, str | None]:
+    """(url, button label) for a provider's payment, or (None, None) if no link.
+
+    Utilities paid in mono «Комунальні» → monobank app; Кварплата (ДАХ) → ДАХ app;
+    Gigabit+ → its Portmone top-up (prefilled). iOS App Store / universal links.
+    """
+    from dvoretskyi.db.models import Category
+
     st = get_settings()
-    return st.mobile_pay_url_template.format(
-        phone=st.mobile_account, amount=f"{st.mobile_topup_amount:.2f}"
-    )
+    name = provider.name.casefold()
+    if provider.category is Category.housing:
+        return st.dah_pay_url, "📲 Відкрити ДАХ"
+    if "gigabit" in name:
+        return gigabit_pay_link(), "💳 Поповнити"
+    if provider.category in (Category.water, Category.electricity, Category.gas):
+        return st.monobank_pay_url, "📲 Відкрити monobank"
+    return None, None
 
 
 def _to_decimal(value: object) -> Decimal | None:

@@ -90,11 +90,10 @@ SEED_PROVIDERS = [
         category=Category.mobile,
         pay_channel=PayChannel.mono_communal,
         auto_logged=True,
-        due_day=20,
+        due_day=None,  # auto-paid (scheduled mono payment) → no payment reminder
         expected_amount=None,
-        account_number=_settings.mobile_account or None,  # phone no. from env
-        # No meter. mono lists it under «Поповнення мобільного», not «Комуналка», so it
-        # arrives via the unmatched-tx flow (telecom MCC) → categorize-and-learn.
+        # No phone stored. mono lists top-ups under «Поповнення мобільного», not
+        # «Комуналка», so it still arrives via the unmatched-tx flow (telecom MCC).
     ),
 ]
 
@@ -116,7 +115,11 @@ async def _seed_providers() -> None:
                 )
             ).scalar_one_or_none()
             if exists is not None:
-                # Backfill meter fields for providers seeded before they existed.
+                # Backfill fields for providers seeded before these were set.
+                due = spec.get("due_day")
+                if (due is None or isinstance(due, int)) and exists.due_day != due:
+                    exists.due_day = due
+                    print(f"Updated due_day for {exists.name} → {due}.")
                 window = spec.get("meter_window")
                 if isinstance(window, int) and exists.meter_window != window:
                     exists.meter_window = window

@@ -81,7 +81,7 @@ async def test_already_nudged_today_suppressed(session, providers):
 async def test_run_payment_nudges_sends_once_per_day(session, providers):
     sent: list[tuple[int, str]] = []
 
-    async def fake_send(chat_id: int, text: str) -> None:
+    async def fake_send(chat_id: int, text: str, pay_link=None, pay_label=None) -> None:
         sent.append((chat_id, text))
 
     fired = await engine.run_payment_nudges(fake_send, now=NOW)

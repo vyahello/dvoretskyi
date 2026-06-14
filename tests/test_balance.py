@@ -83,14 +83,33 @@ def test_pay_link_falls_back_without_account(monkeypatch):
     assert gigabit_pay_link() == st.gigabit_base_url
 
 
-def test_mobile_pay_link_uses_template(monkeypatch):
+def test_pay_link_for_by_category(monkeypatch):
+    from dvoretskyi.agent.balance import pay_link_for
+    from dvoretskyi.db.models import Category, PayChannel, Provider
+
     st = get_settings()
-    monkeypatch.setattr(st, "mobile_account", "0000000000")
-    # default template has no {phone} → returns the operator page as-is
-    assert mobile_pay_link() == "https://www.portmone.com.ua/r3/kyivstar"
-    # a prefilling template substitutes the phone
-    monkeypatch.setattr(st, "mobile_pay_url_template", "https://pay.example/?n={phone}")
-    assert mobile_pay_link() == "https://pay.example/?n=0000000000"
+    monkeypatch.setattr(st, "monobank_pay_url", "https://mono.app")
+    monkeypatch.setattr(st, "dah_pay_url", "https://dah.app")
+    monkeypatch.setattr(st, "gigabit_account", "0000TEST")
+    monkeypatch.setattr(st, "gigabit_login", "")
+
+    def prov(name, cat):
+        return Provider(name=name, category=cat, pay_channel=PayChannel.mono_communal)
+
+    url, label = pay_link_for(prov("Газ (постачання)", Category.gas))
+    assert url == "https://mono.app" and "monobank" in label
+    url, label = pay_link_for(prov("Кварплата (ДАХ)", Category.housing))
+    assert url == "https://dah.app" and "ДАХ" in label
+    url, label = pay_link_for(prov("Інтернет (Gigabit+)", Category.internet))
+    assert "portmone" in url and "0000TEST" in url and label == "💳 Поповнити"
+    url, label = pay_link_for(prov("Мобільний", Category.mobile))
+    assert url is None and label is None  # mobile is auto-paid → no nudge button
+
+
+def test_mobile_pay_link_is_static_no_phone(monkeypatch):
+    st = get_settings()
+    monkeypatch.setattr(st, "mobile_pay_url", "https://pay.example/mobile")
+    assert mobile_pay_link() == "https://pay.example/mobile"  # no phone in it
 
 
 async def test_mobile_get_provider_balance_returns_pay_link(session, providers):
@@ -102,13 +121,12 @@ async def test_mobile_get_provider_balance_returns_pay_link(session, providers):
             name="Мобільний",
             category=Category.mobile,
             pay_channel=PayChannel.mono_communal,
-            due_day=20,
         )
     )
     await session.commit()
     res = await tools.get_provider_balance(session, "Мобільний")
     assert res["ok"] and res["pay_link"]
-    assert res["pay_label"] == "💳 Поповнити мобільний 600 ₴"  # default amount on button
+    assert res["pay_label"] == "💳 Поповнити мобільний"
 
 
 async def test_missing_credentials_returns_not_ok(monkeypatch):

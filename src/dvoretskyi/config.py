@@ -63,10 +63,16 @@ class Settings(BaseSettings):
     # (readings are due by the last day of the month). Seeds Provider.meter_window.
     meter_window_days: int = 3
 
-    # Personal account identifiers — kept out of code/git, seeded into Provider.
-    # account_number. Empty = unknown (left null). gigabit = contract no., mobile = phone.
+    # Personal account identifier — kept out of code/git, seeded into Provider.
+    # account_number. Empty = unknown (left null). gigabit = contract no.
     gigabit_account: str = ""
-    mobile_account: str = ""
+
+    # --- pay links per provider (iOS apps / Portmone; no personal data) ---
+    # Utilities paid in mono «Комунальні» → open the monobank app; ДАХ → the ДАХ app.
+    monobank_pay_url: str = "https://apps.apple.com/app/id1287005205"
+    dah_pay_url: str = "https://apps.apple.com/app/id1444141366"
+    # Mobile is auto-paid (scheduled mono payment); link is just for a manual top-up.
+    mobile_pay_url: str = "https://www.portmone.com.ua/popovnyty-rakhunok-mobilnoho"
 
     # --- Gigabit+ balance scraper (L2) — cabinet.gigabit.te.ua (Laravel CSRF form) ---
     gigabit_login: str = ""  # login id; falls back to gigabit_account if empty
@@ -87,12 +93,6 @@ class Settings(BaseSettings):
         "https://www.portmone.com.ua/r3/popovnyty-internet-gigabitplus-lviv"
         "?contract_number_terminal={account}&contract_bill_amount={amount}"
     )
-    # Mobile top-up link. No balance API for mobile — this is just a "pay" link. Default
-    # is the operator's Portmone page (093 = Kyivstar); {phone} (from mobile_account) and
-    # {amount} are substituted if the template uses them. Replace with a prefilled link
-    # if you have one. mobile_topup_amount is the default top-up shown on the button.
-    mobile_pay_url_template: str = "https://www.portmone.com.ua/r3/kyivstar"
-    mobile_topup_amount: Decimal = Decimal("600")
 
     # --- misc ---
     tz: str = "Europe/Kyiv"
