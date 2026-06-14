@@ -66,7 +66,9 @@ async def test_get_stats_aggregates_by_provider(session, providers):
     res = await tools.get_stats(session, period="all", breakdown="provider")
     assert res["total"] == "680.00"
     top = res["items"][0]
-    assert top["label"] == "Газ (постачання)" and top["total"] == "500.00"
+    assert (
+        top["label"] == "Газ" and top["total"] == "500.00"
+    )  # gas collapsed to one block
     assert res["chart_path"] and os.path.exists(res["chart_path"])
     os.unlink(res["chart_path"])
 
@@ -86,6 +88,54 @@ async def test_get_stats_breakdown_by_month(session, providers):
     assert res["total"] == "300.00"
     if res["chart_path"]:
         os.unlink(res["chart_path"])
+
+
+async def test_get_stats_collapses_gas_into_one_block(session, providers):
+    from dvoretskyi.db.models import Category, PayChannel, Provider
+
+    deliv = Provider(
+        name="Газ (доставлення)",
+        category=Category.gas,
+        pay_channel=PayChannel.mono_communal,
+        due_day=20,
+    )
+    session.add(deliv)
+    await session.flush()
+    gas = providers["Газ (постачання)"]
+    now = clock.now()
+    session.add_all(
+        [
+            _payment(gas.id, "300.00", now, tx="gp"),
+            _payment(deliv.id, "100.00", now, tx="gd"),
+        ]
+    )
+    await session.commit()
+
+    res = await tools.get_stats(session, period="all", breakdown="provider")
+    labels = {i["label"] for i in res["items"]}
+    assert "Газ" in labels  # both gas providers merged into one block
+    assert "Газ (постачання)" not in labels and "Газ (доставлення)" not in labels
+    gas_item = next(i for i in res["items"] if i["label"] == "Газ")
+    assert gas_item["total"] == "400.00"
+    if res["chart_path"]:
+        os.unlink(res["chart_path"])
+
+
+async def test_get_unpaid_reports_mobile_autopay_pending(session, providers):
+    from dvoretskyi.db.models import Category, PayChannel, Provider
+
+    # Mobile: due_day=None → never in `open` (no nag), but surfaced as auto_pending.
+    session.add(
+        Provider(
+            name="Мобільний",
+            category=Category.mobile,
+            pay_channel=PayChannel.mono_communal,
+        )
+    )
+    await session.commit()
+    res = await tools.get_unpaid(session)
+    assert any(a["provider"] == "Мобільний" for a in res["auto_pending"])
+    assert all(o["provider"] != "Мобільний" for o in res["open"])
 
 
 async def test_log_payment_manual(session, providers):

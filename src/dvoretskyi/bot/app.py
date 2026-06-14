@@ -95,8 +95,19 @@ HELP_TEXT = (
 
 def _format_unpaid(result: dict) -> str:
     """Compact butler-voice rendering of get_unpaid output."""
+    auto = result.get("auto_pending") or []
+    auto_note = ""
+    if auto:
+        names = ", ".join(i["provider"] for i in auto)
+        auto_note = f"\n⏳ {names} — автосписанням monobank, ще не пройшло."
+
     if result.get("all_clear"):
-        return "✅ Усе чисто — цього місяця все оплачено."
+        head = (
+            "✅ Усе, що треба, оплачено."
+            if auto
+            else "✅ Усе чисто — цього місяця все оплачено."
+        )
+        return head + auto_note
     lines = ["Відкрите цього місяця:"]
     for item in result["open"]:
         amount = (
@@ -106,7 +117,7 @@ def _format_unpaid(result: dict) -> str:
         )
         due = f" — до {item['due_day']}-го" if item.get("due_day") else ""
         lines.append(f"• {item['provider']}{amount}{due}")
-    return "\n".join(lines)
+    return "\n".join(lines) + auto_note
 
 
 def _format_stats(result: dict) -> str:

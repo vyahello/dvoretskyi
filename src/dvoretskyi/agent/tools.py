@@ -23,6 +23,7 @@ from dvoretskyi.agent.submission import channel_for
 from dvoretskyi.agent.vision import VisionProvider, get_vision_provider
 from dvoretskyi.config import get_settings
 from dvoretskyi.db.models import (
+    Category,
     MeterReading,
     MeterStatus,
     NudgeKind,
@@ -158,7 +159,29 @@ async def get_unpaid(session: AsyncSession, cycle: str | None = None) -> dict:
             }
         )
 
-    return {"cycle": cycle, "open": open_items, "all_clear": not open_items}
+    # Mobile is auto-paid (scheduled mono payment) → not nagged (due_day=None, so it's
+    # not in `open`), but surfaced separately so we don't claim "все оплачено" before it
+    # actually charges this cycle.
+    auto_pending: list[dict] = []
+    mobile_provs = (
+        (
+            await session.execute(
+                select(Provider).where(Provider.category == Category.mobile)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for prov in mobile_provs:
+        if not await _paid_in_cycle(session, prov.id, cycle):
+            auto_pending.append({"provider": prov.name, "category": prov.category.value})
+
+    return {
+        "cycle": cycle,
+        "open": open_items,
+        "all_clear": not open_items,
+        "auto_pending": auto_pending,
+    }
 
 
 async def get_stats(
@@ -181,9 +204,9 @@ async def get_stats(
         for p in payments:
             key = clock.cycle_of(p.paid_at)
             buckets[key] = buckets.get(key, Decimal("0")) + p.amount_uah
-    else:  # provider
+    else:  # provider — both gas providers collapse into one "Газ" block
         names = {
-            prov.id: prov.name
+            prov.id: ("Газ" if prov.category is Category.gas else prov.name)
             for prov in (await session.execute(select(Provider))).scalars()
         }
         for p in payments:
@@ -214,8 +237,16 @@ async def get_stats(
 
 # Distinct colour per group, cycled if there are more groups than colours.
 _CHART_PALETTE = (
-    "#2a9d8f", "#e76f51", "#e9c46a", "#264653", "#8ab17d",
-    "#f4a261", "#5b8e7d", "#bc4749", "#457b9d", "#9d4edd",
+    "#2a9d8f",
+    "#e76f51",
+    "#e9c46a",
+    "#264653",
+    "#8ab17d",
+    "#f4a261",
+    "#5b8e7d",
+    "#bc4749",
+    "#457b9d",
+    "#9d4edd",
 )
 
 

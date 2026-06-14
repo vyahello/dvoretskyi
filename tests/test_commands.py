@@ -90,6 +90,16 @@ def test_format_unpaid_all_clear_unit():
     assert _format_unpaid({"all_clear": True, "open": []}).startswith("✅ Усе чисто")
 
 
+def test_format_unpaid_mentions_mobile_autopay():
+    # All tracked paid, but mobile's scheduled charge hasn't happened → don't claim
+    # "все оплачено"; mention the auto-payment instead.
+    out = _format_unpaid(
+        {"all_clear": True, "open": [], "auto_pending": [{"provider": "Мобільний"}]}
+    )
+    assert "Мобільний" in out and "автосписанням" in out
+    assert "цього місяця все оплачено" not in out
+
+
 # --- /stats ----------------------------------------------------------------
 
 
