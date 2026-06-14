@@ -279,21 +279,25 @@ def _render_chart(buckets: dict[str, Decimal], title: str) -> str:
         pad=14,
     )
 
-    # Big, bold value + share label at the end of each bar.
+    # Big, bold value + share label. Long bars: label INSIDE (white, right-aligned) so
+    # it never clips the frame; short bars: OUTSIDE (dark, left-aligned).
+    xmax = max(values) if values else 1.0
     for bar, val in zip(bars, values, strict=False):
         share = f"   {val / total:.0%}" if total else ""
+        text = f"{val:,.0f} ₴{share}".replace(",", " ")
+        inside = bar.get_width() > xmax * 0.55
         ax.text(
-            bar.get_width(),
+            bar.get_width() - (xmax * 0.012 if inside else -xmax * 0.012),
             bar.get_y() + bar.get_height() / 2,
-            f"  {val:,.0f} ₴{share}".replace(",", " "),
+            text,
             va="center",
-            ha="left",
+            ha="right" if inside else "left",
             fontsize=14,
             fontweight="bold",
-            color="#264653",
+            color="white" if inside else "#264653",
         )
 
-    ax.margins(x=0.22)  # room for the labels
+    ax.set_xlim(0, xmax * 1.30)  # headroom for the outside labels
     for side in ("top", "right", "bottom"):
         ax.spines[side].set_visible(False)
     # Big group labels on the left; bars are self-labelled so no x-axis.
