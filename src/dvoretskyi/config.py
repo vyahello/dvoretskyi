@@ -88,9 +88,11 @@ class Settings(BaseSettings):
         "?contract_number_terminal={account}&contract_bill_amount={amount}"
     )
     # Mobile top-up link. No balance API for mobile — this is just a "pay" link. Default
-    # is the operator's Portmone page (093 = Kyivstar); {phone} (from mobile_account) is
-    # substituted if the template uses it. Replace with a prefilled link if you have one.
+    # is the operator's Portmone page (093 = Kyivstar); {phone} (from mobile_account) and
+    # {amount} are substituted if the template uses them. Replace with a prefilled link
+    # if you have one. mobile_topup_amount is the default top-up shown on the button.
     mobile_pay_url_template: str = "https://www.portmone.com.ua/r3/kyivstar"
+    mobile_topup_amount: Decimal = Decimal("600")
 
     # --- misc ---
     tz: str = "Europe/Kyiv"

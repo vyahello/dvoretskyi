@@ -107,7 +107,8 @@ async def test_mobile_get_provider_balance_returns_pay_link(session, providers):
     )
     await session.commit()
     res = await tools.get_provider_balance(session, "Мобільний")
-    assert res["ok"] and res["pay_link"] and res["pay_label"] == "💳 Поповнити мобільний"
+    assert res["ok"] and res["pay_link"]
+    assert res["pay_label"] == "💳 Поповнити мобільний 600 ₴"  # default amount on button
 
 
 async def test_missing_credentials_returns_not_ok(monkeypatch):

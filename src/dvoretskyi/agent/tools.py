@@ -563,14 +563,17 @@ async def get_provider_balance(session: AsyncSession, provider_name: str) -> dic
     )
 
     if "мобільн" in name:
-        link = mobile_pay_link()
+        amt = str(get_settings().mobile_topup_amount)
+        if "." in amt:  # trim fractional zeros: 600.00 → 600
+            amt = amt.rstrip("0").rstrip(".")
         return {
             "ok": True,
             "provider": prov.name,
-            "pay_link": link,
-            "pay_label": "💳 Поповнити мобільний",
+            "pay_link": mobile_pay_link(),
+            "pay_label": f"💳 Поповнити мобільний {amt} ₴",
             "message": (
-                "Баланс мобільного оператор не показує — але ось куди поповнити:"
+                f"Баланс мобільного оператор не показує — ось куди поповнити "
+                f"(за замовчуванням {amt} ₴):"
             ),
         }
 
