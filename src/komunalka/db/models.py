@@ -69,6 +69,8 @@ class MeterStatus(enum.StrEnum):
 
 # Numeric(12, 2) — UAH amounts; mapped to Decimal.
 _Money = Numeric(12, 2)
+# Numeric(14, 3) — meter readings need up to 3 decimals (water); gas uses 2.
+_Reading = Numeric(14, 3)
 
 
 class Provider(Base):
@@ -86,6 +88,9 @@ class Provider(Base):
     # Day-of-month a meter reading is due (L2). Null = no meter (electricity, internet,
     # housing). Gas ≤ 5, water per ВК schedule. Drives meter-window reminders.
     meter_window: Mapped[int | None] = mapped_column(Integer, default=None)
+    # Decimal places a reading is kept/submitted at — source of truth for precision.
+    # Water = 3 (ВК accepts 3), gas = 2; 0 for non-meter providers.
+    meter_decimals: Mapped[int] = mapped_column(Integer, default=0)
     auto_logged: Mapped[bool] = mapped_column(Boolean, default=False)
 
     patterns: Mapped[list[ProviderPattern]] = relationship(
@@ -163,9 +168,9 @@ class MeterReading(Base):
         ForeignKey("providers.id", ondelete="CASCADE"), default=None
     )
     cycle: Mapped[str] = mapped_column(String(7))  # "YYYY-MM"
-    value: Mapped[Decimal | None] = mapped_column(_Money, default=None)
+    value: Mapped[Decimal | None] = mapped_column(_Reading, default=None)
     ocr_raw: Mapped[str | None] = mapped_column(String(64), default=None)
-    consumption_delta: Mapped[Decimal | None] = mapped_column(_Money, default=None)
+    consumption_delta: Mapped[Decimal | None] = mapped_column(_Reading, default=None)
     photo_ref: Mapped[str | None] = mapped_column(String(512), default=None)
     status: Mapped[MeterStatus] = mapped_column(SAEnum(MeterStatus, name="meter_status"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

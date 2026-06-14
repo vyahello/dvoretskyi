@@ -43,7 +43,11 @@ class SubmissionChannel(ABC):
 def _gas_sms_body(reading: MeterReading) -> str:
     # gas.ua 4647 expects the account number + reading; the user has the real account.
     acct = provider_account(reading)
-    val = "" if reading.value is None else f"{reading.value:f}".rstrip("0").rstrip(".")
+    if reading.value is None:
+        val = ""
+    else:
+        decimals = (reading.provider.meter_decimals if reading.provider else 0) or 0
+        val = f"{reading.value:.{decimals}f}"
     return f"{acct} {val}".strip()
 
 

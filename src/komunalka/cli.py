@@ -39,6 +39,7 @@ SEED_PROVIDERS = [
         due_day=20,
         expected_amount=None,
         meter_window=_settings.water_meter_day,
+        meter_decimals=3,
     ),
     dict(
         name="Електроенергія (ЛЕЗ)",
@@ -56,6 +57,7 @@ SEED_PROVIDERS = [
         due_day=20,
         expected_amount=None,
         meter_window=_settings.gas_meter_day,
+        meter_decimals=2,
     ),
     dict(
         name="Газ (доставлення)",
@@ -101,11 +103,15 @@ async def _seed_providers() -> None:
                 )
             ).scalar_one_or_none()
             if exists is not None:
-                # Backfill meter_window for providers seeded before Phase 2.
-                want = spec.get("meter_window")
-                if isinstance(want, int) and exists.meter_window != want:
-                    exists.meter_window = want
-                    print(f"Updated meter_window for {exists.name} → {want}.")
+                # Backfill meter fields for providers seeded before they existed.
+                window = spec.get("meter_window")
+                if isinstance(window, int) and exists.meter_window != window:
+                    exists.meter_window = window
+                    print(f"Updated meter_window for {exists.name} → {window}.")
+                decimals = spec.get("meter_decimals")
+                if isinstance(decimals, int) and exists.meter_decimals != decimals:
+                    exists.meter_decimals = decimals
+                    print(f"Updated meter_decimals for {exists.name} → {decimals}.")
                 continue
             provider = Provider(account_number=None, **spec)
             session.add(provider)

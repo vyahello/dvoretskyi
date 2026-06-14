@@ -56,7 +56,8 @@ async def session(engine) -> AsyncSession:
 @pytest_asyncio.fixture
 async def providers(session) -> dict[str, Provider]:
     """Seed a small provider set with real (test) match patterns."""
-    # (name, category, pay_channel, auto_logged, due_day, expected, patterns, meter_win)
+    # (name, category, pay_channel, auto_logged, due_day, expected, patterns,
+    #  meter_window, meter_decimals)
     specs = [
         (
             "Газ (постачання)",
@@ -67,6 +68,7 @@ async def providers(session) -> dict[str, Provider]:
             None,
             ["naftogaz"],
             5,
+            2,
         ),
         (
             "Холодна вода",
@@ -77,6 +79,7 @@ async def providers(session) -> dict[str, Provider]:
             Decimal("180.00"),
             ["vodokanal"],
             25,
+            3,
         ),
         (
             "Інтернет (Gigabit+)",
@@ -87,6 +90,7 @@ async def providers(session) -> dict[str, Provider]:
             Decimal("250.00"),
             [],
             None,
+            0,
         ),
         (
             "Кварплата (ДАХ)",
@@ -97,10 +101,11 @@ async def providers(session) -> dict[str, Provider]:
             None,
             [],
             None,
+            0,
         ),
     ]
     out: dict[str, Provider] = {}
-    for name, cat, ch, auto, due, expected, patterns, meter_window in specs:
+    for name, cat, ch, auto, due, expected, patterns, meter_window, decimals in specs:
         prov = Provider(
             name=name,
             category=cat,
@@ -110,6 +115,7 @@ async def providers(session) -> dict[str, Provider]:
             expected_amount=expected,
             account_number=None,
             meter_window=meter_window,
+            meter_decimals=decimals,
         )
         session.add(prov)
         await session.flush()

@@ -10,7 +10,7 @@ from __future__ import annotations
 import tempfile
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
 from sqlalchemy import select
@@ -419,14 +419,19 @@ async def submit_meter_reading(
             ),
         }
 
+    # Round to the provider's precision (water=3, gas=2) — source of truth for how many
+    # decimals we keep and submit. Delta validation runs on the rounded decimal value.
+    quantum = Decimal(1).scaleb(-prov.meter_decimals)
+    value = read.value.quantize(quantum, rounding=ROUND_HALF_UP)
+
     history = await _history_values(session, prov.id)
     verdict = meters.validate(
-        read.value,
+        value,
         history,
         spike_k=settings.delta_spike_k,
         abs_cap=settings.delta_abs_cap,
     )
-    reading.value = read.value
+    reading.value = value
     reading.consumption_delta = verdict.consumption
     reading.status = verdict.status
     await session.flush()
@@ -436,7 +441,7 @@ async def submit_meter_reading(
             "ok": False,
             "reading_id": reading.id,
             "provider": prov.name,
-            "value": str(read.value),
+            "value": str(value),
             "status": verdict.status.value,
             "consumption": (
                 str(verdict.consumption) if verdict.consumption is not None else None

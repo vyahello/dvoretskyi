@@ -26,10 +26,13 @@ log = logging.getLogger(__name__)
 
 _OCR_PROMPT = (
     "На зображенні за шляхом {path} — фото комунального лічильника (газ або вода). "
-    "Прочитай головне ціле число на табло (цифрові барабани зліва направо). "
-    "Ігноруй дробову частину й червоні барабани/стрілки, якщо вони явно не частина "
-    "цілого показника. Поверни ЛИШЕ JSON без жодного тексту поза ним: "
-    '{{"value": <число|null>, "raw": "<цифри як бачиш>", "note": "<короткий коментар>"}}'
+    "Прочитай ПОВНЕ показання зліва направо, ВКЛЮЧНО з дробовою частиною: "
+    "червоні барабани/цифри — це і є знаки після коми, їх треба читати, а не відкидати. "
+    "Поверни значення як рядок із крапкою-роздільником, без округлень і без одиниць "
+    '(напр. "103.999", "4827.05"). Якщо дробових розрядів нема — поверни ціле. '
+    "Поверни ЛИШЕ JSON без жодного тексту поза ним: "
+    '{{"value": "<повне показання|null>", "raw": "<цифри як бачиш>", '
+    '"note": "<короткий коментар>"}}'
 )
 
 
@@ -112,8 +115,10 @@ def _parse_meter_read(raw: str) -> MeterRead | None:
     if rawval in (None, "", "null"):
         value = None
     else:
+        # Keep full precision — provider-specific rounding happens in the pipeline,
+        # where Provider.meter_decimals is known. Accept a comma decimal separator.
         try:
-            value = Decimal(str(rawval)).quantize(Decimal("0.01"))
+            value = Decimal(str(rawval).strip().replace(",", "."))
         except (InvalidOperation, ValueError):
             value = None
     return MeterRead(

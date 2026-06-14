@@ -2,10 +2,28 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from sqlalchemy import select
+
 from komunalka.agent import tools
 from komunalka.agent.vision import _extract_json_object, _parse_meter_read
-from komunalka.db.models import MeterStatus
+from komunalka.db.models import MeterReading, MeterStatus
 from tests.conftest import FakeVisionProvider
+
+
+async def _last_reading(session, provider_id: int) -> MeterReading:
+    rows = (
+        (
+            await session.execute(
+                select(MeterReading)
+                .where(MeterReading.provider_id == provider_id)
+                .order_by(MeterReading.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return rows[0]
+
 
 # --- pipeline over a fake VisionProvider (no real claude) ------------------
 
@@ -27,6 +45,50 @@ async def test_pipeline_ocr_failure_asks_to_retype(session, providers):
     assert not res["ok"]
     assert res["status"] == MeterStatus.failed.value
     assert "вручну" in res["message"] or "перефотографуй" in res["message"].lower()
+
+
+async def test_water_keeps_three_decimals(session, providers):
+    res = await tools.submit_meter_reading(
+        session, "Холодна вода", "/p.png", vision=FakeVisionProvider(Decimal("103.999"))
+    )
+    assert res["value"] == "103.999"  # not 103, not 104
+    row = await _last_reading(session, providers["Холодна вода"].id)
+    assert row.value == Decimal("103.999")
+
+
+async def test_gas_keeps_two_decimals(session, providers):
+    res = await tools.submit_meter_reading(
+        session,
+        "Газ (постачання)",
+        "/p.png",
+        vision=FakeVisionProvider(Decimal("4827.05")),
+    )
+    assert res["value"] == "4827.05"
+    row = await _last_reading(session, providers["Газ (постачання)"].id)
+    assert row.value == Decimal("4827.05")
+
+
+async def test_value_rounded_half_up_to_provider_precision(session, providers):
+    # Gas = 2 decimals: 4827.058 → 4827.06 (ROUND_HALF_UP).
+    res = await tools.submit_meter_reading(
+        session,
+        "Газ (постачання)",
+        "/p.png",
+        vision=FakeVisionProvider(Decimal("4827.058")),
+    )
+    assert res["value"] == "4827.06"
+
+
+async def test_delta_validation_runs_on_decimals(session, providers):
+    # Two close water readings → small positive 3rd-decimal consumption → validated.
+    await tools.submit_meter_reading(
+        session, "Холодна вода", "/p.png", vision=FakeVisionProvider(Decimal("103.999"))
+    )
+    res = await tools.submit_meter_reading(
+        session, "Холодна вода", "/p.png", vision=FakeVisionProvider(Decimal("104.250"))
+    )
+    assert res["status"] == MeterStatus.validated.value
+    assert res["consumption"] == "0.251"
 
 
 async def test_pipeline_flagged_reading_is_needs_confirm_not_submitted(
