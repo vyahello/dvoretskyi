@@ -85,8 +85,9 @@ class Provider(Base):
     )
     expected_amount: Mapped[Decimal | None] = mapped_column(_Money, default=None)
     due_day: Mapped[int | None] = mapped_column(Integer, default=None)
-    # Day-of-month a meter reading is due (L2). Null = no meter (electricity, internet,
-    # housing). Gas ≤ 5, water per ВК schedule. Drives meter-window reminders.
+    # Meter-reading nudge lead time (L2): how many days before MONTH END to start
+    # nudging. Null = no meter (electricity, internet, housing). Readings are due by the
+    # last day of the month; e.g. 3 → nudge over the final 3 days. Drives meter reminders.
     meter_window: Mapped[int | None] = mapped_column(Integer, default=None)
     # Decimal places a reading is kept/submitted at — source of truth for precision.
     # Water = 3 (ВК accepts 3), gas = 2; 0 for non-meter providers.

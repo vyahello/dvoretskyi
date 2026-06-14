@@ -57,7 +57,7 @@ async def session(engine) -> AsyncSession:
 async def providers(session) -> dict[str, Provider]:
     """Seed a small provider set with real (test) match patterns."""
     # (name, category, pay_channel, auto_logged, due_day, expected, patterns,
-    #  meter_window, meter_decimals)
+    #  meter_window=lead days before month end, meter_decimals)
     specs = [
         (
             "Газ (постачання)",
@@ -67,7 +67,7 @@ async def providers(session) -> dict[str, Provider]:
             15,
             None,
             ["naftogaz"],
-            5,
+            3,
             2,
         ),
         (
@@ -78,7 +78,7 @@ async def providers(session) -> dict[str, Provider]:
             20,
             Decimal("180.00"),
             ["vodokanal"],
-            25,
+            3,
             3,
         ),
         (

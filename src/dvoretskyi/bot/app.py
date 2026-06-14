@@ -290,11 +290,11 @@ async def _meter_providers(session) -> list[Provider]:
 def _meter_providers_in_window(
     meter_providers: list[Provider], now=None
 ) -> list[Provider]:
-    today = (now or clock.now()).day
+    now = now or clock.now()
     return [
         p
         for p in meter_providers
-        if p.meter_window is not None and meters.window_open(p.meter_window, today)
+        if p.meter_window is not None and meters.window_open(p.meter_window, now)
     ]
 
 

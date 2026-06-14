@@ -8,17 +8,28 @@ silently submitting a wrong number.
 
 from __future__ import annotations
 
+import calendar
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 
 from dvoretskyi.db.models import MeterStatus
 
-METER_WINDOW_SPAN = 3  # nudge/route window: meter_window-SPAN … meter_window (inclusive)
+
+def days_until_month_end(now: datetime) -> int:
+    """Whole days from `now` to the last day of its month (0 on the last day).
+
+    The month length is taken from the calendar (handles 28/29/30/31), never hardcoded.
+    """
+    last_day = calendar.monthrange(now.year, now.month)[1]
+    return last_day - now.day
 
 
-def window_open(meter_window_day: int, today: int, span: int = METER_WINDOW_SPAN) -> bool:
-    """Is `today` in a meter's submission window? gas≤5 → days 2..5; water 25 → 22..25."""
-    return meter_window_day - span <= today <= meter_window_day
+def window_open(meter_window: int, now: datetime) -> bool:
+    """Is the meter-reading window open now? `meter_window` is a LEAD TIME — how many
+    days before month end to start nudging (not a day-of-month). Open once we're within
+    that many days of the last day of the month (inclusive of the last day)."""
+    return days_until_month_end(now) <= meter_window
 
 
 @dataclass

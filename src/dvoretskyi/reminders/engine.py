@@ -184,7 +184,7 @@ async def run_payment_nudges(
 class PendingMeterNudge:
     provider_id: int
     provider_name: str
-    meter_window: int
+    days_left: int  # whole days until the last day of the month (0 = today is last)
     category: str
 
     def message(self) -> str:
@@ -194,7 +194,13 @@ class PendingMeterNudge:
             what = "показники води"
         else:
             what = "показники лічильника"
-        return f"До {self.meter_window}-го — {what}. Кинь фото лічильника, зчитаю сам."
+        if self.days_left == 0:
+            when = "Сьогодні останній день місяця"
+        elif self.days_left == 1:
+            when = "Завтра кінець місяця"
+        else:
+            when = f"До кінця місяця лишилось {self.days_left} дн."
+        return f"{when} — час подати {what}. Кинь фото лічильника, зчитаю сам."
 
 
 async def _reading_done_this_cycle(
@@ -215,10 +221,12 @@ async def _reading_done_this_cycle(
 async def compute_pending_meter_nudges(
     session: AsyncSession, now: datetime | None = None
 ) -> list[PendingMeterNudge]:
-    """Pure logic: which meter nudges should fire right now (gas ≤5, water per ВК)."""
+    """Pure logic: which meter nudges should fire now. Readings are due by the last day
+    of the month; nudge over the final `meter_window` days (month length from the
+    calendar, never hardcoded)."""
     now = now or clock.now()
     cycle = clock.cycle_of(now)
-    today = now.day
+    days_left = meters.days_until_month_end(now)
 
     providers = (
         (
@@ -233,7 +241,7 @@ async def compute_pending_meter_nudges(
     pending: list[PendingMeterNudge] = []
     for prov in providers:
         window = prov.meter_window
-        if window is None or not meters.window_open(window, today):
+        if window is None or not meters.window_open(window, now):
             continue
         if await _reading_done_this_cycle(session, prov.id, cycle):
             continue
@@ -261,7 +269,7 @@ async def compute_pending_meter_nudges(
             PendingMeterNudge(
                 provider_id=prov.id,
                 provider_name=prov.name,
-                meter_window=window,
+                days_left=days_left,
                 category=prov.category.value,
             )
         )

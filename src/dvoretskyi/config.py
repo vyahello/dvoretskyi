@@ -59,8 +59,9 @@ class Settings(BaseSettings):
     ocr_max_long_side: int = 1600  # downscale photos to this long side before OCR
     delta_spike_k: int = 3  # flag consumption > k × median(history)
     delta_abs_cap: Decimal = Decimal("1000")  # …but never flag below this absolute jump
-    gas_meter_day: int = 5  # gas readings due by the 5th
-    water_meter_day: int = 25  # water (ВК) readings due ~end of month
+    # Meter-reading nudge lead time: how many days before month end to start nudging
+    # (readings are due by the last day of the month). Seeds Provider.meter_window.
+    meter_window_days: int = 3
 
     # --- misc ---
     tz: str = "Europe/Kyiv"

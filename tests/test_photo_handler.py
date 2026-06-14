@@ -40,8 +40,13 @@ def _patch_io(monkeypatch, value) -> FakeVisionProvider:
     return vis
 
 
-async def test_single_meter_in_window_auto_routes(engine, providers, monkeypatch):
-    _freeze(monkeypatch, 4)  # gas window (2..5); water (22..25) closed → one candidate
+async def test_single_meter_in_window_auto_routes(
+    engine, providers, session, monkeypatch
+):
+    # Make gas the only meter provider, then land inside the last-3-days window → auto.
+    providers["Холодна вода"].meter_window = None
+    await session.commit()
+    _freeze(monkeypatch, 28)  # June (30d): 2 days left → within the 3-day window
     vis = _patch_io(monkeypatch, Decimal("1000"))
 
     msg = FakeMessage()
@@ -55,7 +60,7 @@ async def test_single_meter_in_window_auto_routes(engine, providers, monkeypatch
 
 
 async def test_no_meter_in_window_asks_which(engine, providers, monkeypatch):
-    _freeze(monkeypatch, 12)  # neither gas nor water window is open
+    _freeze(monkeypatch, 12)  # mid-month: neither meter is within the 3-day window
     vis = _patch_io(monkeypatch, Decimal("1000"))
 
     msg = FakeMessage()

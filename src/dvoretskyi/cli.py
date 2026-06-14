@@ -28,7 +28,8 @@ from dvoretskyi.mono import client
 
 # The 6 providers (spec §3a, prompt §Seed data). Patterns are TODO placeholders —
 # real mono `description` strings are captured live and added via learn-pattern/bot.
-# meter_window (gas/water) is seeded from settings (GAS_METER_DAY / WATER_METER_DAY).
+# meter_window (gas/water) is a nudge lead time in days before month end, seeded from
+# settings (METER_WINDOW_DAYS). Readings are due by the last day of the month.
 _settings = get_settings()
 SEED_PROVIDERS = [
     dict(
@@ -38,7 +39,7 @@ SEED_PROVIDERS = [
         auto_logged=True,
         due_day=20,
         expected_amount=None,
-        meter_window=_settings.water_meter_day,
+        meter_window=_settings.meter_window_days,
         meter_decimals=3,
     ),
     dict(
@@ -56,7 +57,7 @@ SEED_PROVIDERS = [
         auto_logged=True,
         due_day=20,
         expected_amount=None,
-        meter_window=_settings.gas_meter_day,
+        meter_window=_settings.meter_window_days,
         meter_decimals=2,
     ),
     dict(
