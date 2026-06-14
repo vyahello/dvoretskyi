@@ -538,11 +538,48 @@ async def get_meter_history(
     }
 
 
-# --- Phase-2 stub (no balance source yet) ----------------------------------
+# --- provider balance (L2) -------------------------------------------------
 
 
 async def get_provider_balance(session: AsyncSession, provider_name: str) -> dict:
-    raise NotImplementedError("Provider-side balance reads need a source (spec §9).")
+    """Read a provider-side balance. Implemented for Gigabit+ (cabinet scraper);
+    other providers have no balance source yet."""
+    prov = await _provider_by_name(session, provider_name)
+    if "gigabit" not in prov.name.casefold():
+        raise NotImplementedError(f"Balance source not configured for {prov.name}.")
+
+    from dvoretskyi.agent.balance import fetch_gigabit_balance
+
+    settings = get_settings()
+    bal = await fetch_gigabit_balance()
+    if not bal.ok or bal.balance is None:
+        return {
+            "ok": False,
+            "provider": prov.name,
+            "message": f"Не зміг дізнатися баланс Gigabit+ — {bal.note}.",
+        }
+
+    fee = settings.gigabit_monthly_fee
+    if bal.balance < fee:
+        return {
+            "ok": True,
+            "provider": prov.name,
+            "balance": str(bal.balance),
+            "need_to_pay": True,
+            "pay_link": settings.gigabit_base_url,
+            "message": (
+                f"Треба поповнити: баланс {bal.balance} ₴ — менший за абонплату "
+                f"{fee} ₴. Поповнити: {settings.gigabit_base_url}"
+            ),
+        }
+    tail = f", останнє поповнення {bal.last_topup}" if bal.last_topup else ""
+    return {
+        "ok": True,
+        "provider": prov.name,
+        "balance": str(bal.balance),
+        "need_to_pay": False,
+        "message": f"Платити не треба — баланс {bal.balance} ₴ достатній{tail}.",
+    }
 
 
 Tool = Callable[..., Awaitable[dict[str, Any]]]
