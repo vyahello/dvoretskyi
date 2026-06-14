@@ -13,6 +13,13 @@ from decimal import Decimal
 
 from komunalka.db.models import MeterStatus
 
+METER_WINDOW_SPAN = 3  # nudge/route window: meter_window-SPAN … meter_window (inclusive)
+
+
+def window_open(meter_window_day: int, today: int, span: int = METER_WINDOW_SPAN) -> bool:
+    """Is `today` in a meter's submission window? gas≤5 → days 2..5; water 25 → 22..25."""
+    return meter_window_day - span <= today <= meter_window_day
+
 
 @dataclass
 class Validation:

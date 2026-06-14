@@ -7,7 +7,11 @@ notifier (used by FastAPI) is built here too, so confirmations/prompts share the
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
@@ -16,6 +20,7 @@ from aiogram.types import (
     BotCommand,
     CallbackQuery,
     FSInputFile,
+    InlineKeyboardMarkup,
     Message,
     TelegramObject,
 )
@@ -23,19 +28,34 @@ from sqlalchemy import select
 
 from komunalka import clock
 from komunalka.agent import dispatcher as agent_dispatcher
+from komunalka.agent import meters
 from komunalka.agent.provider import get_provider
 from komunalka.agent.tools import (
     ToolError,
     categorize_payment,
+    confirm_meter_reading,
     get_stats,
     get_unpaid,
+    mark_meter_submitted,
     snooze_reminder,
+    submit_meter_reading,
 )
+from komunalka.agent.vision import get_vision_provider
 from komunalka.bot import keyboards
 from komunalka.config import get_settings
-from komunalka.db.models import Payment, Provider
+from komunalka.db.models import (
+    MeterReading,
+    MeterStatus,
+    NudgeKind,
+    NudgeLog,
+    Payment,
+    Provider,
+)
 from komunalka.db.session import session_scope
 from komunalka.mono.webhook import Action, Notice
+
+# Private dir for in-flight meter photos; files are deleted right after processing.
+_MEDIA_DIR = Path(tempfile.gettempdir()) / "komunalka_meters"
 
 log = logging.getLogger(__name__)
 router = Router()
@@ -147,21 +167,25 @@ async def on_text(message: Message) -> None:
         # Log the traceback (otherwise it's swallowed → silent Telegram) and still
         # reply, so the user never faces dead air.
         log.exception("on_text failed for message %r", message.text)
-        await message.answer(
-            "Щось у моїх паперах заклинило — спробуйте ще раз за мить."
-        )
+        await message.answer("Щось у моїх паперах заклинило — спробуйте ще раз за мить.")
         return
     await message.answer(reply.text or "…")
     if reply.chart_path:
         await message.answer_photo(FSInputFile(reply.chart_path))
 
 
-async def _edit(callback: CallbackQuery, text: str) -> None:
+async def _edit(
+    callback: CallbackQuery,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> None:
     """Edit the originating message if it's still accessible; else send a fresh one."""
     if isinstance(callback.message, Message):
-        await callback.message.edit_text(text)
+        await callback.message.edit_text(text, reply_markup=reply_markup)
     elif callback.bot is not None and callback.message is not None:
-        await callback.bot.send_message(callback.message.chat.id, text)
+        await callback.bot.send_message(
+            callback.message.chat.id, text, reply_markup=reply_markup
+        )
 
 
 @router.callback_query(F.data.startswith("c:"))
@@ -215,6 +239,229 @@ async def on_snooze(callback: CallbackQuery) -> None:
     await _edit(
         callback, f"Відклав нагадування по «{result['provider']}». Повернуся пізніше."
     )
+    await callback.answer()
+
+
+# --- meter photos (L2) -----------------------------------------------------
+
+_CAPTION_HINTS = {"газ": "gas", "вод": "water"}
+
+
+async def _download_photo(message: Message) -> str:
+    """Download the highest-res photo to the private media dir. Injectable in tests."""
+    if not message.photo or message.bot is None:
+        raise RuntimeError("no photo to download")
+    photo = message.photo[-1]
+    _MEDIA_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path = _MEDIA_DIR / f"{photo.file_unique_id}.jpg"
+    await message.bot.download(photo, destination=str(path))
+    return str(path)
+
+
+def _caption_provider(
+    caption: str | None, meter_providers: list[Provider]
+) -> Provider | None:
+    """Route by a caption like «показники газу» → the matching meter provider."""
+    if not caption:
+        return None
+    low = caption.casefold()
+    for stem, cat in _CAPTION_HINTS.items():
+        if stem in low:
+            for prov in meter_providers:
+                if prov.category.value == cat:
+                    return prov
+    return None
+
+
+async def _meter_providers(session) -> list[Provider]:
+    return list(
+        (
+            await session.execute(
+                select(Provider)
+                .where(Provider.meter_window.is_not(None))
+                .order_by(Provider.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+def _meter_providers_in_window(
+    meter_providers: list[Provider], now=None
+) -> list[Provider]:
+    today = (now or clock.now()).day
+    return [
+        p
+        for p in meter_providers
+        if p.meter_window is not None and meters.window_open(p.meter_window, today)
+    ]
+
+
+def _meter_reply(result: dict) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Map a pipeline result dict → (text, keyboard) in the butler's voice."""
+    text = result.get("message") or "…"
+    rid = result.get("reading_id")
+    status = result.get("status")
+    if status == MeterStatus.needs_confirm.value and rid is not None:
+        return text, keyboards.meter_confirm_keyboard(rid)
+    if status == MeterStatus.validated.value and rid is not None:
+        return text, keyboards.meter_submitted_keyboard(rid)
+    return text, None
+
+
+@router.message(F.photo)
+async def on_photo(message: Message) -> None:
+    path: str | None = None
+    try:
+        path = await _download_photo(message)
+        async with session_scope() as session:
+            meter_provs = await _meter_providers(session)
+            if not meter_provs:
+                await message.answer("Лічильників у списку нема — нема куди вносити.")
+                return
+
+            chosen = _caption_provider(message.caption, meter_provs)
+            if chosen is None:
+                in_window = _meter_providers_in_window(meter_provs)
+                if len(in_window) == 1:
+                    chosen = in_window[0]
+
+            if chosen is None:
+                # Ambiguous: stash an ocr_pending row holding the photo, ask which meter.
+                reading = MeterReading(
+                    cycle=clock.current_cycle(),
+                    status=MeterStatus.ocr_pending,
+                    created_at=clock.now(),
+                    photo_ref=path,
+                )
+                session.add(reading)
+                await session.flush()
+                await message.answer(
+                    "Який це лічильник?",
+                    reply_markup=keyboards.meter_route_keyboard(reading.id, meter_provs),
+                )
+                path = None  # keep the file — the m: callback will OCR then delete it
+                return
+
+            result = await submit_meter_reading(
+                session, chosen.name, path, vision=get_vision_provider()
+            )
+        text, kb = _meter_reply(result)
+        await message.answer(text, reply_markup=kb)
+    except Exception:
+        log.exception("on_photo failed")
+        await message.answer("Не зміг обробити фото — спробуй ще раз за мить.")
+    finally:
+        if path and os.path.exists(path):
+            os.unlink(path)
+
+
+@router.callback_query(F.data.startswith("m:"))
+async def on_meter_route(callback: CallbackQuery) -> None:
+    if not callback.data:
+        await callback.answer()
+        return
+    _, rid_s, pid_s = callback.data.split(":", 2)
+    path: str | None = None
+    async with session_scope() as session:
+        reading = await session.get(MeterReading, int(rid_s))
+        provider = await session.get(Provider, int(pid_s))
+        if reading is None or provider is None or not reading.photo_ref:
+            await callback.answer("Фото вже зникло — надішли ще раз.")
+            return
+        path = reading.photo_ref
+        result = await submit_meter_reading(
+            session,
+            provider.name,
+            path,
+            vision=get_vision_provider(),
+            reading_id=reading.id,
+        )
+    text, kb = _meter_reply(result)
+    await _edit(callback, text, kb)
+    if path and os.path.exists(path):
+        os.unlink(path)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mc:"))
+async def on_meter_confirm(callback: CallbackQuery) -> None:
+    if not callback.data:
+        await callback.answer()
+        return
+    _, rid_s, choice = callback.data.split(":", 2)
+    async with session_scope() as session:
+        reading = await session.get(MeterReading, int(rid_s))
+        if reading is None:
+            await callback.answer("Показник зник.")
+            return
+        if choice == "re":  # re-photograph → discard this reading
+            reading.status = MeterStatus.rejected
+            await _edit(callback, "Гаразд, перефотографуй ближче і надішли ще раз.")
+            await callback.answer()
+            return
+        try:
+            result = await confirm_meter_reading(session, reading.id)
+        except ToolError as exc:
+            await callback.answer(str(exc))
+            return
+    text, kb = _meter_reply(result)
+    await _edit(callback, text, kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ms:"))
+async def on_meter_submitted(callback: CallbackQuery) -> None:
+    if not callback.data:
+        await callback.answer()
+        return
+    _, rid_s = callback.data.split(":", 1)
+    async with session_scope() as session:
+        try:
+            result = await mark_meter_submitted(session, rid_s)
+        except ToolError as exc:
+            await callback.answer(str(exc))
+            return
+    await _edit(callback, result["message"])
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("sm:"))
+async def on_meter_snooze(callback: CallbackQuery) -> None:
+    if not callback.data:
+        await callback.answer()
+        return
+    _, pid_s, days_s = callback.data.split(":", 2)
+    until = clock.now() + timedelta(days=int(days_s))
+    cycle = clock.current_cycle()
+    async with session_scope() as session:
+        provider = await session.get(Provider, int(pid_s))
+        if provider is None:
+            await callback.answer("Провайдера нема.")
+            return
+        nudge = (
+            await session.execute(
+                select(NudgeLog).where(
+                    NudgeLog.provider_id == provider.id,
+                    NudgeLog.cycle == cycle,
+                    NudgeLog.kind == NudgeKind.meter,
+                )
+            )
+        ).scalar_one_or_none()
+        if nudge is None:
+            session.add(
+                NudgeLog(
+                    provider_id=provider.id,
+                    cycle=cycle,
+                    kind=NudgeKind.meter,
+                    nudged_at=clock.now(),
+                    snoozed_until=until,
+                )
+            )
+        else:
+            nudge.snoozed_until = until
+    await _edit(callback, "Відклав нагадування про показники. Повернуся пізніше.")
     await callback.answer()
 
 

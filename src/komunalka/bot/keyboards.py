@@ -3,7 +3,11 @@
 Callback grammar:
   c:<payment_id>:<provider_id>   categorize payment → provider
   c:<payment_id>:n               «Не комуналка» (delete uncategorized payment)
-  s:<provider_id>:<days>         snooze reminders for N days
+  s:<provider_id>:<days>         snooze payment reminders for N days
+  m:<reading_id>:<provider_id>   route an ambiguous meter photo to a provider
+  mc:<reading_id>:ok|re          confirm / re-photograph a needs_confirm reading
+  ms:<reading_id>                «відправив» → mark the reading submitted
+  sm:<provider_id>:<days>        snooze meter reminders for N days
 """
 
 from __future__ import annotations
@@ -44,6 +48,56 @@ def snooze_keyboard(provider_id: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="+1 день", callback_data=f"s:{provider_id}:1"),
                 InlineKeyboardButton(text="+3 дні", callback_data=f"s:{provider_id}:3"),
                 InlineKeyboardButton(text="+тиждень", callback_data=f"s:{provider_id}:7"),
+            ]
+        ]
+    )
+
+
+def meter_route_keyboard(
+    reading_id: int, providers: Sequence[Provider]
+) -> InlineKeyboardMarkup:
+    """«Який лічильник?» — one button per meter provider."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=prov.name, callback_data=f"m:{reading_id}:{prov.id}"
+                )
+            ]
+            for prov in providers
+        ]
+    )
+
+
+def meter_confirm_keyboard(reading_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Підтвердити", callback_data=f"mc:{reading_id}:ok"
+                ),
+                InlineKeyboardButton(
+                    text="Перефотографувати", callback_data=f"mc:{reading_id}:re"
+                ),
+            ]
+        ]
+    )
+
+
+def meter_submitted_keyboard(reading_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Відправив ✓", callback_data=f"ms:{reading_id}")]
+        ]
+    )
+
+
+def meter_snooze_keyboard(provider_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="+1 день", callback_data=f"sm:{provider_id}:1"),
+                InlineKeyboardButton(text="+3 дні", callback_data=f"sm:{provider_id}:3"),
             ]
         ]
     )
