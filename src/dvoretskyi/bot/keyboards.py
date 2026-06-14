@@ -16,6 +16,7 @@ from collections.abc import Sequence
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from dvoretskyi.config import get_settings
 from dvoretskyi.db.models import Provider
 
 
@@ -103,8 +104,14 @@ def meter_snooze_keyboard(provider_id: int) -> InlineKeyboardMarkup:
     )
 
 
-def pay_keyboard(url: str, label: str = "💳 Поповнити") -> InlineKeyboardMarkup:
-    """A single tappable link button — keeps the long pay URL out of the message text."""
+def pay_keyboard(url: str, label: str | None = None) -> InlineKeyboardMarkup:
+    """A single tappable link button — keeps the long pay URL out of the message text.
+    Default label shows the top-up amount, e.g. «💳 Поповнити 200 ₴»."""
+    if label is None:
+        fee = str(get_settings().gigabit_monthly_fee)
+        if "." in fee:  # trim only fractional zeros: 200.00→200, 199.50→199.5
+            fee = fee.rstrip("0").rstrip(".")
+        label = f"💳 Поповнити {fee} ₴"
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text=label, url=url)]]
     )
