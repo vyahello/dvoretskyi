@@ -56,6 +56,7 @@ class PaymentSource(enum.StrEnum):
 class NudgeKind(enum.StrEnum):
     payment = "payment"
     meter = "meter"
+    balance = "balance"  # provider-side low balance (e.g. Gigabit+ prepaid)
 
 
 class MeterStatus(enum.StrEnum):

@@ -24,7 +24,7 @@ def test_scheduled_jobs_are_picklable_for_redis_jobstore():
     engine.schedule_jobs(scheduler, _closure_notifier())
 
     jobs = scheduler.get_jobs()
-    assert {j.id for j in jobs} == {"payment_nudges", "meter_nudges"}
+    assert {j.id for j in jobs} == {"payment_nudges", "meter_nudges", "balance_nudges"}
     # The Redis jobstore pickles the job's func + args; the old code captured the
     # closure in args (-> "Can't pickle local object"). Both must pickle now.
     for job in jobs:

@@ -286,33 +286,42 @@ async def categorize_payment(
 async def snooze_reminder(
     session: AsyncSession, provider_name: str, until: object
 ) -> dict:
-    """Snooze payment reminders for a provider until a given time."""
+    """Snooze reminders for a provider until a given time.
+
+    Snoozes the payment nudge, and — for a balance-tracked provider (Gigabit+) — the
+    low-balance nudge too, so "відклади інтернет" silences both."""
     from dvoretskyi.db.models import NudgeLog
 
     prov = await _provider_by_name(session, provider_name)
     until_dt = _parse_until(until)
     cycle = clock.current_cycle()
 
-    nudge = (
-        await session.execute(
-            select(NudgeLog).where(
-                NudgeLog.provider_id == prov.id,
-                NudgeLog.cycle == cycle,
-                NudgeLog.kind == NudgeKind.payment,
+    kinds = [NudgeKind.payment]
+    if "gigabit" in prov.name.casefold():
+        kinds.append(NudgeKind.balance)
+
+    for kind in kinds:
+        nudge = (
+            await session.execute(
+                select(NudgeLog).where(
+                    NudgeLog.provider_id == prov.id,
+                    NudgeLog.cycle == cycle,
+                    NudgeLog.kind == kind,
+                )
             )
-        )
-    ).scalar_one_or_none()
-    if nudge is None:
-        nudge = NudgeLog(
-            provider_id=prov.id,
-            cycle=cycle,
-            kind=NudgeKind.payment,
-            nudged_at=clock.now(),
-            snoozed_until=until_dt,
-        )
-        session.add(nudge)
-    else:
-        nudge.snoozed_until = until_dt
+        ).scalar_one_or_none()
+        if nudge is None:
+            session.add(
+                NudgeLog(
+                    provider_id=prov.id,
+                    cycle=cycle,
+                    kind=kind,
+                    nudged_at=clock.now(),
+                    snoozed_until=until_dt,
+                )
+            )
+        else:
+            nudge.snoozed_until = until_dt
     await session.flush()
     return {"ok": True, "provider": prov.name, "snoozed_until": until_dt.isoformat()}
 

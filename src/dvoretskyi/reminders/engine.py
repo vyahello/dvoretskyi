@@ -2,8 +2,9 @@
 
 Daily job: for each provider with a due_day, nudge iff this cycle is unpaid AND we're
 inside the nudge window (due_day-3 … due_day) AND not snoozed AND not already nudged
-today. Near the deadline (due_day or due_day-1) the copy escalates. A second daily job
-nudges for meter readings (kind="meter") inside each meter's submission window.
+today. Near the deadline (due_day or due_day-1) the copy escalates. Two more daily jobs
+nudge for meter readings (kind="meter") inside each meter's submission window, and for a
+low provider balance (kind="balance", e.g. Gigabit+ below its monthly fee).
 
 Redis is used for the jobstore when reachable; otherwise it falls back to in-memory
 (fine for single-user). Tests call `run_payment_nudges` directly — no scheduler needed.
@@ -15,12 +16,16 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dvoretskyi import clock
+
+if TYPE_CHECKING:
+    from dvoretskyi.agent.balance import Balance
 from dvoretskyi.agent import meters
 from dvoretskyi.config import get_settings
 from dvoretskyi.db.models import (
@@ -311,6 +316,121 @@ async def run_meter_nudges(
     return pending
 
 
+# --- balance nudges (L2): provider-side low balance, e.g. Gigabit+ prepaid -
+
+
+@dataclass
+class PendingBalanceNudge:
+    provider_id: int
+    provider_name: str
+    balance: str
+    fee: str
+    pay_link: str
+
+    def message(self) -> str:
+        return (
+            f"{self.provider_name}: на рахунку {self.balance} ₴ — менше за абонплату "
+            f"{self.fee} ₴. Варто поповнити, поки не відключили. {self.pay_link}"
+        )
+
+
+async def compute_pending_balance_nudges(
+    session: AsyncSession,
+    now: datetime | None = None,
+    *,
+    fetch: Callable[[], Awaitable[Balance]] | None = None,
+) -> list[PendingBalanceNudge]:
+    """Nudge if a balance-tracked provider (Gigabit+) is below its monthly fee, not
+    snoozed and not already nudged today. `fetch` (→ Balance) is injectable for tests."""
+    now = now or clock.now()
+    cycle = clock.cycle_of(now)
+    st = get_settings()
+
+    providers = (await session.execute(select(Provider))).scalars().all()
+    targets = [p for p in providers if "gigabit" in p.name.casefold()]
+    if not targets:
+        return []
+
+    if fetch is None:
+        from dvoretskyi.agent.balance import fetch_gigabit_balance
+
+        fetch = fetch_gigabit_balance
+
+    pending: list[PendingBalanceNudge] = []
+    for prov in targets:
+        bal = await fetch()
+        if not bal.ok or bal.balance is None or bal.balance >= st.gigabit_monthly_fee:
+            continue
+
+        nudge = (
+            await session.execute(
+                select(NudgeLog).where(
+                    NudgeLog.provider_id == prov.id,
+                    NudgeLog.cycle == cycle,
+                    NudgeLog.kind == NudgeKind.balance,
+                )
+            )
+        ).scalar_one_or_none()
+        if nudge is not None:
+            if (
+                nudge.snoozed_until is not None
+                and clock.ensure_aware(nudge.snoozed_until) > now
+            ):
+                continue  # snoozed
+            nudged_day = clock.ensure_aware(nudge.nudged_at).astimezone(clock.KYIV).date()
+            if nudged_day == now.astimezone(clock.KYIV).date():
+                continue  # already nudged today
+
+        pending.append(
+            PendingBalanceNudge(
+                provider_id=prov.id,
+                provider_name=prov.name,
+                balance=str(bal.balance),
+                fee=str(st.gigabit_monthly_fee),
+                pay_link=st.gigabit_base_url,
+            )
+        )
+    return pending
+
+
+async def run_balance_nudges(
+    send: Callable[[int, str], Awaitable[None]],
+    now: datetime | None = None,
+    *,
+    fetch: Callable[[], Awaitable[Balance]] | None = None,
+) -> list[PendingBalanceNudge]:
+    """Compute + dispatch low-balance nudges, recording a NudgeLog(kind=balance)."""
+    now = now or clock.now()
+    cycle = clock.cycle_of(now)
+    async with session_scope() as session:
+        pending = await compute_pending_balance_nudges(session, now, fetch=fetch)
+        for item in pending:
+            existing = (
+                await session.execute(
+                    select(NudgeLog).where(
+                        NudgeLog.provider_id == item.provider_id,
+                        NudgeLog.cycle == cycle,
+                        NudgeLog.kind == NudgeKind.balance,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is None:
+                session.add(
+                    NudgeLog(
+                        provider_id=item.provider_id,
+                        cycle=cycle,
+                        kind=NudgeKind.balance,
+                        nudged_at=now,
+                    )
+                )
+            else:
+                existing.nudged_at = now
+
+    for item in pending:
+        await send(get_settings().telegram_allowed_user_id, item.message())
+    return pending
+
+
 # --- scheduler wiring ------------------------------------------------------
 
 
@@ -357,6 +477,11 @@ async def _meter_nudge_job() -> None:
         await run_meter_nudges(_notify)
 
 
+async def _balance_nudge_job() -> None:
+    if _notify is not None:
+        await run_balance_nudges(_notify)
+
+
 def schedule_jobs(
     scheduler: AsyncIOScheduler, send: Callable[[int, str], Awaitable[None]]
 ) -> None:
@@ -381,6 +506,15 @@ def schedule_jobs(
         hour=9,
         minute=0,
         id="meter_nudges",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
+    scheduler.add_job(
+        _balance_nudge_job,
+        trigger="cron",
+        hour=11,
+        minute=0,
+        id="balance_nudges",
         replace_existing=True,
         misfire_grace_time=3600,
     )
