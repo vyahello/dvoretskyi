@@ -16,7 +16,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
@@ -42,6 +42,15 @@ from dvoretskyi.db.session import session_scope
 log = logging.getLogger(__name__)
 
 NUDGE_WINDOW_DAYS = 3  # start nudging this many days before due_day
+
+
+class Notifier(Protocol):
+    """Sends a nudge to the user. `pay_link`, if given, is rendered as a tappable
+    button by the bot layer (the engine stays aiogram-free, passing only a URL str)."""
+
+    async def __call__(
+        self, chat_id: int, text: str, pay_link: str | None = None
+    ) -> None: ...
 
 
 @dataclass
@@ -147,7 +156,7 @@ async def compute_pending_nudges(
 
 
 async def run_payment_nudges(
-    send: Callable[[int, str], Awaitable[None]], now: datetime | None = None
+    send: Notifier, now: datetime | None = None
 ) -> list[PendingNudge]:
     """Compute + dispatch nudges, recording a NudgeLog for each. Returns those sent."""
     now = now or clock.now()
@@ -282,7 +291,7 @@ async def compute_pending_meter_nudges(
 
 
 async def run_meter_nudges(
-    send: Callable[[int, str], Awaitable[None]], now: datetime | None = None
+    send: Notifier, now: datetime | None = None
 ) -> list[PendingMeterNudge]:
     """Compute + dispatch meter nudges, recording a NudgeLog(kind=meter) for each."""
     now = now or clock.now()
@@ -330,7 +339,7 @@ class PendingBalanceNudge:
     def message(self) -> str:
         return (
             f"{self.provider_name}: на рахунку {self.balance} ₴ — менше за абонплату "
-            f"{self.fee} ₴. Варто поповнити, поки не відключили. {self.pay_link}"
+            f"{self.fee} ₴. Варто поповнити, поки не відключили."
         )
 
 
@@ -350,6 +359,8 @@ async def compute_pending_balance_nudges(
     targets = [p for p in providers if "gigabit" in p.name.casefold()]
     if not targets:
         return []
+
+    from dvoretskyi.agent.balance import gigabit_pay_link
 
     if fetch is None:
         from dvoretskyi.agent.balance import fetch_gigabit_balance
@@ -387,14 +398,14 @@ async def compute_pending_balance_nudges(
                 provider_name=prov.name,
                 balance=str(bal.balance),
                 fee=str(st.gigabit_monthly_fee),
-                pay_link=st.gigabit_base_url,
+                pay_link=gigabit_pay_link(),
             )
         )
     return pending
 
 
 async def run_balance_nudges(
-    send: Callable[[int, str], Awaitable[None]],
+    send: Notifier,
     now: datetime | None = None,
     *,
     fetch: Callable[[], Awaitable[Balance]] | None = None,
@@ -427,7 +438,11 @@ async def run_balance_nudges(
                 existing.nudged_at = now
 
     for item in pending:
-        await send(get_settings().telegram_allowed_user_id, item.message())
+        await send(
+            get_settings().telegram_allowed_user_id,
+            item.message(),
+            pay_link=item.pay_link,
+        )
     return pending
 
 
@@ -459,10 +474,10 @@ def build_scheduler() -> AsyncIOScheduler:
 # Module-level notifier so the scheduled jobs stay picklable for the Redis jobstore.
 # A closure over the live Bot (e.g. lifespan's `_send`) cannot be pickled, so we keep
 # the sender here and schedule module-level wrapper jobs that carry no closure args.
-_notify: Callable[[int, str], Awaitable[None]] | None = None
+_notify: Notifier | None = None
 
 
-def set_notifier(send: Callable[[int, str], Awaitable[None]]) -> None:
+def set_notifier(send: Notifier) -> None:
     global _notify
     _notify = send
 
@@ -482,9 +497,7 @@ async def _balance_nudge_job() -> None:
         await run_balance_nudges(_notify)
 
 
-def schedule_jobs(
-    scheduler: AsyncIOScheduler, send: Callable[[int, str], Awaitable[None]]
-) -> None:
+def schedule_jobs(scheduler: AsyncIOScheduler, send: Notifier) -> None:
     """Register the daily payment + meter nudge jobs.
 
     Jobs reference module-level coroutines with no args so they pickle cleanly into the

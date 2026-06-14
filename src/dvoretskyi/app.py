@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from dvoretskyi.bot import keyboards
 from dvoretskyi.bot.app import (
     build_bot,
     build_dispatcher,
@@ -56,8 +57,9 @@ async def lifespan(app: FastAPI):
     # Reminders scheduler.
     scheduler = build_scheduler()
 
-    async def _send(chat_id: int, text: str) -> None:
-        await bot.send_message(chat_id, text)
+    async def _send(chat_id: int, text: str, pay_link: str | None = None) -> None:
+        markup = keyboards.pay_keyboard(pay_link) if pay_link else None
+        await bot.send_message(chat_id, text, reply_markup=markup)
 
     schedule_jobs(scheduler, _send)
     scheduler.start()

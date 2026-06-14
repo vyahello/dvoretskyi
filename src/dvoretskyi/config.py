@@ -81,6 +81,12 @@ class Settings(BaseSettings):
     gigabit_meta_csrf_regex: str = r'name="csrf-token"\s+content="([^"]+)"'
     gigabit_monthly_fee: Decimal = Decimal("200")  # monthly subscription, UAH
     gigabit_balance_ttl_seconds: int = 3600  # cache so we don't log in every call
+    # Top-up deep link. {account} (contract no., from gigabit_account/env) and {amount}
+    # are injected at runtime — no personal id in code. Empty account → cabinet base URL.
+    gigabit_pay_url_template: str = (
+        "https://www.portmone.com.ua/r3/popovnyty-internet-gigabitplus-lviv"
+        "?contract_number_terminal={account}&contract_bill_amount={amount}"
+    )
 
     # --- misc ---
     tz: str = "Europe/Kyiv"

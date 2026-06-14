@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from dvoretskyi.agent import balance
-from dvoretskyi.agent.balance import Balance, fetch_gigabit_balance
+from dvoretskyi.agent.balance import Balance, fetch_gigabit_balance, gigabit_pay_link
 from dvoretskyi.config import get_settings
 
 _LOGIN_HTML = (
@@ -59,6 +59,23 @@ async def test_parses_balance_and_topup_date(monkeypatch):
     assert bal.ok
     assert bal.balance == Decimal("400.00")
     assert bal.last_topup == "2026-06-14"  # time stripped
+
+
+def test_pay_link_injects_contract_and_amount(monkeypatch):
+    st = get_settings()
+    monkeypatch.setattr(st, "gigabit_login", "")
+    monkeypatch.setattr(st, "gigabit_account", "0000TEST")
+    link = gigabit_pay_link()
+    assert "portmone" in link
+    assert "contract_number_terminal=0000TEST" in link
+    assert "contract_bill_amount=200.00" in link
+
+
+def test_pay_link_falls_back_without_account(monkeypatch):
+    st = get_settings()
+    monkeypatch.setattr(st, "gigabit_login", "")
+    monkeypatch.setattr(st, "gigabit_account", "")
+    assert gigabit_pay_link() == st.gigabit_base_url
 
 
 async def test_missing_credentials_returns_not_ok(monkeypatch):

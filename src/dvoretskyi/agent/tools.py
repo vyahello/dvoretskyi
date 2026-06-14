@@ -557,7 +557,7 @@ async def get_provider_balance(session: AsyncSession, provider_name: str) -> dic
     if "gigabit" not in prov.name.casefold():
         raise NotImplementedError(f"Balance source not configured for {prov.name}.")
 
-    from dvoretskyi.agent.balance import fetch_gigabit_balance
+    from dvoretskyi.agent.balance import fetch_gigabit_balance, gigabit_pay_link
 
     settings = get_settings()
     bal = await fetch_gigabit_balance()
@@ -575,10 +575,9 @@ async def get_provider_balance(session: AsyncSession, provider_name: str) -> dic
             "provider": prov.name,
             "balance": str(bal.balance),
             "need_to_pay": True,
-            "pay_link": settings.gigabit_base_url,
+            "pay_link": gigabit_pay_link(),  # rendered as a button, not raw URL
             "message": (
-                f"Треба поповнити: баланс {bal.balance} ₴ — менший за абонплату "
-                f"{fee} ₴. Поповнити: {settings.gigabit_base_url}"
+                f"Треба поповнити: баланс {bal.balance} ₴ — менший за абонплату {fee} ₴."
             ),
         }
     tail = f", останнє поповнення {bal.last_topup}" if bal.last_topup else ""

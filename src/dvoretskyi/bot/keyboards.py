@@ -101,3 +101,10 @@ def meter_snooze_keyboard(provider_id: int) -> InlineKeyboardMarkup:
             ]
         ]
     )
+
+
+def pay_keyboard(url: str, label: str = "💳 Поповнити") -> InlineKeyboardMarkup:
+    """A single tappable link button — keeps the long pay URL out of the message text."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text=label, url=url)]]
+    )

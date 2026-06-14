@@ -43,6 +43,18 @@ def clear_cache() -> None:
     _cache = None
 
 
+def gigabit_pay_link() -> str:
+    """Portmone top-up deep link with the contract number + monthly fee pre-filled.
+    Falls back to the cabinet base URL if the contract (account) is unknown."""
+    st = get_settings()
+    account = st.gigabit_login or st.gigabit_account
+    if not account:
+        return st.gigabit_base_url
+    return st.gigabit_pay_url_template.format(
+        account=account, amount=f"{st.gigabit_monthly_fee:.2f}"
+    )
+
+
 def _to_decimal(value: object) -> Decimal | None:
     try:
         return Decimal(str(value)).quantize(Decimal("0.01"))

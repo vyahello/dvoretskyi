@@ -100,14 +100,24 @@ async def test_snooze_reminder_silences_balance(session, providers):
     assert pending == []
 
 
-async def test_run_balance_nudges_sends_and_dedupes_same_day(session, providers):
-    sent: list[tuple[int, str]] = []
+async def test_run_balance_nudges_sends_with_pay_link(session, providers, monkeypatch):
+    from dvoretskyi.config import get_settings
 
-    async def send(chat_id, text):
-        sent.append((chat_id, text))
+    # Pin the contract so the Portmone link is deterministic regardless of ambient .env.
+    monkeypatch.setattr(get_settings(), "gigabit_login", "")
+    monkeypatch.setattr(get_settings(), "gigabit_account", "0000TEST")
+
+    sent: list[tuple[int, str, str | None]] = []
+
+    async def send(chat_id, text, pay_link=None):
+        sent.append((chat_id, text, pay_link))
 
     pending = await run_balance_nudges(send, _now(), fetch=_fetch(Decimal("120.00")))
-    assert pending and sent and "120" in sent[0][1]
+    assert pending and sent
+    _chat, text, pay_link = sent[0]
+    assert "120" in text and "http" not in text  # URL not dumped into the text
+    assert pay_link and "portmone" in pay_link
+    assert "0000TEST" in pay_link and "200.00" in pay_link  # contract + amount injected
 
     again = await run_balance_nudges(send, _now(), fetch=_fetch(Decimal("120.00")))
     assert again == []  # already nudged today
