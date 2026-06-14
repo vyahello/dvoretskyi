@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
 from decimal import Decimal
 
 from aiogram.types import InlineKeyboardMarkup
 
-from dvoretskyi import clock
 from dvoretskyi.bot import app as bot_app
 from dvoretskyi.db.models import MeterReading, MeterStatus
 from tests.conftest import FakeVisionProvider
@@ -24,13 +22,10 @@ class FakeMessage:
         self.answers.append((text, reply_markup))
 
 
-def _freeze(monkeypatch, day: int) -> None:
-    fixed = datetime(2026, 6, day, 12, 0, tzinfo=clock.KYIV)
-    monkeypatch.setattr(clock, "now", lambda: fixed)
-
-
-def _patch_io(monkeypatch, value) -> FakeVisionProvider:
-    vis = FakeVisionProvider(value)
+def _patch_io(
+    monkeypatch, value, *, kind: str = "", comment: str = ""
+) -> FakeVisionProvider:
+    vis = FakeVisionProvider(value, kind=kind, comment=comment)
 
     async def fake_download(message):
         return "/tmp/dvoretskyi_fake_meter.png"
@@ -40,43 +35,58 @@ def _patch_io(monkeypatch, value) -> FakeVisionProvider:
     return vis
 
 
-async def test_single_meter_in_window_auto_routes(
-    engine, providers, session, monkeypatch
-):
-    # Make gas the only meter provider, then land inside the last-3-days window → auto.
-    providers["Холодна вода"].meter_window = None
-    await session.commit()
-    _freeze(monkeypatch, 28)  # June (30d): 2 days left → within the 3-day window
-    vis = _patch_io(monkeypatch, Decimal("1000"))
+async def test_light_meter_auto_routes_to_gas(engine, providers, monkeypatch):
+    # Vision says it's a light meter → gas, no window/no question.
+    vis = _patch_io(monkeypatch, Decimal("1000"), kind="gas")
 
     msg = FakeMessage()
     await bot_app.on_photo(msg)
 
-    assert vis.calls, "OCR should have run on the auto-routed provider"
+    assert vis.calls, "OCR should have run once"
     text, kb = msg.answers[-1]
-    assert "Газ (постачання)" in text  # ManualAssist confirmation names the provider
-    # validated reading → offers the «Відправив ✓» button, not a routing question
-    assert isinstance(kb, InlineKeyboardMarkup)
+    assert "Газ (постачання)" in text
+    assert isinstance(kb, InlineKeyboardMarkup)  # validated → «Відправив ✓»
 
 
-async def test_no_meter_in_window_asks_which(engine, providers, monkeypatch):
-    _freeze(monkeypatch, 12)  # mid-month: neither meter is within the 3-day window
-    vis = _patch_io(monkeypatch, Decimal("1000"))
+async def test_dark_meter_auto_routes_to_water(engine, providers, monkeypatch):
+    # Vision says it's a dark meter → water.
+    vis = _patch_io(monkeypatch, Decimal("55"), kind="water")
 
     msg = FakeMessage()
     await bot_app.on_photo(msg)
 
-    assert not vis.calls, "must not OCR until the user says which meter"
+    assert vis.calls
+    text, _ = msg.answers[-1]
+    assert "Холодна вода" in text
+
+
+async def test_non_meter_photo_gets_a_joke(engine, providers, monkeypatch):
+    # Not a meter → witty remark, nothing stored, no routing question.
+    vis = _patch_io(
+        monkeypatch,
+        None,
+        kind="other",
+        comment="Симпатичний кіт, але рахунків не платить.",
+    )
+
+    msg = FakeMessage()
+    await bot_app.on_photo(msg)
+
+    assert len(vis.calls) == 1
     text, kb = msg.answers[-1]
-    assert "Який це лічильник" in text
-    assert isinstance(kb, InlineKeyboardMarkup)
-    # one button per meter provider (gas + water)
-    assert sum(len(row) for row in kb.inline_keyboard) == 2
+    assert text == "Симпатичний кіт, але рахунків не платить."
+    assert kb is None
+
+    async with bot_app.session_scope() as session:
+        from sqlalchemy import select
+
+        rows = (await session.execute(select(MeterReading))).scalars().all()
+    assert rows == []  # a non-meter photo never touches the meter table
 
 
-async def test_caption_routes_even_outside_window(engine, providers, monkeypatch):
-    _freeze(monkeypatch, 12)  # outside any window, but caption disambiguates
-    vis = _patch_io(monkeypatch, Decimal("1000"))
+async def test_caption_overrides_detected_kind(engine, providers, monkeypatch):
+    # Caption names the meter explicitly → wins over whatever vision guessed.
+    vis = _patch_io(monkeypatch, Decimal("1000"), kind="water")
 
     msg = FakeMessage(caption="показники газу")
     await bot_app.on_photo(msg)
@@ -86,12 +96,18 @@ async def test_caption_routes_even_outside_window(engine, providers, monkeypatch
     assert "Газ (постачання)" in text
 
 
-async def test_ambiguous_capture_persists_ocr_pending_row(engine, providers, monkeypatch):
-    _freeze(monkeypatch, 12)
-    _patch_io(monkeypatch, Decimal("1000"))
+async def test_unknown_kind_asks_which(engine, providers, monkeypatch):
+    # Vision couldn't classify (kind="") and there's no caption → ask which meter.
+    _patch_io(monkeypatch, Decimal("1000"), kind="")
 
     msg = FakeMessage()
     await bot_app.on_photo(msg)
+
+    text, kb = msg.answers[-1]
+    assert "Який це лічильник" in text
+    assert isinstance(kb, InlineKeyboardMarkup)
+    # one button per meter provider (gas + water)
+    assert sum(len(row) for row in kb.inline_keyboard) == 2
 
     async with bot_app.session_scope() as session:
         from sqlalchemy import select

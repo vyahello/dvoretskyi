@@ -20,7 +20,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from dvoretskyi import clock
 from dvoretskyi.agent import meters
 from dvoretskyi.agent.submission import channel_for
-from dvoretskyi.agent.vision import VisionProvider, get_vision_provider
+from dvoretskyi.agent.vision import MeterRead, VisionProvider, get_vision_provider
 from dvoretskyi.config import get_settings
 from dvoretskyi.db.models import (
     Category,
@@ -466,16 +466,19 @@ async def submit_meter_reading(
     *,
     vision: VisionProvider | None = None,
     reading_id: int | None = None,
+    read: MeterRead | None = None,
 ) -> dict:
     """Full meter pipeline: OCR → delta-validate → store → submit (channel).
 
     OCR failure → `value=None`: nothing is submitted; the user is asked to retype.
     A reading that fails delta validation is stored `needs_confirm` and returned for a
-    confirm/re-photo prompt — never submitted until confirmed.
+    confirm/re-photo prompt — never submitted until confirmed. `read` lets the caller
+    pass an already-OCR'd MeterRead (e.g. the photo handler) to avoid a second call.
     """
     prov = await _provider_by_name(session, provider_name)
     settings = get_settings()
-    read = await (vision or get_vision_provider()).read_meter(image_path)
+    if read is None:
+        read = await (vision or get_vision_provider()).read_meter(image_path)
 
     # Locate/seed the row (an ambiguous-photo capture pre-creates an ocr_pending row).
     reading: MeterReading | None = None

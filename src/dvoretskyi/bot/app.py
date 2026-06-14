@@ -29,7 +29,6 @@ from sqlalchemy import select
 
 from dvoretskyi import clock
 from dvoretskyi.agent import dispatcher as agent_dispatcher
-from dvoretskyi.agent import meters
 from dvoretskyi.agent.provider import get_provider
 from dvoretskyi.agent.tools import (
     ToolError,
@@ -359,17 +358,6 @@ async def _meter_providers(session) -> list[Provider]:
     )
 
 
-def _meter_providers_in_window(
-    meter_providers: list[Provider], now=None
-) -> list[Provider]:
-    now = now or clock.now()
-    return [
-        p
-        for p in meter_providers
-        if p.meter_window is not None and meters.window_open(p.meter_window, now)
-    ]
-
-
 def _meter_reply(result: dict) -> tuple[str, InlineKeyboardMarkup | None]:
     """Map a pipeline result dict → (text, keyboard) in the butler's voice."""
     text = result.get("message") or "…"
@@ -387,20 +375,31 @@ async def on_photo(message: Message) -> None:
     path: str | None = None
     try:
         path = await _download_photo(message)
+        # One vision pass decides everything: it auto-detects the meter type by look —
+        # dark meter → water, light meter → gas — or says "other" if it isn't a meter.
+        read = await get_vision_provider().read_meter(path)
+        if read.kind == "other":
+            # Not a meter: just react to the photo with a light remark, store nothing.
+            await message.answer(
+                read.comment or "Гарне фото, але лічильника на ньому я не бачу. 🎩"
+            )
+            return
+
         async with session_scope() as session:
             meter_provs = await _meter_providers(session)
             if not meter_provs:
                 await message.answer("Лічильників у списку нема — нема куди вносити.")
                 return
 
+            # A caption can still override; otherwise route by the auto-detected kind.
             chosen = _caption_provider(message.caption, meter_provs)
-            if chosen is None:
-                in_window = _meter_providers_in_window(meter_provs)
-                if len(in_window) == 1:
-                    chosen = in_window[0]
+            if chosen is None and read.kind in ("water", "gas"):
+                chosen = next(
+                    (p for p in meter_provs if p.category.value == read.kind), None
+                )
 
             if chosen is None:
-                # Ambiguous: stash an ocr_pending row holding the photo, ask which meter.
+                # Couldn't tell which meter — stash the photo and ask.
                 reading = MeterReading(
                     cycle=clock.current_cycle(),
                     status=MeterStatus.ocr_pending,
@@ -417,7 +416,7 @@ async def on_photo(message: Message) -> None:
                 return
 
             result = await submit_meter_reading(
-                session, chosen.name, path, vision=get_vision_provider()
+                session, chosen.name, path, vision=get_vision_provider(), read=read
             )
         text, kb = _meter_reply(result)
         await message.answer(text, reply_markup=kb)

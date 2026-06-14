@@ -121,3 +121,14 @@ def test_parser_null_value_and_garbage():
     assert _parse_meter_read('{"value": null, "raw": "", "note": "x"}').value is None
     assert _parse_meter_read("totally not json") is None
     assert _extract_json_object("no object here") is None
+
+
+def test_parser_reads_kind_and_comment():
+    # Dark meter → water; light → gas; not a meter → other + a joke.
+    water = _parse_meter_read('{"kind": "WATER", "value": "55.123", "raw": "55123"}')
+    assert water is not None and water.kind == "water"  # normalized to lowercase
+    other = _parse_meter_read(
+        '{"kind": "other", "value": null, "comment": "Гарний кіт."}'
+    )
+    assert other is not None and other.kind == "other"
+    assert other.value is None and other.comment == "Гарний кіт."

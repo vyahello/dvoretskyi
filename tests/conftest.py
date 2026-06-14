@@ -147,12 +147,22 @@ class FakeVisionProvider(VisionProvider):
     """Returns a canned MeterRead — no real `claude` call. `value=None` simulates an
     OCR failure."""
 
-    def __init__(self, value, raw: str = "", note: str = ""):
+    def __init__(
+        self, value, raw: str = "", note: str = "", kind: str = "", comment: str = ""
+    ):
         self.value = value
         self.raw = raw or (str(value) if value is not None else "")
         self.note = note
+        self.kind = kind
+        self.comment = comment
         self.calls: list[str] = []
 
     async def read_meter(self, image_path: str) -> MeterRead:
         self.calls.append(image_path)
-        return MeterRead(value=self.value, raw=self.raw, note=self.note)
+        return MeterRead(
+            value=self.value,
+            raw=self.raw,
+            note=self.note,
+            kind=self.kind,
+            comment=self.comment,
+        )
