@@ -2,7 +2,7 @@
 
 Usage:
   dvoretskyi init-db                       # create tables (dev; prefer alembic)
-  dvoretskyi seed-providers                # seed the 6 providers (idempotent)
+  dvoretskyi seed-providers                # seed the 7 providers (idempotent)
   dvoretskyi learn-pattern "<provider>" "<substr>"
   dvoretskyi register-mono-webhook [--dry-run]
 """
@@ -26,7 +26,7 @@ from dvoretskyi.db.models import (
 from dvoretskyi.db.session import get_engine, session_scope
 from dvoretskyi.mono import client
 
-# The 6 providers (spec §3a, prompt §Seed data). Patterns are TODO placeholders —
+# The 7 providers (spec §3a, prompt §Seed data). Patterns are TODO placeholders —
 # real mono `description` strings are captured live and added via learn-pattern/bot.
 # meter_window (gas/water) is a nudge lead time in days before month end, seeded from
 # settings (METER_WINDOW_DAYS). Readings are due by the last day of the month.
@@ -83,6 +83,16 @@ SEED_PROVIDERS = [
         auto_logged=False,
         due_day=20,
         expected_amount=None,
+    ),
+    dict(
+        name="Мобільний",
+        category=Category.mobile,
+        pay_channel=PayChannel.mono_communal,
+        auto_logged=True,
+        due_day=20,
+        expected_amount=None,
+        # No meter. mono lists it under «Поповнення мобільного», not «Комуналка», so it
+        # arrives via the unmatched-tx flow (telecom MCC) → categorize-and-learn.
     ),
 ]
 
@@ -172,7 +182,7 @@ def main(argv: list[str] | None = None) -> None:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("init-db", help="create tables (dev convenience)")
-    sub.add_parser("seed-providers", help="seed the 6 providers (idempotent)")
+    sub.add_parser("seed-providers", help="seed the 7 providers (idempotent)")
 
     lp = sub.add_parser("learn-pattern", help="add a description substring → provider")
     lp.add_argument("provider")

@@ -42,7 +42,7 @@ cp .env.example .env                 # fill in tokens
 ```bash
 alembic upgrade head                 # apply schema (uses DATABASE_URL from settings)
 dvoretskyi init-db                    # dev shortcut: create_all (prefer alembic in prod)
-dvoretskyi seed-providers             # seed the 6 providers (idempotent)
+dvoretskyi seed-providers             # seed the 7 providers (idempotent)
 ```
 Money is `Decimal` only. All datetimes tz-aware Europe/Kyiv. SQLite returns naive
 datetimes on read → normalize with `clock.ensure_aware()` before comparing.
@@ -104,9 +104,10 @@ and pass `now` explicitly to reminder/window logic (no time-freezing dependency)
 - Conventional commits, one logical change each.
 - Brand/persona: **Комунальний Дворецький** — a butler with **no personal name**
   (never invent one). System prompt = `agent/persona.py::BUTLER_SYSTEM_PROMPT`.
-- The 6 seed providers (see `cli.py::SEED_PROVIDERS`): Холодна вода,
+- The 7 seed providers (see `cli.py::SEED_PROVIDERS`): Холодна вода,
   Електроенергія (ЛЕЗ), Газ (постачання), Газ (доставлення), **Інтернет (Gigabit+)**,
-  Кварплата (ДАХ).
+  Кварплата (ДАХ), Мобільний. Мобільний hits the webhook via «Поповнення мобільного»
+  (telecom MCC), not «Комуналка» → categorize-and-learn like any unmatched tx.
 - Ukrainian for all user-facing copy; English for code/logs.
 - Tool routing is deterministic in Python; the LLM only picks `{tool,args}` and writes
   the `message`. Never let the model fabricate amounts/balances/"paid"/meter values.

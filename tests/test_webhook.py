@@ -66,6 +66,48 @@ async def test_non_candidate_ignored(session, providers):
     assert await _count_payments(session) == 0
 
 
+async def test_mobile_topup_candidate_categorize_then_autologs(session, providers):
+    """Mobile top-up (not in mono «Комуналка»): telecom MCC → candidate →
+    categorize-and-learn → next identical top-up auto-logs."""
+    from dvoretskyi.agent.tools import categorize_payment
+    from dvoretskyi.db.models import Category, PayChannel, Provider
+
+    # «Мобільний» isn't in the default fixture — add it (category mobile, auto_logged).
+    session.add(
+        Provider(
+            name="Мобільний",
+            category=Category.mobile,
+            pay_channel=PayChannel.mono_communal,
+            auto_logged=True,
+            due_day=20,
+        )
+    )
+    await session.commit()
+
+    # 1) Top-up: telecom MCC 4814, non-communal description → candidate, uncategorized.
+    res = await process_statement_item(
+        session,
+        _item(id="mob-1", description="Поповнення VODAFONE", mcc=4814, amount=-25000),
+    )
+    assert res.action is Action.UNCATEGORIZED
+    assert res.payment.provider_id is None
+    await session.commit()
+
+    # 2) Categorize → learns the description pattern.
+    cat = await categorize_payment(session, "mob-1", "Мобільний")
+    assert cat["ok"] and cat["provider"] == "Мобільний"
+    assert cat["learned_pattern"]
+    await session.commit()
+
+    # 3) The next identical top-up auto-logs to «Мобільний».
+    res2 = await process_statement_item(
+        session,
+        _item(id="mob-2", description="Поповнення VODAFONE", mcc=4814, amount=-25000),
+    )
+    assert res2.action is Action.LOGGED
+    assert res2.provider.name == "Мобільний"
+
+
 # --- HTTP route: secret + GET validation ----------------------------------
 
 

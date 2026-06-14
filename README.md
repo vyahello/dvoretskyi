@@ -64,7 +64,7 @@ uv pip install -e ".[dev]"          # or: pip install -e ".[dev]"
 cp .env.example .env                # fill in your tokens
 
 alembic upgrade head                # create schema
-dvoretskyi seed-providers            # seed the 6 providers (idempotent)
+dvoretskyi seed-providers            # seed the 7 providers (idempotent)
 
 # register the mono webhook (inspect first, then send)
 dvoretskyi register-mono-webhook --dry-run
