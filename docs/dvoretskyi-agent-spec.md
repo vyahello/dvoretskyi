@@ -39,8 +39,8 @@ integration. L2 and L3 deepen on top without rework.
   `AnthropicAPIProvider` as a drop-in swap if rate limits / policy bite).
   Tradeoffs accepted: shared Max rate limits with interactive dev work; CLI-startup
   latency (seconds/call, fine for chat); `setup-token` may need periodic re-auth.
-- **Deploy:** existing Hetzner VPS (`cax@cyberalertx`, Ubuntu 24.04), alongside
-  CyberAlertX / Hoba. Public HTTPS endpoint for the mono webhook via the existing reverse proxy.
+- **Deploy:** VPS (Ubuntu 24.04, Python 3.12) behind a reverse proxy with HTTPS.
+  Public HTTPS endpoint for the mono webhook.
 
 ---
 

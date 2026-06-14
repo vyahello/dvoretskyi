@@ -133,10 +133,11 @@ alembic/  migrations (0001 schema · 0002 meter_readings · 0003 meter_decimals)
 ```
 
 ## Deploy & ops
-CI/CD (`.github/workflows/ci.yml`) runs ruff + mypy + pytest on every push/PR to `main`,
-then deploys to the VPS on green. Full VPS setup, systemd/nginx templates, and a
-**[server troubleshooting guide](deploy/README.md#troubleshooting-on-the-vps-as-cax)**
-(logs, `.env` reload, Redis/Claude-auth/DB/webhook checks) live in
+Runs on an Ubuntu 24.04 VPS behind nginx + Let's Encrypt as a `systemd` service on
+`127.0.0.1:8100`. CI/CD (`.github/workflows/ci.yml`) runs ruff + mypy + pytest on every
+push/PR to `main`, then SSH-deploys on green. The deployment
+[architecture](deploy/README.md#architecture-deployment-overview), required secrets,
+full setup, and a **[troubleshooting guide](deploy/README.md#troubleshooting)** live in
 [`deploy/README.md`](deploy/README.md).
 
 ---

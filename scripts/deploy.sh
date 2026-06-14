@@ -3,7 +3,9 @@
 # Pulls main cleanly, migrates, seeds, restarts the service.
 set -euo pipefail
 
-APP_DIR="/home/cax/dvoretskyi"
+# Resolve the app dir from this script's own location (<app>/scripts/deploy.sh),
+# so there's no hardcoded host path — works under CI and when run by hand.
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$APP_DIR"
 
 echo "==> Fetch + hard reset to origin/main"

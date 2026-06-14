@@ -1,0 +1,22 @@
+# systemd unit TEMPLATE — substitute the real values (<deploy-user>) when copying
+# to the server, e.g.:  sudo cp deploy/dvoretskyi.service.template \
+#   /etc/systemd/system/dvoretskyi.service  &&  sudo sed -i 's/<deploy-user>/youruser/g' ...
+[Unit]
+Description=Комунальний Дворецький — Telegram utility butler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=<deploy-user>
+WorkingDirectory=/home/<deploy-user>/dvoretskyi
+EnvironmentFile=/home/<deploy-user>/dvoretskyi/.env
+# Keep ANTHROPIC_API_KEY empty so Claude Code uses the Max subscription
+# (CLAUDE_CODE_OAUTH_TOKEN) and never falls back to paid API billing.
+Environment="ANTHROPIC_API_KEY="
+ExecStart=/home/<deploy-user>/dvoretskyi/venv/bin/uvicorn dvoretskyi.app:app --host 127.0.0.1 --port 8100
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -40,7 +40,8 @@ jobs:
           script_stop: true
           script: |
             set -e
-            APP_DIR="/home/cax/dvoretskyi"
+            APP_DIR="${{ secrets.VPS_APP_DIR }}"
+            APP_DIR="${APP_DIR:-$HOME/dvoretskyi}"   # fallback if the secret is unset
             if [ ! -d "$APP_DIR/.git" ]; then
               echo "First run — cloning repo into $APP_DIR"
               git clone git@github.com:vyahello/dvoretskyi.git "$APP_DIR"
