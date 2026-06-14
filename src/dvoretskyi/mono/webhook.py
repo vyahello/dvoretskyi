@@ -55,6 +55,18 @@ async def process_statement_item(
     if not item.is_outflow:
         return ProcessResult(Action.INFLOW)
 
+    # Visibility: log every outflow's MCC + description before the candidate filter, so
+    # txs that get silently dropped as "not комуналка" (never written to the DB) still
+    # leave their MCC in the journal. No amount / PII logged. Filter behaviour unchanged
+    # — the same `candidate` value is reused at step 5b below.
+    candidate = matcher.is_utility_candidate(item.mcc, item.description)
+    log.info(
+        "mono tx: mcc=%s desc=%s candidate=%s",
+        item.mcc,
+        item.description,
+        str(candidate).lower(),
+    )
+
     # 5. Match against known provider patterns.
     provider = await matcher.match(session, item.description)
     if provider is not None:
@@ -71,8 +83,8 @@ async def process_statement_item(
         await session.flush()
         return ProcessResult(Action.LOGGED, payment=payment, provider=provider)
 
-    # 5b. Unmatched → only act if it looks like комуналка.
-    if not matcher.is_utility_candidate(item.mcc, item.description):
+    # 5b. Unmatched → only act if it looks like комуналка (reuse the value from above).
+    if not candidate:
         return ProcessResult(Action.NOT_CANDIDATE)
 
     # Candidate: store uncategorized, prompt the user to categorize.

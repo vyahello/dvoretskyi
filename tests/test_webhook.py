@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import httpx
 from fastapi import FastAPI
 from sqlalchemy import func, select
@@ -64,6 +66,17 @@ async def test_non_candidate_ignored(session, providers):
     )
     assert res.action is Action.NOT_CANDIDATE
     assert await _count_payments(session) == 0
+
+
+async def test_outflow_logs_mcc_before_candidate_filter(session, providers, caplog):
+    # A silently-dropped outflow still leaves its MCC in the journal (visibility only).
+    with caplog.at_level(logging.INFO, logger="dvoretskyi.mono.webhook"):
+        res = await process_statement_item(
+            session,
+            _item(id="lg-1", description="SILPO grocery", mcc=5999, amount=-32000),
+        )
+    assert res.action is Action.NOT_CANDIDATE  # filter behaviour unchanged
+    assert "mono tx: mcc=5999 desc=SILPO grocery candidate=false" in caplog.text
 
 
 async def test_mobile_topup_candidate_categorize_then_autologs(session, providers):
