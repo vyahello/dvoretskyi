@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     # NoDecode: pydantic-settings would otherwise JSON-decode this complex field from
     # the dotenv string; we want the "4900,4814" CSV form parsed by the validator below.
     utility_mccs: Annotated[set[int], NoDecode] = Field(
-        default_factory=lambda: {4900, 4814}
+        default_factory=lambda: {4900, 4814, 4816}
     )
 
     # --- meters (L2, Phase 2) ---

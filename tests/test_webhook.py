@@ -68,6 +68,33 @@ async def test_non_candidate_ignored(session, providers):
     assert await _count_payments(session) == 0
 
 
+async def test_aggregator_tx_categorized_but_not_learned(session, providers, monkeypatch):
+    """Portmone & co. (MCC 4816): a candidate, but the generic 'portmone' token must
+    NOT be learned, or every future Portmone payment would mis-match. So the next one
+    still prompts instead of auto-logging."""
+    from dvoretskyi.agent.tools import categorize_payment
+    from dvoretskyi.config import get_settings
+
+    # Pin the candidate MCC set so the test doesn't depend on the ambient .env.
+    monkeypatch.setattr(get_settings(), "utility_mccs", {4900, 4814, 4816})
+
+    res = await process_statement_item(
+        session, _item(id="pm-1", description="Portmone", mcc=4816, amount=-20000)
+    )
+    assert res.action is Action.UNCATEGORIZED
+    await session.commit()
+
+    cat = await categorize_payment(session, "pm-1", "Інтернет (Gigabit+)")
+    assert cat["ok"] and cat["provider"] == "Інтернет (Gigabit+)"
+    assert cat["learned_pattern"] is None  # aggregator token not learned
+    await session.commit()
+
+    res2 = await process_statement_item(
+        session, _item(id="pm-2", description="Portmone", mcc=4816, amount=-48000)
+    )
+    assert res2.action is Action.UNCATEGORIZED  # still prompts, not mis-matched
+
+
 async def test_outflow_logs_mcc_before_candidate_filter(session, providers, caplog):
     # A silently-dropped outflow still leaves its MCC in the journal (visibility only).
     with caplog.at_level(logging.INFO, logger="dvoretskyi.mono.webhook"):

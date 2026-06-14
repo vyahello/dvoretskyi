@@ -35,6 +35,13 @@ UTILITY_KEYWORDS: tuple[str, ...] = (
 
 _TOKEN_RE = re.compile(r"[^\W\d_]+", re.UNICODE)  # runs of letters (Cyrillic/Latin)
 
+# Payment aggregators: their name is the tx description (not the real payee), so a
+# learned pattern would over-match every payment routed through them (spec §4.5). Such
+# txs stay uncategorized → the user is prompted each time instead of being mis-matched.
+AGGREGATOR_TOKENS: frozenset[str] = frozenset(
+    {"portmone", "easypay", "liqpay", "fondy", "ipay", "city24", "plategka"}
+)
+
 
 async def match(session: AsyncSession, description: str) -> Provider | None:
     """Return the provider whose pattern is a case-insensitive substring of `description`.
@@ -90,7 +97,10 @@ async def learn_pattern(
     new pattern, or None if nothing usable / already present.
     """
     token = stable_token(raw_description)
-    if not token:
+    if not token or token in AGGREGATOR_TOKENS:
+        # Aggregator descriptions (Portmone/EasyPay/…) are too generic to learn — they'd
+        # match every payment routed through that aggregator. Categorize this tx, but
+        # leave no pattern so the next one prompts again.
         return None
 
     existing = (
