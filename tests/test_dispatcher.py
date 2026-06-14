@@ -27,6 +27,29 @@ async def test_routes_to_get_unpaid_and_keeps_persona_text(session, providers):
     assert reply.tool_result is not None and "open" in reply.tool_result
 
 
+async def test_tool_result_message_is_appended(session, providers, monkeypatch):
+    # A tool that computes data the LLM didn't have (e.g. a scraped balance) returns it
+    # as result["message"]; the dispatcher must surface it, not just the persona preamble.
+    from dvoretskyi.agent import tools as tools_mod
+
+    async def fake_balance(session, **kw):
+        return {"ok": True, "message": "Баланс 400 ₴ — платити не треба."}
+
+    monkeypatch.setitem(tools_mod.TOOLS, "get_provider_balance", fake_balance)
+    llm = FakeLLMProvider(
+        [
+            Decision(
+                tool="get_provider_balance",
+                args={"provider_name": "Інтернет (Gigabit+)"},
+                message="Гляну баланс.",
+            )
+        ]
+    )
+    reply = await dispatcher.handle_message("скільки на інтернеті?", session, llm)
+    assert "Гляну баланс." in reply.text
+    assert "Баланс 400 ₴ — платити не треба." in reply.text  # tool result surfaced
+
+
 async def test_routes_to_get_stats_attaches_chart(session, providers):
     gas = providers["Газ (постачання)"]
     session.add(

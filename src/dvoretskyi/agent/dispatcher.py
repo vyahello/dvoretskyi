@@ -129,10 +129,18 @@ async def handle_message(
         log.warning("tool %r bad args %r: %s", decision.tool, decision.args, exc)
         return Reply(text=decision.message, tool=decision.tool, error=str(exc))
 
-    # Deterministic: persona message passes through untouched; tool data rides along.
+    # Surface the tool's own answer. Some tools compute data the LLM didn't have when
+    # it wrote `message` (e.g. a scraped balance, a stored meter reading) and return it
+    # as result["message"]; append it so the user actually sees the result, not just the
+    # persona preamble. Tools that put their data in the LLM context (get_unpaid/stats)
+    # return no "message" and are unaffected.
     chart_path = result.get("chart_path") if isinstance(result, dict) else None
+    result_msg = result.get("message") if isinstance(result, dict) else None
+    text = decision.message or ""
+    if result_msg:
+        text = f"{text}\n\n{result_msg}".strip()
     return Reply(
-        text=decision.message,
+        text=text,
         chart_path=chart_path,
         tool=decision.tool,
         tool_result=result if isinstance(result, dict) else None,
