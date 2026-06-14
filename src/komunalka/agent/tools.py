@@ -18,7 +18,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from komunalka import clock
+from komunalka.agent import meters
+from komunalka.agent.submission import channel_for
+from komunalka.agent.vision import VisionProvider, get_vision_provider
+from komunalka.config import get_settings
 from komunalka.db.models import (
+    MeterReading,
+    MeterStatus,
     NudgeKind,
     Payment,
     PaymentSource,
@@ -311,17 +317,227 @@ async def snooze_reminder(
     return {"ok": True, "provider": prov.name, "snoozed_until": until_dt.isoformat()}
 
 
-# --- Phase-2 stubs (signatures only) ---------------------------------------
+# --- meters (L2, Phase 2) --------------------------------------------------
+
+
+async def _history_values(session: AsyncSession, provider_id: int) -> list[Decimal]:
+    """Validated/submitted readings for a provider, most-recent first."""
+    rows = (
+        (
+            await session.execute(
+                select(MeterReading)
+                .where(
+                    MeterReading.provider_id == provider_id,
+                    MeterReading.value.is_not(None),
+                    MeterReading.status.in_(
+                        (MeterStatus.validated, MeterStatus.submitted)
+                    ),
+                )
+                .order_by(MeterReading.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [r.value for r in rows if r.value is not None]
+
+
+async def _run_submission(
+    session: AsyncSession, provider: Provider, reading: MeterReading
+) -> dict:
+    """Hand a validated reading to its channel; update status/submitted_at."""
+    result = await channel_for(provider).submit(provider, reading)
+    reading.status = result.status
+    if result.submitted:
+        reading.submitted_at = clock.now()
+    await session.flush()
+    msg = result.message
+    if result.instructions:
+        msg = f"{msg}\n{result.instructions}"
+    return {
+        "ok": True,
+        "reading_id": reading.id,
+        "provider": provider.name,
+        "value": str(reading.value),
+        "status": reading.status.value,
+        "consumption": (
+            str(reading.consumption_delta)
+            if reading.consumption_delta is not None
+            else None
+        ),
+        "message": msg,
+        "instructions": result.instructions,
+        "deep_link": result.deep_link,
+        "submitted": result.submitted,
+    }
 
 
 async def submit_meter_reading(
-    session: AsyncSession, provider_name: str, value: object, photo: object = None
+    session: AsyncSession,
+    provider_name: str,
+    image_path: str,
+    *,
+    vision: VisionProvider | None = None,
+    reading_id: int | None = None,
 ) -> dict:
-    raise NotImplementedError("Meter submission is Phase 2.")
+    """Full meter pipeline: OCR → delta-validate → store → submit (channel).
+
+    OCR failure → `value=None`: nothing is submitted; the user is asked to retype.
+    A reading that fails delta validation is stored `needs_confirm` and returned for a
+    confirm/re-photo prompt — never submitted until confirmed.
+    """
+    prov = await _provider_by_name(session, provider_name)
+    settings = get_settings()
+    read = await (vision or get_vision_provider()).read_meter(image_path)
+
+    # Locate/seed the row (an ambiguous-photo capture pre-creates an ocr_pending row).
+    reading: MeterReading | None = None
+    if reading_id is not None:
+        reading = await session.get(MeterReading, reading_id)
+    if reading is None:
+        reading = MeterReading(
+            cycle=clock.current_cycle(),
+            status=MeterStatus.ocr_pending,
+            created_at=clock.now(),
+        )
+        session.add(reading)
+    reading.provider_id = prov.id
+    reading.photo_ref = image_path
+    reading.ocr_raw = read.raw or None
+
+    if read.value is None:
+        reading.status = MeterStatus.failed
+        await session.flush()
+        return {
+            "ok": False,
+            "reading_id": reading.id,
+            "provider": prov.name,
+            "status": MeterStatus.failed.value,
+            "message": (
+                "Не зміг розібрати показник на фото. "
+                "Перефотографуй ближче або напиши число вручну."
+            ),
+        }
+
+    history = await _history_values(session, prov.id)
+    verdict = meters.validate(
+        read.value,
+        history,
+        spike_k=settings.delta_spike_k,
+        abs_cap=settings.delta_abs_cap,
+    )
+    reading.value = read.value
+    reading.consumption_delta = verdict.consumption
+    reading.status = verdict.status
+    await session.flush()
+
+    if not verdict.ok:
+        return {
+            "ok": False,
+            "reading_id": reading.id,
+            "provider": prov.name,
+            "value": str(read.value),
+            "status": verdict.status.value,
+            "consumption": (
+                str(verdict.consumption) if verdict.consumption is not None else None
+            ),
+            "message": verdict.reason,
+        }
+
+    return await _run_submission(session, prov, reading)
+
+
+async def confirm_meter_reading(session: AsyncSession, reading_id: object) -> dict:
+    """User confirmed a `needs_confirm` reading → validate it and run submission."""
+    try:
+        rid = int(str(reading_id).strip())
+    except (TypeError, ValueError) as exc:
+        raise ToolError(f"Поганий ідентифікатор показника: {reading_id!r}") from exc
+
+    reading = await session.get(MeterReading, rid)
+    if reading is None:
+        raise ToolError(f"Показник не знайдено: {rid}")
+    if reading.value is None or reading.provider_id is None:
+        raise ToolError("Цей показник ще не зчитано — спершу надішли фото.")
+    if reading.status is MeterStatus.submitted:
+        return {
+            "ok": True,
+            "reading_id": reading.id,
+            "status": reading.status.value,
+            "message": "Цей показник уже передано.",
+        }
+
+    prov = await session.get(Provider, reading.provider_id)
+    if prov is None:
+        raise ToolError("Провайдера для цього показника нема.")
+    reading.status = MeterStatus.validated
+    return await _run_submission(session, prov, reading)
+
+
+async def mark_meter_submitted(session: AsyncSession, reading_id: object) -> dict:
+    """The "відправив" action: user submitted a `validated` reading themselves → mark
+    it `submitted`. Button-driven (the bot has the reading_id); not an LLM tool."""
+    try:
+        rid = int(str(reading_id).strip())
+    except (TypeError, ValueError) as exc:
+        raise ToolError(f"Поганий ідентифікатор показника: {reading_id!r}") from exc
+    reading = await session.get(MeterReading, rid)
+    if reading is None:
+        raise ToolError(f"Показник не знайдено: {rid}")
+    reading.status = MeterStatus.submitted
+    reading.submitted_at = clock.now()
+    await session.flush()
+    return {
+        "ok": True,
+        "reading_id": reading.id,
+        "status": reading.status.value,
+        "message": "✅ Зафіксував, що передано.",
+    }
+
+
+async def get_meter_history(
+    session: AsyncSession, provider_name: str, limit: int = 6
+) -> dict:
+    """Recent readings + consumption for a provider (context/stats)."""
+    prov = await _provider_by_name(session, provider_name)
+    rows = (
+        (
+            await session.execute(
+                select(MeterReading)
+                .where(
+                    MeterReading.provider_id == prov.id,
+                    MeterReading.status.in_(
+                        (MeterStatus.validated, MeterStatus.submitted)
+                    ),
+                )
+                .order_by(MeterReading.created_at.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {
+        "provider": prov.name,
+        "readings": [
+            {
+                "cycle": r.cycle,
+                "value": str(r.value) if r.value is not None else None,
+                "consumption": (
+                    str(r.consumption_delta) if r.consumption_delta is not None else None
+                ),
+                "status": r.status.value,
+            }
+            for r in rows
+        ],
+    }
+
+
+# --- Phase-2 stub (no balance source yet) ----------------------------------
 
 
 async def get_provider_balance(session: AsyncSession, provider_name: str) -> dict:
-    raise NotImplementedError("Provider-side balance reads are Phase 2.")
+    raise NotImplementedError("Provider-side balance reads need a source (spec §9).")
 
 
 Tool = Callable[..., Awaitable[dict[str, Any]]]
@@ -332,7 +548,11 @@ TOOLS: dict[str, Tool] = {
     "log_payment_manual": log_payment_manual,
     "categorize_payment": categorize_payment,
     "snooze_reminder": snooze_reminder,
-    # Phase-2 (present so the LLM knows they exist; raise if called):
+    # Meters (L2). submit_meter_reading needs an image_path (supplied by the photo
+    # handler, not the LLM); confirm/history are LLM-callable.
     "submit_meter_reading": submit_meter_reading,
+    "confirm_meter_reading": confirm_meter_reading,
+    "get_meter_history": get_meter_history,
+    # Stub until a balance source exists (spec §9):
     "get_provider_balance": get_provider_balance,
 }

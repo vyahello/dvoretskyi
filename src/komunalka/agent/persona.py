@@ -54,4 +54,7 @@ TOOL_CATALOG = """\
 - log_payment_manual(provider_name: str, amount: number) — записати оплату вручну (поза mono).
 - categorize_payment(mono_tx_id: str, provider_name: str) — віднести нерозпізнаний платіж до провайдера.
 - snooze_reminder(provider_name: str, until: "YYYY-MM-DD"|N) — відкласти нагадування.
+- confirm_meter_reading(reading_id: int) — підтвердити сумнівний показник лічильника (далі — передати).
+- get_meter_history(provider_name: str) — останні показники й споживання.
+Показники лічильника здаються фотографією (газ, вода) — це окремий потік, не через цей JSON.
 """

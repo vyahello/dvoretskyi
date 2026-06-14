@@ -125,8 +125,7 @@ async def test_snooze_reminder(session, providers):
     assert res["ok"] and res["provider"] == "Холодна вода"
 
 
-async def test_phase2_stubs_raise(session, providers):
-    with pytest.raises(NotImplementedError):
-        await tools.submit_meter_reading(session, "Газ (постачання)", 1234)
+async def test_provider_balance_still_stubbed(session, providers):
+    # submit_meter_reading is implemented in Phase 2; balance reads have no source yet.
     with pytest.raises(NotImplementedError):
         await tools.get_provider_balance(session, "Газ (постачання)")

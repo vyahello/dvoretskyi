@@ -17,7 +17,7 @@ from komunalka import clock
 from komunalka.agent import tools as tools_mod
 from komunalka.agent.provider import Decision, LLMProvider
 from komunalka.agent.tools import ToolError
-from komunalka.db.models import Payment, Provider
+from komunalka.db.models import MeterReading, MeterStatus, Payment, Provider
 
 log = logging.getLogger(__name__)
 
@@ -60,11 +60,38 @@ async def build_context(session: AsyncSession) -> dict:
         for name in (prov.name,)
     ]
 
+    meter_rows = (
+        (
+            await session.execute(
+                select(MeterReading)
+                .where(
+                    MeterReading.status.in_(
+                        (MeterStatus.validated, MeterStatus.submitted)
+                    )
+                )
+                .order_by(MeterReading.created_at.desc())
+                .limit(5)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    meters = [
+        {
+            "provider": prov_names.get(m.provider_id) if m.provider_id else None,
+            "cycle": m.cycle,
+            "value": str(m.value) if m.value is not None else None,
+            "status": m.status.value,
+        }
+        for m in meter_rows
+    ]
+
     return {
         "cycle": clock.current_cycle(),
         "unpaid": unpaid,
         "recent_payments": recent,
         "providers": providers,
+        "meters": meters,
     }
 
 
