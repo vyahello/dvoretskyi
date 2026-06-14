@@ -97,10 +97,27 @@ def test_main_keyboard_has_menu_buttons():
     from dvoretskyi.bot import keyboards
 
     labels = [b.text for row in keyboards.main_keyboard().keyboard for b in row]
-    assert keyboards.MENU_UNPAID in labels
-    assert keyboards.MENU_STATS in labels
-    assert keyboards.MENU_BALANCE in labels
-    assert keyboards.MENU_HELP in labels
+    for lbl in (
+        keyboards.MENU_UNPAID,
+        keyboards.MENU_STATS,
+        keyboards.MENU_BALANCE,
+        keyboards.MENU_METERS,
+        keyboards.MENU_HELLO,
+        keyboards.MENU_HELP,
+    ):
+        assert lbl in labels
+
+
+async def test_menu_button_meters_prompts_for_photo(engine):
+    msg = FakeMessage()
+    await bot_app.menu_meters(msg)  # tap «📷 Показники»
+    assert "фото лічильника" in msg.answers[0]
+
+
+async def test_menu_button_hello_greets(engine):
+    msg = FakeMessage()
+    await bot_app.menu_hello(msg)  # tap «🎩 Привіт»
+    assert msg.answers and msg.answers[0] in bot_app._GREETINGS
 
 
 async def test_menu_button_unpaid_routes_like_command(engine, providers):

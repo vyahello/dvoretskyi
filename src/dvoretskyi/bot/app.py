@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 import tempfile
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
@@ -196,6 +197,29 @@ async def menu_balance(message: Message) -> None:
         keyboards.pay_keyboard(pay_link, label=res.get("pay_label")) if pay_link else None
     )
     await message.answer(res.get("message") or "…", reply_markup=markup)
+
+
+@router.message(F.text == keyboards.MENU_METERS)
+async def menu_meters(message: Message) -> None:
+    await message.answer(
+        "📷 Кинь фото лічильника — газу чи води. Зчитаю показник сам; як буде "
+        "сумнів — перепитаю, перш ніж кудись подавати."
+    )
+
+
+# Varied butler greetings (instant, no LLM) for the «🎩 Привіт» tap.
+_GREETINGS = (
+    "До ваших послуг. Сьогодні гроші, показники чи просто світська бесіда?",
+    "Вітаю. Комуналка під контролем, нерви бережемо. Чим допомогти?",
+    "На місці, серед квитанцій і спокою. Що цікавить?",
+    "Доброго. Лічильники тихі, рахунки чекають — як завжди. Слухаю.",
+    "Вітаю вас. Тицяйте кнопку або питайте — розберемось.",
+)
+
+
+@router.message(F.text == keyboards.MENU_HELLO)
+async def menu_hello(message: Message) -> None:
+    await message.answer(random.choice(_GREETINGS))
 
 
 @router.message(F.text)
