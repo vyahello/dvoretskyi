@@ -14,6 +14,7 @@ import asyncio
 
 from sqlalchemy import select
 
+from komunalka.config import get_settings
 from komunalka.db.models import (
     Base,
     Category,
@@ -27,6 +28,8 @@ from komunalka.mono import client
 
 # The 6 providers (spec §3a, prompt §Seed data). Patterns are TODO placeholders —
 # real mono `description` strings are captured live and added via learn-pattern/bot.
+# meter_window (gas/water) is seeded from settings (GAS_METER_DAY / WATER_METER_DAY).
+_settings = get_settings()
 SEED_PROVIDERS = [
     dict(
         name="Холодна вода",
@@ -35,6 +38,7 @@ SEED_PROVIDERS = [
         auto_logged=True,
         due_day=20,
         expected_amount=None,
+        meter_window=_settings.water_meter_day,
     ),
     dict(
         name="Електроенергія (ЛЕЗ)",
@@ -51,6 +55,7 @@ SEED_PROVIDERS = [
         auto_logged=True,
         due_day=20,
         expected_amount=None,
+        meter_window=_settings.gas_meter_day,
     ),
     dict(
         name="Газ (доставлення)",
@@ -96,6 +101,11 @@ async def _seed_providers() -> None:
                 )
             ).scalar_one_or_none()
             if exists is not None:
+                # Backfill meter_window for providers seeded before Phase 2.
+                want = spec.get("meter_window")
+                if isinstance(want, int) and exists.meter_window != want:
+                    exists.meter_window = want
+                    print(f"Updated meter_window for {exists.name} → {want}.")
                 continue
             provider = Provider(account_number=None, **spec)
             session.add(provider)

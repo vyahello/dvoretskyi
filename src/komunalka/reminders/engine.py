@@ -2,8 +2,8 @@
 
 Daily job: for each provider with a due_day, nudge iff this cycle is unpaid AND we're
 inside the nudge window (due_day-3 … due_day) AND not snoozed AND not already nudged
-today. Near the deadline (due_day or due_day-1) the copy escalates. Meter nudges are
-scaffolded (`kind="meter"`) but inactive in Phase 1.
+today. Near the deadline (due_day or due_day-1) the copy escalates. A second daily job
+nudges for meter readings (kind="meter") inside each meter's submission window.
 
 Redis is used for the jobstore when reachable; otherwise it falls back to in-memory
 (fine for single-user). Tests call `run_payment_nudges` directly — no scheduler needed.
@@ -21,8 +21,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from komunalka import clock
+from komunalka.agent import meters
 from komunalka.config import get_settings
-from komunalka.db.models import NudgeKind, NudgeLog, Payment, Provider
+from komunalka.db.models import (
+    Category,
+    MeterReading,
+    MeterStatus,
+    NudgeKind,
+    NudgeLog,
+    Payment,
+    Provider,
+)
 from komunalka.db.session import session_scope
 
 log = logging.getLogger(__name__)
@@ -168,14 +177,130 @@ async def run_payment_nudges(
     return pending
 
 
-# --- meter nudges: scaffolded, inactive in Phase 1 ------------------------
+# --- meter nudges (L2) -----------------------------------------------------
+
+
+@dataclass
+class PendingMeterNudge:
+    provider_id: int
+    provider_name: str
+    meter_window: int
+    category: str
+
+    def message(self) -> str:
+        if self.category == Category.gas.value:
+            what = "показники газу"
+        elif self.category == Category.water.value:
+            what = "показники води"
+        else:
+            what = "показники лічильника"
+        return f"До {self.meter_window}-го — {what}. Кинь фото лічильника, зчитаю сам."
+
+
+async def _reading_done_this_cycle(
+    session: AsyncSession, provider_id: int, cycle: str
+) -> bool:
+    row = (
+        await session.execute(
+            select(MeterReading.id).where(
+                MeterReading.provider_id == provider_id,
+                MeterReading.cycle == cycle,
+                MeterReading.status.in_((MeterStatus.validated, MeterStatus.submitted)),
+            )
+        )
+    ).first()
+    return row is not None
+
+
+async def compute_pending_meter_nudges(
+    session: AsyncSession, now: datetime | None = None
+) -> list[PendingMeterNudge]:
+    """Pure logic: which meter nudges should fire right now (gas ≤5, water per ВК)."""
+    now = now or clock.now()
+    cycle = clock.cycle_of(now)
+    today = now.day
+
+    providers = (
+        (
+            await session.execute(
+                select(Provider).where(Provider.meter_window.is_not(None))
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    pending: list[PendingMeterNudge] = []
+    for prov in providers:
+        window = prov.meter_window
+        if window is None or not meters.window_open(window, today):
+            continue
+        if await _reading_done_this_cycle(session, prov.id, cycle):
+            continue
+
+        nudge = (
+            await session.execute(
+                select(NudgeLog).where(
+                    NudgeLog.provider_id == prov.id,
+                    NudgeLog.cycle == cycle,
+                    NudgeLog.kind == NudgeKind.meter,
+                )
+            )
+        ).scalar_one_or_none()
+        if nudge is not None:
+            if (
+                nudge.snoozed_until is not None
+                and clock.ensure_aware(nudge.snoozed_until) > now
+            ):
+                continue  # snoozed
+            nudged_day = clock.ensure_aware(nudge.nudged_at).astimezone(clock.KYIV).date()
+            if nudged_day == now.astimezone(clock.KYIV).date():
+                continue  # already nudged today
+
+        pending.append(
+            PendingMeterNudge(
+                provider_id=prov.id,
+                provider_name=prov.name,
+                meter_window=window,
+                category=prov.category.value,
+            )
+        )
+    return pending
 
 
 async def run_meter_nudges(
     send: Callable[[int, str], Awaitable[None]], now: datetime | None = None
-) -> list[PendingNudge]:
-    """Phase-2: gas ≤5th, electricity end-of-month, water per ВК. Disabled for now."""
-    return []
+) -> list[PendingMeterNudge]:
+    """Compute + dispatch meter nudges, recording a NudgeLog(kind=meter) for each."""
+    now = now or clock.now()
+    cycle = clock.cycle_of(now)
+    async with session_scope() as session:
+        pending = await compute_pending_meter_nudges(session, now)
+        for item in pending:
+            existing = (
+                await session.execute(
+                    select(NudgeLog).where(
+                        NudgeLog.provider_id == item.provider_id,
+                        NudgeLog.cycle == cycle,
+                        NudgeLog.kind == NudgeKind.meter,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is None:
+                session.add(
+                    NudgeLog(
+                        provider_id=item.provider_id,
+                        cycle=cycle,
+                        kind=NudgeKind.meter,
+                        nudged_at=now,
+                    )
+                )
+            else:
+                existing.nudged_at = now
+
+    for item in pending:
+        await send(get_settings().telegram_allowed_user_id, item.message())
+    return pending
 
 
 # --- scheduler wiring ------------------------------------------------------
@@ -217,4 +342,13 @@ def schedule_jobs(
         replace_existing=True,
         misfire_grace_time=3600,
     )
-    # Meter nudge job intentionally not registered in Phase 1.
+    scheduler.add_job(
+        run_meter_nudges,
+        trigger="cron",
+        hour=9,
+        minute=0,
+        args=[send],
+        id="meter_nudges",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
