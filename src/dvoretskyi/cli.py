@@ -75,6 +75,7 @@ SEED_PROVIDERS = [
         auto_logged=False,
         due_day=20,
         expected_amount=None,
+        account_number=_settings.gigabit_account or None,  # contract no. from env
     ),
     dict(
         name="Кварплата (ДАХ)",
@@ -91,6 +92,7 @@ SEED_PROVIDERS = [
         auto_logged=True,
         due_day=20,
         expected_amount=None,
+        account_number=_settings.mobile_account or None,  # phone no. from env
         # No meter. mono lists it under «Поповнення мобільного», not «Комуналка», so it
         # arrives via the unmatched-tx flow (telecom MCC) → categorize-and-learn.
     ),
@@ -123,8 +125,12 @@ async def _seed_providers() -> None:
                 if isinstance(decimals, int) and exists.meter_decimals != decimals:
                     exists.meter_decimals = decimals
                     print(f"Updated meter_decimals for {exists.name} → {decimals}.")
+                account = spec.get("account_number")
+                if isinstance(account, str) and exists.account_number != account:
+                    exists.account_number = account
+                    print(f"Updated account_number for {exists.name}.")  # value unlogged
                 continue
-            provider = Provider(account_number=None, **spec)
+            provider = Provider(**spec)
             session.add(provider)
             await session.flush()
             session.add(

@@ -63,6 +63,11 @@ class Settings(BaseSettings):
     # (readings are due by the last day of the month). Seeds Provider.meter_window.
     meter_window_days: int = 3
 
+    # Personal account identifiers — kept out of code/git, seeded into Provider.
+    # account_number. Empty = unknown (left null). gigabit = contract no., mobile = phone.
+    gigabit_account: str = ""
+    mobile_account: str = ""
+
     # --- misc ---
     tz: str = "Europe/Kyiv"
     public_base_url: str = "https://example.com"
