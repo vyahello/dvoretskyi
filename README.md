@@ -8,9 +8,12 @@
 bills, reads your meters from a photo, and nudges you before the deadline — with the
 minimum necessary enthusiasm.
 
-<sub>Python 3.12+ · FastAPI · aiogram 3 · SQLAlchemy 2.0 · Claude Code CLI</sub>
+![python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
+![fastapi](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![aiogram](https://img.shields.io/badge/aiogram-3-26A5E4?logo=telegram&logoColor=white)
+![sqlalchemy](https://img.shields.io/badge/SQLAlchemy-2.0-D71F00?logo=sqlalchemy&logoColor=white)
+![claude](https://img.shields.io/badge/Claude%20Code-CLI-D97757?logo=anthropic&logoColor=white)
 
-![python](https://img.shields.io/badge/python-3.12+-3776AB?logo=python&logoColor=white)
 ![tests](https://img.shields.io/badge/tests-74%20passing-2ea44f)
 ![lint](https://img.shields.io/badge/ruff-clean-261230?logo=ruff&logoColor=white)
 ![types](https://img.shields.io/badge/mypy-strict-2a6db2)
