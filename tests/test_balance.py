@@ -9,32 +9,26 @@ from dvoretskyi.agent import balance
 from dvoretskyi.agent.balance import Balance, fetch_gigabit_balance
 from dvoretskyi.config import get_settings
 
-# Representative cabinet pages (no real cabinet hit).
 _LOGIN_HTML = (
-    '<form method="POST" action="/login">'
-    '<input type="hidden" name="_token" value="tok-abc123">'
-    '<input name="id"><input type="password" name="password"></form>'
+    '<form method="POST" action="/login"><input name="_token" value="tok-abc"></form>'
 )
+_DASH_HTML = '<html><head><meta name="csrf-token" content="meta-xyz"></head></html>'
 
 
-def _dashboard_html(balance_str: str, date: str = "01.06.2026") -> str:
-    return (
-        f"<div class='b'>Баланс: {balance_str} грн</div>"
-        f"<div class='t'>Останнє поповнення: {date}</div>"
-    )
+def _user_json(deposit, date="2026-06-14 19:28:36") -> dict:
+    return {"user": {"bill": {"deposit": deposit}, "LastPayment": {"date": date}}}
 
 
-def _client(monkeypatch, dashboard_html: str, calls: list[str] | None = None):
-    """An httpx client on a MockTransport that serves login form + dashboard.
-
-    Distinct form/dashboard paths so the handler can branch without cookie state.
-    """
+def _client(monkeypatch, api_response: httpx.Response, calls: list[str] | None = None):
+    """httpx client on a MockTransport serving the login → dashboard → JSON-API flow.
+    Distinct paths so the handler branches cleanly (no cookie state needed)."""
     st = get_settings()
     monkeypatch.setattr(st, "gigabit_login", "0000TEST")
     monkeypatch.setattr(st, "gigabit_pwd", "secret")  # not the real one
     monkeypatch.setattr(st, "gigabit_login_form_path", "/login-form")
     monkeypatch.setattr(st, "gigabit_login_path", "/login")
-    monkeypatch.setattr(st, "gigabit_dashboard_path", "/cabinet")
+    monkeypatch.setattr(st, "gigabit_dashboard_path", "/dash")
+    monkeypatch.setattr(st, "gigabit_user_api_path", "/total/reload_user")
     balance.clear_cache()
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -45,8 +39,10 @@ def _client(monkeypatch, dashboard_html: str, calls: list[str] | None = None):
             return httpx.Response(200, text=_LOGIN_HTML)
         if path == "/login":
             return httpx.Response(200, text="ok")
-        if path == "/cabinet":
-            return httpx.Response(200, text=dashboard_html)
+        if path == "/dash":
+            return httpx.Response(200, text=_DASH_HTML)
+        if path == "/total/reload_user":
+            return api_response
         return httpx.Response(404)
 
     return httpx.AsyncClient(
@@ -57,11 +53,12 @@ def _client(monkeypatch, dashboard_html: str, calls: list[str] | None = None):
 
 
 async def test_parses_balance_and_topup_date(monkeypatch):
-    async with _client(monkeypatch, _dashboard_html("250,00")) as c:
+    resp = httpx.Response(200, json=_user_json(400))
+    async with _client(monkeypatch, resp) as c:
         bal = await fetch_gigabit_balance(client=c, use_cache=False)
     assert bal.ok
-    assert bal.balance == Decimal("250.00")
-    assert bal.last_topup == "01.06.2026"
+    assert bal.balance == Decimal("400.00")
+    assert bal.last_topup == "2026-06-14"  # time stripped
 
 
 async def test_missing_credentials_returns_not_ok(monkeypatch):
@@ -74,20 +71,21 @@ async def test_missing_credentials_returns_not_ok(monkeypatch):
     assert not bal.ok and bal.balance is None
 
 
-async def test_unparseable_dashboard_returns_not_ok(monkeypatch):
-    async with _client(monkeypatch, "<div>no balance here</div>") as c:
+async def test_unexpected_json_returns_not_ok(monkeypatch):
+    resp = httpx.Response(200, json={"user": {"nothing": True}})
+    async with _client(monkeypatch, resp) as c:
         bal = await fetch_gigabit_balance(client=c, use_cache=False)
     assert not bal.ok and bal.balance is None
 
 
 async def test_cache_avoids_second_login(monkeypatch):
     calls: list[str] = []
-    async with _client(monkeypatch, _dashboard_html("300,00"), calls=calls) as c:
+    resp = httpx.Response(200, json=_user_json(300))
+    async with _client(monkeypatch, resp, calls=calls) as c:
         first = await fetch_gigabit_balance(client=c, use_cache=True)
         second = await fetch_gigabit_balance(client=c, use_cache=True)
     assert first.balance == second.balance == Decimal("300.00")
-    # Only the first call performed HTTP; the second was served from cache.
-    assert calls.count("GET /cabinet") == 1
+    assert calls.count("POST /total/reload_user") == 1  # second served from cache
 
 
 # --- get_provider_balance decision logic (fetch mocked) --------------------
@@ -107,7 +105,7 @@ def _patch_fetch(monkeypatch):
 async def test_balance_below_fee_needs_payment(session, providers, _patch_fetch):
     from dvoretskyi.agent import tools
 
-    _patch_fetch(Balance(Decimal("120.00"), "01.06.2026", ok=True))
+    _patch_fetch(Balance(Decimal("120.00"), "2026-06-14", ok=True))
     res = await tools.get_provider_balance(session, "Інтернет (Gigabit+)")
     assert res["need_to_pay"] is True
     assert res["pay_link"] and "120" in res["message"]
@@ -116,10 +114,10 @@ async def test_balance_below_fee_needs_payment(session, providers, _patch_fetch)
 async def test_balance_sufficient_no_payment(session, providers, _patch_fetch):
     from dvoretskyi.agent import tools
 
-    _patch_fetch(Balance(Decimal("260.00"), "01.06.2026", ok=True))
+    _patch_fetch(Balance(Decimal("400.00"), "2026-06-14", ok=True))
     res = await tools.get_provider_balance(session, "Інтернет (Gigabit+)")
     assert res["need_to_pay"] is False
-    assert "01.06.2026" in res["message"]
+    assert "2026-06-14" in res["message"]
 
 
 async def test_balance_scrape_failure_is_graceful(session, providers, _patch_fetch):

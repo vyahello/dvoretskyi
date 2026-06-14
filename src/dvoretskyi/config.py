@@ -74,11 +74,11 @@ class Settings(BaseSettings):
     gigabit_base_url: str = "https://cabinet.gigabit.te.ua"
     gigabit_login_form_path: str = "/"  # GET → login form (+ CSRF _token)
     gigabit_login_path: str = "/login"  # POST → submit credentials
-    gigabit_dashboard_path: str = "/"  # GET → authenticated balance page
-    # Selectors as regex so they can be tuned against the live dashboard via .env.
-    gigabit_csrf_regex: str = r'name="_token"\s+value="([^"]+)"'
-    gigabit_balance_regex: str = r"(?:Баланс|баланс)[^0-9\-]*(-?[\d\s ]*[.,]?\d*)"
-    gigabit_topup_date_regex: str = r"(\d{2}[.\-/]\d{2}[.\-/]\d{4})"
+    gigabit_dashboard_path: str = "/"  # GET → page carrying the <meta csrf-token>
+    # The cabinet is a Vue SPA: balance/last-topup come from a JSON action, not HTML.
+    gigabit_user_api_path: str = "/total/reload_user"  # POST → account-state JSON
+    gigabit_form_csrf_regex: str = r'name="_token"\s+value="([^"]+)"'
+    gigabit_meta_csrf_regex: str = r'name="csrf-token"\s+content="([^"]+)"'
     gigabit_monthly_fee: Decimal = Decimal("200")  # monthly subscription, UAH
     gigabit_balance_ttl_seconds: int = 3600  # cache so we don't log in every call
 

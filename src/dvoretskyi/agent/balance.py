@@ -1,13 +1,14 @@
-"""Gigabit+ ISP cabinet balance scraper (L2, cabinet.gigabit.te.ua).
+"""Gigabit+ ISP cabinet balance reader (L2, cabinet.gigabit.te.ua).
 
-The cabinet is a Laravel app with a plain CSRF login form (no captcha): GET the form
-to pick up the `_token` + session cookie, POST credentials, then GET the dashboard and
-parse the balance + last top-up date. Selectors/URLs live in config so they can be tuned
-against the live page without code changes.
+The cabinet is a Laravel + Vue SPA (no captcha). The balance is NOT in the server HTML
+— it comes from a JSON action the SPA calls after login. So we: GET the login form for
+its CSRF `_token` (+ session cookie), POST credentials, GET the dashboard for the
+`<meta name="csrf-token">`, then POST that as `X-CSRF-TOKEN` to the user-state endpoint
+and read JSON: balance = `user.bill.deposit`, last top-up = `user.LastPayment.date`.
 
-Result is cached (TTL ~1h) so we don't log in on every query. Credentials are read from
-env (`gigabit_login`/`gigabit_pwd`, login falling back to `gigabit_account`) and are
-**never logged**. On any failure the scraper returns `ok=False` rather than raising.
+Result is cached (TTL ~1h). Credentials come from env and are **never logged**; the
+account JSON carries personal data — we read only the two fields and log none of it.
+On any failure the reader returns `ok=False` rather than raising.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ log = logging.getLogger(__name__)
 @dataclass
 class Balance:
     balance: Decimal | None
-    last_topup: str | None  # raw date string as shown in the cabinet
+    last_topup: str | None  # date string from the cabinet, e.g. "2026-06-14"
     ok: bool
     note: str = ""
 
@@ -42,26 +43,17 @@ def clear_cache() -> None:
     _cache = None
 
 
-def _parse_balance(text: str, pattern: str) -> Decimal | None:
-    m = re.search(pattern, text)
-    if not m:
-        return None
-    raw = re.sub(r"[\s\u00a0]", "", m.group(1)).replace(",", ".")
+def _to_decimal(value: object) -> Decimal | None:
     try:
-        return Decimal(raw).quantize(Decimal("0.01"))
-    except (InvalidOperation, ValueError):
+        return Decimal(str(value)).quantize(Decimal("0.01"))
+    except (InvalidOperation, ValueError, TypeError):
         return None
-
-
-def _parse_date(text: str, pattern: str) -> str | None:
-    m = re.search(pattern, text)
-    return m.group(1) if m else None
 
 
 async def fetch_gigabit_balance(
     *, client: httpx.AsyncClient | None = None, use_cache: bool = True
 ) -> Balance:
-    """Log into the Gigabit+ cabinet and read the balance + last top-up date.
+    """Log into the Gigabit+ cabinet and read balance + last top-up date from JSON.
 
     `client` is injectable for tests (e.g. an httpx.AsyncClient on a MockTransport).
     """
@@ -85,29 +77,41 @@ async def fetch_gigabit_balance(
 
     try:
         form = await client.get(st.gigabit_login_form_path)
-        token_match = re.search(st.gigabit_csrf_regex, form.text)
-        token = token_match.group(1) if token_match else ""
+        m = re.search(st.gigabit_form_csrf_regex, form.text)
         await client.post(
             st.gigabit_login_path,
             data={
-                "_token": token,
+                "_token": m.group(1) if m else "",
                 "id": login,
                 "password": st.gigabit_pwd,
                 "remember": "on",
             },
         )
         page = await client.get(st.gigabit_dashboard_path)
-        balance = _parse_balance(page.text, st.gigabit_balance_regex)
-        last_topup = _parse_date(page.text, st.gigabit_topup_date_regex)
+        meta = re.search(st.gigabit_meta_csrf_regex, page.text)
+        resp = await client.post(
+            st.gigabit_user_api_path,
+            headers={
+                "X-CSRF-TOKEN": meta.group(1) if meta else "",
+                "X-Requested-With": "XMLHttpRequest",
+                "Accept": "application/json",
+            },
+        )
+        user = resp.json().get("user", {})
     except httpx.HTTPError as exc:
-        log.warning("gigabit balance fetch failed: %s", exc)  # no creds in the message
+        log.warning("gigabit balance fetch failed: %s", exc)  # no creds/PII in message
         return Balance(None, None, ok=False, note="кабінет недоступний")
+    except (ValueError, KeyError, AttributeError):
+        return Balance(None, None, ok=False, note="несподіваний формат відповіді")
     finally:
         if owns_client:
             await client.aclose()
 
+    balance = _to_decimal((user.get("bill") or {}).get("deposit"))
+    last_raw = (user.get("LastPayment") or {}).get("date")
+    last_topup = str(last_raw).split(" ")[0] if last_raw else None
     if balance is None:
-        return Balance(None, last_topup, ok=False, note="не вдалося розпарсити баланс")
+        return Balance(None, last_topup, ok=False, note="не знайшов баланс у відповіді")
 
     result = Balance(balance, last_topup, ok=True)
     _cache = (time.monotonic(), result)
