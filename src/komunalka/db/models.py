@@ -167,9 +167,7 @@ class MeterReading(Base):
     ocr_raw: Mapped[str | None] = mapped_column(String(64), default=None)
     consumption_delta: Mapped[Decimal | None] = mapped_column(_Money, default=None)
     photo_ref: Mapped[str | None] = mapped_column(String(512), default=None)
-    status: Mapped[MeterStatus] = mapped_column(
-        SAEnum(MeterStatus, name="meter_status")
-    )
+    status: Mapped[MeterStatus] = mapped_column(SAEnum(MeterStatus, name="meter_status"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     submitted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None

@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import StaticPool
 
 from komunalka.agent.provider import Decision, LLMProvider
+from komunalka.agent.vision import MeterRead, VisionProvider
 from komunalka.db import session as db_session
 from komunalka.db.models import (
     Base,
@@ -55,6 +56,7 @@ async def session(engine) -> AsyncSession:
 @pytest_asyncio.fixture
 async def providers(session) -> dict[str, Provider]:
     """Seed a small provider set with real (test) match patterns."""
+    # (name, category, pay_channel, auto_logged, due_day, expected, patterns, meter_win)
     specs = [
         (
             "Газ (постачання)",
@@ -64,6 +66,7 @@ async def providers(session) -> dict[str, Provider]:
             15,
             None,
             ["naftogaz"],
+            5,
         ),
         (
             "Холодна вода",
@@ -73,6 +76,7 @@ async def providers(session) -> dict[str, Provider]:
             20,
             Decimal("180.00"),
             ["vodokanal"],
+            25,
         ),
         (
             "Інтернет (Gigabit+)",
@@ -82,11 +86,21 @@ async def providers(session) -> dict[str, Provider]:
             10,
             Decimal("250.00"),
             [],
+            None,
         ),
-        ("Кварплата (ДАХ)", Category.housing, PayChannel.mono_card, False, 25, None, []),
+        (
+            "Кварплата (ДАХ)",
+            Category.housing,
+            PayChannel.mono_card,
+            False,
+            25,
+            None,
+            [],
+            None,
+        ),
     ]
     out: dict[str, Provider] = {}
-    for name, cat, ch, auto, due, expected, patterns in specs:
+    for name, cat, ch, auto, due, expected, patterns, meter_window in specs:
         prov = Provider(
             name=name,
             category=cat,
@@ -95,6 +109,7 @@ async def providers(session) -> dict[str, Provider]:
             due_day=due,
             expected_amount=expected,
             account_number=None,
+            meter_window=meter_window,
         )
         session.add(prov)
         await session.flush()
@@ -120,3 +135,18 @@ class FakeLLMProvider(LLMProvider):
         self.calls.append((user_text, context))
         idx = min(len(self.calls) - 1, len(self._decisions) - 1)
         return self._decisions[idx]
+
+
+class FakeVisionProvider(VisionProvider):
+    """Returns a canned MeterRead — no real `claude` call. `value=None` simulates an
+    OCR failure."""
+
+    def __init__(self, value, raw: str = "", note: str = ""):
+        self.value = value
+        self.raw = raw or (str(value) if value is not None else "")
+        self.note = note
+        self.calls: list[str] = []
+
+    async def read_meter(self, image_path: str) -> MeterRead:
+        self.calls.append(image_path)
+        return MeterRead(value=self.value, raw=self.raw, note=self.note)
