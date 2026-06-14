@@ -14,10 +14,33 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+)
 
 from dvoretskyi.config import get_settings
 from dvoretskyi.db.models import Provider
+
+# Persistent main menu (reply keyboard). Labels double as the routing key in bot/app.py.
+MENU_UNPAID = "📋 Що відкрито"
+MENU_STATS = "📊 Статистика"
+MENU_BALANCE = "🌐 Баланс інтернету"
+MENU_HELP = "❓ Довідка"
+
+
+def main_keyboard() -> ReplyKeyboardMarkup:
+    """Always-on tap menu above the text box (no need to type slash-commands)."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=MENU_UNPAID), KeyboardButton(text=MENU_STATS)],
+            [KeyboardButton(text=MENU_BALANCE), KeyboardButton(text=MENU_HELP)],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
 
 
 def categorize_keyboard(

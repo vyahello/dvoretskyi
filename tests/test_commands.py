@@ -51,7 +51,7 @@ async def test_cmd_start(engine):
     await cmd_start(msg)
     assert len(msg.answers) == 1
     text = msg.answers[0]
-    assert "/unpaid" in text and "/help" in text
+    assert "/help" in text and "дворецький" in text.lower()
 
 
 async def test_cmd_help(engine):
@@ -88,6 +88,31 @@ async def test_cmd_unpaid_all_clear(engine, providers, session):
 
 def test_format_unpaid_all_clear_unit():
     assert _format_unpaid({"all_clear": True, "open": []}).startswith("✅ Усе чисто")
+
+
+# --- main-menu reply keyboard ----------------------------------------------
+
+
+def test_main_keyboard_has_menu_buttons():
+    from dvoretskyi.bot import keyboards
+
+    labels = [b.text for row in keyboards.main_keyboard().keyboard for b in row]
+    assert keyboards.MENU_UNPAID in labels
+    assert keyboards.MENU_STATS in labels
+    assert keyboards.MENU_BALANCE in labels
+    assert keyboards.MENU_HELP in labels
+
+
+async def test_menu_button_unpaid_routes_like_command(engine, providers):
+    msg = FakeMessage()
+    await bot_app.menu_unpaid(msg)  # tap «📋 Що відкрито»
+    assert msg.answers[0].startswith("Відкрите цього місяця:")
+
+
+async def test_menu_button_help_routes_like_command(engine):
+    msg = FakeMessage()
+    await bot_app.menu_help(msg)  # tap «❓ Довідка»
+    assert "/unpaid" in msg.answers[0]
 
 
 def test_format_unpaid_mentions_mobile_autopay():

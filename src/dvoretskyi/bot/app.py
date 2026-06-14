@@ -34,6 +34,7 @@ from dvoretskyi.agent.tools import (
     ToolError,
     categorize_payment,
     confirm_meter_reading,
+    get_provider_balance,
     get_stats,
     get_unpaid,
     mark_meter_submitted,
@@ -137,8 +138,9 @@ async def cmd_start(message: Message) -> None:
     await message.answer(
         "До ваших послуг — ваш комунальний дворецький. Стежу за платежами, "
         "статистикою та дедлайнами.\n"
-        "Почніть з /unpaid, або просто спитайте «що треба заплатити?». "
-        "Повний перелік — /help."
+        "Тапай кнопки внизу або просто пиши як людині — напр. «що треба заплатити?». "
+        "Повний перелік — /help.",
+        reply_markup=keyboards.main_keyboard(),
     )
 
 
@@ -165,6 +167,35 @@ async def cmd_stats(message: Message) -> None:
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
     await message.answer(HELP_TEXT)
+
+
+# --- main-menu reply-keyboard taps (registered BEFORE the free-text catch-all) ---
+
+
+@router.message(F.text == keyboards.MENU_UNPAID)
+async def menu_unpaid(message: Message) -> None:
+    await cmd_unpaid(message)
+
+
+@router.message(F.text == keyboards.MENU_STATS)
+async def menu_stats(message: Message) -> None:
+    await cmd_stats(message)
+
+
+@router.message(F.text == keyboards.MENU_HELP)
+async def menu_help(message: Message) -> None:
+    await cmd_help(message)
+
+
+@router.message(F.text == keyboards.MENU_BALANCE)
+async def menu_balance(message: Message) -> None:
+    async with session_scope() as session:
+        res = await get_provider_balance(session, "Інтернет (Gigabit+)")
+    pay_link = res.get("pay_link")
+    markup = (
+        keyboards.pay_keyboard(pay_link, label=res.get("pay_label")) if pay_link else None
+    )
+    await message.answer(res.get("message") or "…", reply_markup=markup)
 
 
 @router.message(F.text)
