@@ -26,6 +26,8 @@ if [ -f dvoretskyi.db ]; then
   backup="dvoretskyi.db.bak.$(date +%s)"
   echo "==> Backup DB -> $backup"
   cp dvoretskyi.db "$backup"
+  # Keep only the 10 most recent backups; prune the rest (one per deploy adds up).
+  ls -1t dvoretskyi.db.bak.* 2>/dev/null | tail -n +11 | xargs -r rm -f
 fi
 
 echo "==> Alembic upgrade"
