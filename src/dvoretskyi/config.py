@@ -91,7 +91,9 @@ class Settings(BaseSettings):
     gigabit_user_api_path: str = "/total/reload_user"  # POST → account-state JSON
     gigabit_form_csrf_regex: str = r'name="_token"\s+value="([^"]+)"'
     gigabit_meta_csrf_regex: str = r'name="csrf-token"\s+content="([^"]+)"'
-    gigabit_monthly_fee: Decimal = Decimal("200")  # monthly subscription, UAH
+    # Fallback only — the real fee is scraped from the cabinet tariff (dv_main.tarif_plan
+    # .month_fee); this is used if the scrape is unavailable.
+    gigabit_monthly_fee: Decimal = Decimal("200")  # monthly subscription, UAH (fallback)
     gigabit_balance_ttl_seconds: int = 3600  # cache so we don't log in every call
     # Top-up deep link. {account} (contract no., from gigabit_login/env) and {amount}
     # are injected at runtime — no personal id in code. Empty account → cabinet base URL.

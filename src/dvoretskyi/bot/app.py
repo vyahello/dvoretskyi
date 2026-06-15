@@ -13,7 +13,8 @@ import os
 import random
 import tempfile
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,7 @@ from aiogram.types import (
     Message,
     TelegramObject,
 )
+from aiogram.utils.chat_action import ChatActionSender
 from sqlalchemy import select
 
 from dvoretskyi import clock
@@ -46,6 +48,7 @@ from dvoretskyi.agent.tools import (
     categorize_payment,
     confirm_meter_reading,
     delete_meter_reading,
+    execute_meter_delete,
     get_meter_history,
     get_provider_balance,
     get_stats,
@@ -312,6 +315,20 @@ async def menu_hello(message: Message) -> None:
     await message.answer(random.choice(_GREETINGS))
 
 
+@asynccontextmanager
+async def _thinking(message: Message) -> AsyncIterator[None]:
+    """Show Telegram's animated «друкує…» while we work, so a slow LLM/vision turn never
+    looks frozen. No-ops if the bot/chat isn't a real one (e.g. in tests). Body exceptions
+    propagate to the caller's own error handling — we only gate the indicator itself."""
+    bot = getattr(message, "bot", None)
+    chat = getattr(message, "chat", None)
+    if not isinstance(bot, Bot) or chat is None:
+        yield
+        return
+    async with ChatActionSender.typing(bot=bot, chat_id=chat.id):
+        yield
+
+
 # Rolling free-text dialogue (single user, single process) so the agent can resolve
 # short replies («давай», «а за травень?») against its own previous line. Kept short.
 _DIALOGUE: deque[dict[str, str]] = deque(maxlen=6)
@@ -321,7 +338,7 @@ _DIALOGUE: deque[dict[str, str]] = deque(maxlen=6)
 async def on_text(message: Message) -> None:
     user_text = message.text or ""
     try:
-        async with session_scope() as session:
+        async with _thinking(message), session_scope() as session:
             reply = await agent_dispatcher.handle_message(
                 user_text, session, get_provider(), history=list(_DIALOGUE)
             )
@@ -336,10 +353,11 @@ async def on_text(message: Message) -> None:
     _DIALOGUE.append({"role": "user", "text": user_text})
     _DIALOGUE.append({"role": "assistant", "text": reply.text or ""})
     markup = None
-    if reply.tool_result and reply.tool_result.get("pay_link"):
-        markup = keyboards.pay_keyboard(
-            reply.tool_result["pay_link"], label=reply.tool_result.get("pay_label")
-        )
+    tr = reply.tool_result or {}
+    if tr.get("pay_link"):
+        markup = keyboards.pay_keyboard(tr["pay_link"], label=tr.get("pay_label"))
+    elif tr.get("confirm_delete"):
+        markup = keyboards.meter_delete_confirm_keyboard(tr["confirm_scope"])
     await message.answer(reply.text or "…", reply_markup=markup)
     if reply.chart_path:
         await message.answer_photo(FSInputFile(reply.chart_path))
@@ -549,10 +567,12 @@ async def _file_reading(rid: int) -> tuple[str, InlineKeyboardMarkup | None]:
 async def on_photo(message: Message) -> None:
     path: str | None = None
     try:
-        path = await _download_photo(message)
-        # One vision pass decides everything: it auto-detects the meter type by look —
-        # dark meter → water, light meter → gas — or says "other" if it isn't a meter.
-        read = await get_vision_provider().read_meter(path)
+        # Vision OCR is slow — keep «друкує…» up while it runs.
+        async with _thinking(message):
+            path = await _download_photo(message)
+            # One vision pass decides everything: it auto-detects the meter type by look —
+            # dark meter → water, light meter → gas — or says "other" if it isn't a meter.
+            read = await get_vision_provider().read_meter(path)
         if read.kind == "other":
             # Not a meter: just react to the photo with a light remark, store nothing.
             await message.answer(
@@ -688,6 +708,28 @@ async def on_meter_approve(callback: CallbackQuery) -> None:
     _, rid_s = callback.data.split(":", 1)
     text, kb = await _file_reading(int(rid_s))
     await _edit(callback, text, kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mdc:"))
+async def on_meter_delete_confirm(callback: CallbackQuery) -> None:
+    """Confirm/cancel a bulk delete asked for in chat («видали всі показники»)."""
+    if not callback.data:
+        await callback.answer()
+        return
+    _, scope = callback.data.split(":", 1)
+    if scope == "no":
+        await _edit(
+            callback,
+            random.choice(
+                ("Гаразд, лишив усе як є.", "Ок, нічого не чіпаю.", "Добре, скасував.")
+            ),
+        )
+        await callback.answer()
+        return
+    async with session_scope() as session:
+        result = await execute_meter_delete(session, scope)
+    await _edit(callback, result["message"])
     await callback.answer()
 
 

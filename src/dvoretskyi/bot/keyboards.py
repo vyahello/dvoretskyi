@@ -11,6 +11,7 @@ Callback grammar:
   sf:<reading_id>                approve → submit the reading now (in the 28+ window)
   se:<reading_id>:<attempt>      «подай раніше» before the window; submits on attempt 3
   md:<reading_id>                delete a stored reading (wrong value entered)
+  mdc:<scope>|no                 confirm a bulk delete (scope='all'|provider_id) / cancel
 """
 
 from __future__ import annotations
@@ -178,6 +179,20 @@ def meter_snooze_keyboard(provider_id: int) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text="+1 день", callback_data=f"sm:{provider_id}:1"),
                 InlineKeyboardButton(text="+3 дні", callback_data=f"sm:{provider_id}:3"),
+            ]
+        ]
+    )
+
+
+def meter_delete_confirm_keyboard(scope: str) -> InlineKeyboardMarkup:
+    """Ask before a bulk delete: «✅ Так, видалити» (scope) / «↩️ Ні»."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Так, видалити", callback_data=f"mdc:{scope}"
+                ),
+                InlineKeyboardButton(text="↩️ Ні", callback_data="mdc:no"),
             ]
         ]
     )

@@ -225,7 +225,7 @@ async def test_delete_meter_reading_by_id_removes_row(engine, providers, session
     rid = r.id
 
     result = await delete_meter_reading(session, reading_id=rid)
-    assert result["ok"] and "Видалив" in result["message"]
+    assert result["ok"] and "🗑" in result["message"] and "12.0" in result["message"]
     remaining = (await session.execute(select(MR))).scalars().all()
     assert remaining == []  # actually gone from memory
 
@@ -249,3 +249,71 @@ async def test_delete_meter_reading_refuses_submitted(engine, providers, session
 
     with pytest.raises(ToolError, match="подано на портал"):
         await delete_meter_reading(session, reading_id=r.id)
+
+
+# --- delete-all needs confirmation (ask before wiping) -----------------------
+
+
+async def test_conversational_delete_asks_before_wiping(engine, providers, session):
+    from dvoretskyi.agent.tools import delete_meter_reading
+    from dvoretskyi.db.models import MeterReading as MR
+
+    for prov, val in (
+        (providers["Газ (постачання)"], "1877.78"),
+        (providers["Холодна вода"], "103.999"),
+    ):
+        session.add(
+            MR(
+                provider_id=prov.id,
+                cycle="2026-06",
+                value=Decimal(val),
+                status=MeterStatus.validated,
+                created_at=clock.now(),
+            )
+        )
+    await session.commit()
+
+    # No reading_id → must NOT delete; returns a confirmation for ALL readings.
+    result = await delete_meter_reading(session)
+    assert result.get("confirm_delete") is True
+    assert result["confirm_scope"] == "all" and result["count"] == 2
+    from sqlalchemy import select
+
+    assert len((await session.execute(select(MR))).scalars().all()) == 2  # still there
+
+
+async def test_execute_meter_delete_all_wipes(engine, providers, session):
+    from sqlalchemy import select
+
+    from dvoretskyi.agent.tools import execute_meter_delete
+    from dvoretskyi.db.models import MeterReading as MR
+
+    for prov, val in (
+        (providers["Газ (постачання)"], "1877.78"),
+        (providers["Холодна вода"], "103.999"),
+    ):
+        session.add(
+            MR(
+                provider_id=prov.id,
+                cycle="2026-06",
+                value=Decimal(val),
+                status=MeterStatus.validated,
+                created_at=clock.now(),
+            )
+        )
+    # one already submitted → must survive a wipe
+    session.add(
+        MR(
+            provider_id=providers["Холодна вода"].id,
+            cycle="2026-05",
+            value=Decimal("100.0"),
+            status=MeterStatus.submitted,
+            created_at=clock.now(),
+        )
+    )
+    await session.commit()
+
+    result = await execute_meter_delete(session, "all")
+    assert result["deleted"] == 2
+    remaining = (await session.execute(select(MR))).scalars().all()
+    assert len(remaining) == 1 and remaining[0].status is MeterStatus.submitted

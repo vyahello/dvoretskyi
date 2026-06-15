@@ -36,6 +36,7 @@ class Balance:
     last_topup: str | None  # date string from the cabinet, e.g. "2026-06-14"
     ok: bool
     note: str = ""
+    monthly_fee: Decimal | None = None  # «Місячна абонплата» from the cabinet tariff
 
 
 # Module-level cache: (monotonic_timestamp, Balance). Only successful reads are cached.
@@ -47,16 +48,16 @@ def clear_cache() -> None:
     _cache = None
 
 
-def gigabit_pay_link() -> str:
+def gigabit_pay_link(amount: Decimal | None = None) -> str:
     """Portmone top-up deep link with the contract number + monthly fee pre-filled.
+    `amount` (e.g. the fee scraped from the cabinet) overrides the config default.
     Falls back to the cabinet base URL if the contract (account) is unknown."""
     st = get_settings()
     account = st.gigabit_login
     if not account:
         return st.gigabit_base_url
-    return st.gigabit_pay_url_template.format(
-        account=account, amount=f"{st.gigabit_monthly_fee:.2f}"
-    )
+    fee = amount if amount is not None else st.gigabit_monthly_fee
+    return st.gigabit_pay_url_template.format(account=account, amount=f"{fee:.2f}")
 
 
 def mobile_pay_link() -> str:
@@ -150,9 +151,18 @@ async def fetch_gigabit_balance(
     balance = _to_decimal((user.get("bill") or {}).get("deposit"))
     last_raw = (user.get("LastPayment") or {}).get("date")
     last_topup = str(last_raw).split(" ")[0] if last_raw else None
+    # Monthly fee straight from the tariff plan, so we don't hardcode 200 ₴.
+    tarif = (user.get("dv_main") or {}).get("tarif_plan") or {}
+    monthly_fee = _to_decimal(tarif.get("month_fee"))
     if balance is None:
-        return Balance(None, last_topup, ok=False, note="не знайшов баланс у відповіді")
+        return Balance(
+            None,
+            last_topup,
+            ok=False,
+            note="не знайшов баланс у відповіді",
+            monthly_fee=monthly_fee,
+        )
 
-    result = Balance(balance, last_topup, ok=True)
+    result = Balance(balance, last_topup, ok=True, monthly_fee=monthly_fee)
     _cache = (time.monotonic(), result)
     return result

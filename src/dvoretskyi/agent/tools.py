@@ -7,6 +7,7 @@ Amounts are Decimal internally and stringified at the dict boundary.
 
 from __future__ import annotations
 
+import random
 import tempfile
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
@@ -694,59 +695,115 @@ async def mark_meter_submitted(session: AsyncSession, reading_id: object) -> dic
     }
 
 
+_DELETED_LINES = (
+    "🗑 Готово — стер {n} показник(ів). Чистий аркуш.",
+    "🗑 Прибрав {n} показник(ів) з пам'яті — наче й не було.",
+    "🗑 Видалив {n} показник(ів). Порядок.",
+)
+
+
+async def _deletable_readings(
+    session: AsyncSession, provider_id: int | None = None
+) -> list[MeterReading]:
+    """Readings we may drop (anything not already filed on the portal)."""
+    conds: list[ColumnElement[bool]] = [MeterReading.status != MeterStatus.submitted]
+    if provider_id is not None:
+        conds.append(MeterReading.provider_id == provider_id)
+    rows = (
+        await session.execute(
+            select(MeterReading).where(*conds).order_by(MeterReading.created_at.desc())
+        )
+    ).scalars()
+    return list(rows)
+
+
 async def delete_meter_reading(
     session: AsyncSession,
     provider_name: str | None = None,
     *,
     reading_id: object | None = None,
 ) -> dict:
-    """Remove a stored reading from memory (wrong value entered, etc.).
+    """Remove stored readings from memory (wrong value entered, etc.).
 
-    By `reading_id` (button) or, conversationally, the latest reading for `provider_name`.
-    A reading already filed on the portal (`submitted`) can't be un-filed there, so we
-    refuse to silently drop it — say so instead. Hard-deletes the row so it stops skewing
-    history."""
-    reading: MeterReading | None = None
+    Two modes:
+    - `reading_id` (the 🗑 button on a specific reading) → an explicit tap, delete now.
+    - conversationally (no id) → DON'T delete yet: return a confirmation listing what
+      would go (all readings, or just `provider_name`'s), so the bot asks first. The bulk
+      deletion happens in `execute_meter_delete` once the user confirms.
+    A reading already filed on the portal (`submitted`) can't be un-filed there — we keep
+    it and say so. Deletes are hard (the row is gone, so it stops skewing history)."""
     if reading_id is not None:
         try:
             reading = await session.get(MeterReading, int(str(reading_id).strip()))
         except (TypeError, ValueError) as exc:
             raise ToolError(f"Поганий ідентифікатор показника: {reading_id!r}") from exc
-    elif provider_name:
-        prov = await _provider_by_name(session, provider_name)
-        reading = (
-            await session.execute(
-                select(MeterReading)
-                .where(MeterReading.provider_id == prov.id)
-                .order_by(MeterReading.created_at.desc())
-                .limit(1)
+        if reading is None:
+            raise ToolError("Такого показника не знайшов — нема що видаляти.")
+        if reading.status is MeterStatus.submitted:
+            raise ToolError(
+                "Цей показник уже подано на портал — звідти його прибрати я не можу, "
+                "лише на самому infolviv."
             )
-        ).scalar_one_or_none()
-    else:
-        raise ToolError("Не вказано, який показник видалити.")
-
-    if reading is None:
-        raise ToolError("Такого показника не знайшов — нема що видаляти.")
-    if reading.status is MeterStatus.submitted:
-        raise ToolError(
-            "Цей показник уже подано на портал — звідти його прибрати я не можу, "
-            "лише на самому infolviv."
+        owner = (
+            await session.get(Provider, reading.provider_id)
+            if reading.provider_id is not None
+            else None
         )
+        value = str(reading.value) if reading.value is not None else "—"
+        name = owner.name if owner else "лічильник"
+        await session.delete(reading)
+        await session.flush()
+        return {
+            "ok": True,
+            "provider": name,
+            "value": value,
+            "message": random.choice(
+                (
+                    f"🗑 Прибрав показник {value} ({name}).",
+                    f"🗑 Стер {value} ({name}) з пам'яті.",
+                    f"🗑 Видалив {value} ({name}) — як не було.",
+                )
+            ),
+        }
 
-    owner = (
-        await session.get(Provider, reading.provider_id)
-        if reading.provider_id is not None
-        else None
+    # Conversational → confirm before deleting (never wipe silently).
+    provider_id: int | None = None
+    if provider_name:
+        provider_id = (await _provider_by_name(session, provider_name)).id
+    targets = await _deletable_readings(session, provider_id)
+    if not targets:
+        raise ToolError("Не бачу показників, які можна видалити.")
+    names = {p.id: p.name for p in (await session.execute(select(Provider))).scalars()}
+    preview = "; ".join(
+        f"{names.get(r.provider_id or -1, '?')} — {r.value}"
+        for r in targets[:6]
+        if r.value is not None
     )
-    value = str(reading.value) if reading.value is not None else "—"
-    name = owner.name if owner else "лічильник"
-    await session.delete(reading)
-    await session.flush()
     return {
         "ok": True,
-        "provider": name,
-        "value": value,
-        "message": f"🗑 Видалив показник {value} ({name}) з пам'яті.",
+        "confirm_delete": True,
+        "confirm_scope": "all" if provider_id is None else str(provider_id),
+        "count": len(targets),
+        "message": (
+            f"У пам'яті {len(targets)} показник(ів): {preview}. "
+            "Точно видалити? Підтвердь кнопкою."
+        ),
+    }
+
+
+async def execute_meter_delete(session: AsyncSession, scope: str) -> dict:
+    """Bulk-delete after the user confirms. `scope` = 'all' or a provider id (str)."""
+    provider_id = None if scope == "all" else int(scope)
+    targets = await _deletable_readings(session, provider_id)
+    for reading in targets:
+        await session.delete(reading)
+    await session.flush()
+    if not targets:
+        return {"ok": True, "deleted": 0, "message": "Уже порожньо — нема чого стирати."}
+    return {
+        "ok": True,
+        "deleted": len(targets),
+        "message": random.choice(_DELETED_LINES).format(n=len(targets)),
     }
 
 
@@ -827,14 +884,18 @@ async def get_provider_balance(session: AsyncSession, provider_name: str) -> dic
             "message": f"Не зміг дізнатися баланс Gigabit+ — {bal.note}.",
         }
 
-    fee = settings.gigabit_monthly_fee
+    # Fee straight from the cabinet tariff; config value is only a fallback.
+    fee = bal.monthly_fee or settings.gigabit_monthly_fee
+    fee_label = f"{fee:.2f}".rstrip("0").rstrip(".")
     if bal.balance < fee:
         return {
             "ok": True,
             "provider": prov.name,
             "balance": str(bal.balance),
+            "monthly_fee": str(fee),
             "need_to_pay": True,
-            "pay_link": gigabit_pay_link(),  # rendered as a button, not raw URL
+            "pay_link": gigabit_pay_link(fee),  # rendered as a button, not raw URL
+            "pay_label": f"💳 Поповнити {fee_label} ₴",
             "message": (
                 f"Треба поповнити: баланс {bal.balance} ₴ — менший за абонплату {fee} ₴."
             ),
@@ -844,6 +905,7 @@ async def get_provider_balance(session: AsyncSession, provider_name: str) -> dic
         "ok": True,
         "provider": prov.name,
         "balance": str(bal.balance),
+        "monthly_fee": str(fee),
         "need_to_pay": False,
         "message": f"Платити не треба — баланс {bal.balance} ₴ достатній{tail}.",
     }
