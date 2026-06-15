@@ -6,12 +6,13 @@ notifier (used by FastAPI) is built here too, so confirmations/prompts share the
 
 from __future__ import annotations
 
+import calendar
 import logging
 import os
 import random
 import tempfile
 from collections.abc import Awaitable, Callable
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -248,12 +249,23 @@ def _format_meters_overview(overview: list[tuple[str, list[dict]]]) -> str:
 _KIND_LABEL = {"water": "💧 Холодна вода", "gas": "🔥 Газ"}
 
 
+def _submission_window_label(now: datetime | None = None) -> str:
+    """End-of-month submission window, e.g. «28–30 число місяця» for a 30-day month.
+    We submit at month end (the last `meter_window_days` days), not by factorEditing."""
+    now = now or clock.now()
+    last_day = calendar.monthrange(now.year, now.month)[1]
+    days = get_settings().meter_window_days
+    start = max(1, last_day - days + 1)
+    return f"{start}–{last_day} число місяця"
+
+
 def _format_infolviv_readings(readings: list[InfolvivReading]) -> str:
     """Render the readings filed on the infolviv portal — the authoritative record."""
+    window = _submission_window_label()
     blocks: list[str] = []
     for r in readings:
         label = _KIND_LABEL.get(r.kind, f"🔢 {r.service or 'Лічильник'}")
-        num = f" (№{r.counter_number})" if r.counter_number else ""
+        num = f" (№{r.account_code})" if r.account_code else ""
         lines = [f"{label}{num}"]
         if r.value is not None:
             period = _format_cycle(r.period) if r.period else "останній період"
@@ -261,10 +273,7 @@ def _format_infolviv_readings(readings: list[InfolvivReading]) -> str:
             lines.append(f"• {period}: {r.value}{cons}")
         else:
             lines.append("• показника ще нема")
-        if r.window_start_day and r.window_end_day:
-            lines.append(
-                f"🗓 подача: {r.window_start_day}–{r.window_end_day} число місяця"
-            )
+        lines.append(f"🗓 подача: {window}")
         blocks.append("\n".join(lines))
     return "🔢 Показники з порталу infolviv:\n\n" + "\n\n".join(blocks)
 

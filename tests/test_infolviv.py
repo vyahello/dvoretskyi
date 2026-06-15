@@ -11,7 +11,9 @@ from dvoretskyi.config import get_settings
 # Trimmed to the fields the reader uses, in the shape the portal returns.
 _COUNTERS = [
     {
+        "id": 111,  # counter id (used later for submission)
         "counterNumber": "10000001",  # fake — never a real account
+        "invoiceAccount": {"code": "ACC-WATER-1"},  # fake рахунок
         "service": {"name": "Централізоване водопостачання (ХВ)"},
         "serviceProvider": {"name": "ВОДОКАНАЛ (тест)"},
         "counterType": {"id": 2, "name": "Холодна вода"},
@@ -25,7 +27,9 @@ _COUNTERS = [
         ],
     },
     {
+        "id": 222,
         "counterNumber": "10000002",  # fake — never a real account
+        "invoiceAccount": {"code": "ACC-GAS-2"},  # fake рахунок
         "service": {"name": "Розподіл газу"},
         "serviceProvider": {"name": "Газорозподіл (тест)"},
         "counterType": {"id": 1, "name": "Газовий"},
@@ -74,9 +78,12 @@ async def test_parses_water_and_gas_readings(monkeypatch):
 
     assert [r.kind for r in readings] == ["water", "gas"]
     water, gas = readings
+    assert water.account_code == "ACC-WATER-1"  # рахунок, not the meter serial
+    assert water.counter_id == 111
     assert water.value == Decimal("100.500")
     assert water.period == "2026-05"
     assert (water.window_start_day, water.window_end_day) == (1, 10)
+    assert gas.account_code == "ACC-GAS-2"
     assert gas.value == Decimal("2000.25")
     assert gas.difference == Decimal("3.5")
     assert (gas.window_start_day, gas.window_end_day) == (4, 10)
@@ -101,3 +108,13 @@ async def test_unexpected_payload_returns_empty(monkeypatch):
     bad = httpx.Response(200, json={"oops": True})
     async with _client(monkeypatch, counters_resp=bad) as c:
         assert await fetch_infolviv_readings(client=c, use_cache=False) == []
+
+
+async def test_submission_is_disabled_scaffold():
+    # Phase 3 scaffold must never actually submit until explicitly enabled.
+    import pytest
+
+    from dvoretskyi.agent.infolviv import submit_infolviv_reading
+
+    with pytest.raises(NotImplementedError):
+        await submit_infolviv_reading(111, Decimal("123.45"))

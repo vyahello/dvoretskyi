@@ -30,7 +30,8 @@ _KIND_BY_TYPE_ID: dict[object, str] = {1: "gas", 2: "water"}
 @dataclass
 class InfolvivReading:
     kind: str  # "water" | "gas" | "other"
-    counter_number: str
+    account_code: str  # invoiceAccount.code — the «рахунок» the user submits against
+    counter_number: str  # physical meter serial (not shown to the user)
     provider: str  # service provider name (Львівводоканал / Газорозподільні мережі …)
     service: str  # human service name
     period: str | None  # invoice period as "YYYY-MM"
@@ -39,6 +40,7 @@ class InfolvivReading:
     window_start_day: int | None  # factorEditing.startDay
     window_end_day: int | None  # factorEditing.endDay
     window_open: bool  # factorEditing.isEnabled
+    counter_id: int | None = None  # counter id — needed later to submit a new reading
 
 
 # Module-level cache: (monotonic_timestamp, readings). Only successful reads are cached.
@@ -68,8 +70,10 @@ def _parse_counter(c: dict) -> InfolvivReading:
     ip = f.get("invoicePeriod")
     if isinstance(ip, str) and len(ip) >= 7:
         period = ip[:7]  # "2026-05-01T…" → "2026-05"
+    ia = c.get("invoiceAccount") or {}
     return InfolvivReading(
         kind=_KIND_BY_TYPE_ID.get(ct.get("id"), "other"),
+        account_code=str(ia.get("code") or ""),
         counter_number=str(c.get("counterNumber") or ""),
         provider=str((c.get("serviceProvider") or {}).get("name") or ""),
         service=str((c.get("service") or {}).get("name") or ""),
@@ -79,6 +83,7 @@ def _parse_counter(c: dict) -> InfolvivReading:
         window_start_day=fe.get("startDay"),
         window_end_day=fe.get("endDay"),
         window_open=bool(fe.get("isEnabled")),
+        counter_id=c.get("id"),
     )
 
 
@@ -138,3 +143,23 @@ async def fetch_infolviv_readings(
     readings = [_parse_counter(c) for c in payload if isinstance(c, dict)]
     _cache = (time.monotonic(), readings)
     return readings
+
+
+async def submit_infolviv_reading(
+    counter_id: int,
+    current_value: Decimal,
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> None:
+    """SCAFFOLD (Phase 3) — file a new «Показник поточний» on infolviv. NOT ENABLED.
+
+    Planned flow (intentionally disabled): the user sends a photo → vision parses it and
+    picks the meter → on the user's approval we authenticate (same as the reader) and
+    `POST {infolv_submit_path}` with `counter_id` + the new reading value. We never
+    submit without an explicit approve, so the call is guarded by NotImplementedError
+    until the payload is confirmed against the live form and the approve UX is wired.
+    """
+    raise NotImplementedError(
+        "подача показників на infolviv ще не ввімкнена — "
+        "спершу фото→парсинг→апрув (Phase 3)"
+    )

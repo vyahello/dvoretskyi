@@ -101,6 +101,7 @@ class Settings(BaseSettings):
     infolv_base_url: str = "https://infolviv.com.ua"
     infolv_auth_path: str = "/api/account/authentication"  # POST {account,password}
     infolv_counters_path: str = "/api/warehouse/consumer/counters/last-factors"  # GET
+    infolv_submit_path: str = "/api/warehouse/consumer/counter/factor"  # POST (Phase 3)
     infolv_ttl_seconds: int = 1800  # cache so a button tap doesn't re-auth every time
 
     # --- misc ---

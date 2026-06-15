@@ -115,6 +115,7 @@ async def test_menu_button_meters_shows_infolviv_when_available(engine, monkeypa
         return [
             InfolvivReading(
                 kind="water",
+                account_code="ACC-WATER-1",  # fake рахунок
                 counter_number="10000001",  # fake — never a real account
                 provider="ВОДОКАНАЛ (тест)",
                 service="Централізоване водопостачання (ХВ)",
@@ -124,6 +125,7 @@ async def test_menu_button_meters_shows_infolviv_when_available(engine, monkeypa
                 window_start_day=1,
                 window_end_day=10,
                 window_open=True,
+                counter_id=111,
             )
         ]
 
@@ -133,8 +135,20 @@ async def test_menu_button_meters_shows_infolviv_when_available(engine, monkeypa
     out = msg.answers[0]
     assert "infolviv" in out
     assert "Холодна вода" in out and "100.500" in out
+    assert "№ACC-WATER-1" in out  # рахунок shown, not the meter serial
+    assert "10000001" not in out  # the physical serial is never displayed
     assert "травень 2026" in out
-    assert "1–10 число" in out
+    assert "число місяця" in out  # end-of-month submission window
+
+
+def test_submission_window_label_is_end_of_month():
+    from datetime import datetime
+
+    from dvoretskyi import clock
+
+    # June 2026 has 30 days; with meter_window_days=3 → «28–30 число місяця».
+    june = datetime(2026, 6, 15, tzinfo=clock.KYIV)
+    assert bot_app._submission_window_label(june) == "28–30 число місяця"
 
 
 async def test_menu_button_meters_falls_back_to_journal(engine, providers, monkeypatch):
