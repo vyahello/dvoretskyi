@@ -48,12 +48,46 @@ _cache: tuple[float, list[InfolvivReading]] | None = None
 
 
 class InfolvivSubmitDisabled(RuntimeError):
-    """Raised when a live submission is attempted while `infolv_submit_enabled` is off.
+    """Raised when a live submission can't proceed (kill-switch off, no creds, no meter).
 
-    The submit body shape (`setMultipleFactors` → POST /counter/factor) is unverified, so
-    the live POST stays off until confirmed. Callers catch this and fall back to handing
-    the value back for manual filing — never silently dropping the reading.
+    Callers catch this and fall back to handing the value back for manual filing — never
+    silently dropping the reading.
     """
+
+
+class InfolvivSubmitError(RuntimeError):
+    """The portal rejected the reading. Carries the human-readable reason from infolviv
+    (e.g. a value lower than the current one, or a closed window) for the user to see."""
+
+
+def _extract_error(resp: httpx.Response) -> str:
+    """Pull a human message out of an infolviv error response, whatever its shape."""
+    try:
+        data = resp.json()
+    except ValueError:
+        text = (resp.text or "").strip()
+        return text[:200] or f"HTTP {resp.status_code}"
+    if isinstance(data, dict):
+        for key in ("message", "error", "detail", "title"):
+            v = data.get(key)
+            if isinstance(v, str) and v.strip():
+                return v.strip()[:200]
+        errs = data.get("errors")
+        if isinstance(errs, list):
+            parts = [str(e) for e in errs if e]
+            if parts:
+                return "; ".join(parts)[:200]
+        if isinstance(errs, dict):
+            flat: list[str] = []
+            for v in errs.values():
+                flat.extend(str(x) for x in v) if isinstance(v, list) else flat.append(
+                    str(v)
+                )
+            if flat:
+                return "; ".join(flat)[:200]
+    if isinstance(data, list) and data:
+        return "; ".join(str(e) for e in data if e)[:200]
+    return f"HTTP {resp.status_code}"
 
 
 def clear_cache() -> None:
@@ -161,13 +195,14 @@ async def fetch_infolviv_readings(
     return readings
 
 
-async def counter_id_for_kind(
+async def reading_for_kind(
     kind: str, *, client: httpx.AsyncClient | None = None, use_cache: bool = True
-) -> int | None:
-    """The infolviv counter id for our meter `kind` ("water"|"gas"), or None."""
+) -> InfolvivReading | None:
+    """The infolviv counter for our meter `kind` ("water"|"gas"), or None — carries both
+    the counter id (to submit against) and the current filed value (to pre-check)."""
     for r in await fetch_infolviv_readings(client=client, use_cache=use_cache):
         if r.kind == kind and r.counter_id is not None:
-            return r.counter_id
+            return r
     return None
 
 
@@ -181,15 +216,17 @@ async def submit_infolviv_reading(
 
     Mirrors the SPA's `setMultipleFactors` → `POST /counter/factor` (body verified against
     the live form). Runs only when `infolv_submit_enabled` is True — otherwise it raises
-    `InfolvivSubmitDisabled` and the caller falls back to manual filing. Resolves the
-    counter id by `kind`, authenticates (same as the reader), then POSTs. The kill-switch
-    stays for safety: a misfire would file a real reading. Creds/PII are never logged.
+    `InfolvivSubmitDisabled` and the caller falls back to manual filing.
+
+    Two guards before/around the POST: a reading **below the portal's current value** is
+    rejected up-front with a clear message (infolviv would reject it anyway — a meter
+    only goes up), and any error the portal returns is surfaced via `InfolvivSubmitError`
+    instead of a bare HTTP error. Kill-switch stays for safety; creds/PII never logged.
     """
     st = get_settings()
     if not st.infolv_submit_enabled:
         raise InfolvivSubmitDisabled(
-            "подача на infolviv вимкнена (infolv_submit_enabled=false) — "
-            "треба підтвердити тіло запиту POST /counter/factor"
+            "подача на infolviv вимкнена (infolv_submit_enabled=false)"
         )
     if not st.infolv_login or not st.infolv_pwd:
         raise InfolvivSubmitDisabled("немає кредів infolviv")
@@ -202,24 +239,34 @@ async def submit_infolviv_reading(
             headers={"Accept": "application/json"},
         )
     try:
-        counter_id = await counter_id_for_kind(kind, client=client, use_cache=False)
-        if counter_id is None:
+        meter = await reading_for_kind(kind, client=client, use_cache=False)
+        if meter is None or meter.counter_id is None:
             raise InfolvivSubmitDisabled(f"не знайшов лічильник «{kind}» на порталі")
+        # A meter only goes up: block a value below the current filed one before the POST
+        # (the portal rejects it too, but this gives a clearer, immediate message).
+        if meter.value is not None and value < meter.value:
+            raise InfolvivSubmitError(
+                f"показник {value} менший за поточний на порталі ({meter.value}) — "
+                "лічильник назад не крутиться. Перевір число або перефотографуй."
+            )
         token = await _authenticate(client)
         if not token:
             raise InfolvivSubmitDisabled("не вдалося авторизуватися на infolviv")
         # setMultipleFactors body (verified against the live form): a list of factor
         # entries. `factor` is the reading as a string; `factorTypeCode` is "" for our
         # single-zone meters. We file one counter per call (a one-element array).
-        body = [{"factor": str(value), "factorTypeCode": "", "counterId": counter_id}]
+        body = [
+            {"factor": str(value), "factorTypeCode": "", "counterId": meter.counter_id}
+        ]
         resp = await client.post(
             st.infolv_submit_path,
             json=body,
             headers={"Authorization": f"Bearer {token}"},
         )
-        resp.raise_for_status()
+        if not resp.is_success:
+            raise InfolvivSubmitError(_extract_error(resp))
     finally:
         if owns_client:
             await client.aclose()
     clear_cache()  # the filed reading changes last-factors → drop the stale cache
-    return counter_id
+    return meter.counter_id

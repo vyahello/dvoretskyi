@@ -35,6 +35,7 @@ from dvoretskyi.agent import meters
 from dvoretskyi.agent.infolviv import (
     InfolvivReading,
     InfolvivSubmitDisabled,
+    InfolvivSubmitError,
     fetch_infolviv_readings,
     submit_infolviv_reading,
 )
@@ -524,7 +525,7 @@ async def _file_reading(rid: int) -> tuple[str, InlineKeyboardMarkup | None]:
         try:
             await submit_infolviv_reading(kind, value)
         except InfolvivSubmitDisabled:
-            # Live POST not enabled yet → hand back the value for manual filing.
+            # Live POST not enabled → hand back the value for manual filing.
             reading.status = MeterStatus.validated
             await session.flush()
             text = (
@@ -532,6 +533,12 @@ async def _file_reading(rid: int) -> tuple[str, InlineKeyboardMarkup | None]:
                 "і тисни «Відправив ✓»."
             )
             return text, keyboards.meter_submitted_keyboard(rid)
+        except InfolvivSubmitError as exc:
+            # The portal refused it (e.g. value below the current one) — show its reason
+            # and keep the reading stored so a corrected re-photo replaces it.
+            reading.status = MeterStatus.validated
+            await session.flush()
+            return f"⚠️ infolviv не прийняв показник: {exc}", None
         except Exception:
             log.exception("infolviv submit failed")
             return "Не вдалося подати на портал — спробуй ще раз за мить.", None

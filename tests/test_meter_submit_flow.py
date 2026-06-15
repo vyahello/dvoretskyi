@@ -67,6 +67,33 @@ async def test_file_reading_disabled_falls_back_to_manual(
     assert r.status is MeterStatus.validated  # not marked submitted by us
 
 
+async def test_file_reading_surfaces_portal_rejection(
+    engine, providers, session, monkeypatch
+):
+    from dvoretskyi.agent.infolviv import InfolvivSubmitError
+
+    async def fake_submit(kind, value):
+        raise InfolvivSubmitError("показник менший за поточний на порталі (106.4)")
+
+    monkeypatch.setattr(bot_app, "submit_infolviv_reading", fake_submit)
+    gas = providers["Газ (постачання)"]
+    r = MeterReading(
+        provider_id=gas.id,
+        cycle="2026-06",
+        value=Decimal("12.0"),
+        status=MeterStatus.validated,
+        created_at=clock.now(),
+    )
+    session.add(r)
+    await session.commit()
+
+    text, kb = await bot_app._file_reading(r.id)
+    assert "не прийняв показник" in text and "менший за поточний" in text
+    assert kb is None
+    await session.refresh(r)
+    assert r.status is MeterStatus.validated  # kept; a corrected re-photo replaces it
+
+
 async def test_file_reading_enabled_marks_submitted(
     engine, providers, session, monkeypatch
 ):

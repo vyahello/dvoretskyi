@@ -160,3 +160,57 @@ async def test_submission_when_enabled_posts_to_factor_endpoint(monkeypatch):
     assert posted["body"] == [
         {"factor": "2010.5", "factorTypeCode": "", "counterId": 222}
     ]
+
+
+def _enabled_client(monkeypatch, *, factor_resp, calls):
+    st = get_settings()
+    monkeypatch.setattr(st, "infolv_submit_enabled", True)
+    monkeypatch.setattr(st, "infolv_login", "user@example.com")
+    monkeypatch.setattr(st, "infolv_pwd", "secret")
+    monkeypatch.setattr(st, "infolv_auth_path", "/auth")
+    monkeypatch.setattr(st, "infolv_counters_path", "/counters")
+    monkeypatch.setattr(st, "infolv_submit_path", "/factor")
+    infolviv.clear_cache()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(f"{request.method} {request.url.path}")
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"accessToken": "jwt.t.t"})
+        if request.url.path == "/counters":
+            return httpx.Response(200, json=_COUNTERS)
+        if request.url.path == "/factor":
+            return factor_resp
+        return httpx.Response(404)
+
+    return httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://infolviv.example"
+    )
+
+
+async def test_submission_rejects_value_below_portal_current(monkeypatch):
+    # Water's current filed value is 100.500; a lower reading is blocked before the POST.
+    import pytest
+
+    from dvoretskyi.agent.infolviv import InfolvivSubmitError, submit_infolviv_reading
+
+    calls: list[str] = []
+    async with _enabled_client(
+        monkeypatch, factor_resp=httpx.Response(200), calls=calls
+    ) as c:
+        with pytest.raises(InfolvivSubmitError, match="менший"):
+            await submit_infolviv_reading("water", Decimal("50.0"), client=c)
+    assert "POST /factor" not in calls  # never even attempted the POST
+
+
+async def test_submission_surfaces_portal_error_message(monkeypatch):
+    # The portal rejects (e.g. window closed) → its message reaches the caller verbatim.
+    import pytest
+
+    from dvoretskyi.agent.infolviv import InfolvivSubmitError, submit_infolviv_reading
+
+    calls: list[str] = []
+    bad = httpx.Response(400, json={"message": "Період подачі показників закрито"})
+    async with _enabled_client(monkeypatch, factor_resp=bad, calls=calls) as c:
+        with pytest.raises(InfolvivSubmitError, match="закрито"):
+            await submit_infolviv_reading("gas", Decimal("2010.5"), client=c)
+    assert "POST /factor" in calls  # pre-check passed; the portal did the rejecting
