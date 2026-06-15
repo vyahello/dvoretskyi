@@ -179,11 +179,11 @@ async def submit_infolviv_reading(
 ) -> int:
     """File a new reading on infolviv for our meter `kind`; return the counter id filed.
 
-    Mirrors the SPA's `setMultipleFactors` → `POST /counter/factor`. The exact JSON body
-    is in a lazy-loaded chunk and is **unverified**, so this only runs when
-    `infolv_submit_enabled` is True — otherwise it raises `InfolvivSubmitDisabled` and the
-    caller falls back to manual filing. Resolves the counter id by `kind`, authenticates
-    (same as the reader), then POSTs. Creds/PII are never logged.
+    Mirrors the SPA's `setMultipleFactors` → `POST /counter/factor` (body verified against
+    the live form). Runs only when `infolv_submit_enabled` is True — otherwise it raises
+    `InfolvivSubmitDisabled` and the caller falls back to manual filing. Resolves the
+    counter id by `kind`, authenticates (same as the reader), then POSTs. The kill-switch
+    stays for safety: a misfire would file a real reading. Creds/PII are never logged.
     """
     st = get_settings()
     if not st.infolv_submit_enabled:
@@ -208,9 +208,10 @@ async def submit_infolviv_reading(
         token = await _authenticate(client)
         if not token:
             raise InfolvivSubmitDisabled("не вдалося авторизуватися на infolviv")
-        # setMultipleFactors: a list of factor entries. Single-zone meters → valueZone1.
-        # NOTE: field names UNVERIFIED until a real request is captured; gated above.
-        body = [{"counterId": counter_id, "valueZone1": float(value)}]
+        # setMultipleFactors body (verified against the live form): a list of factor
+        # entries. `factor` is the reading as a string; `factorTypeCode` is "" for our
+        # single-zone meters. We file one counter per call (a one-element array).
+        body = [{"factor": str(value), "factorTypeCode": "", "counterId": counter_id}]
         resp = await client.post(
             st.infolv_submit_path,
             json=body,

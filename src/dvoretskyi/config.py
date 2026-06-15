@@ -108,9 +108,10 @@ class Settings(BaseSettings):
     infolv_base_url: str = "https://infolviv.com.ua"
     infolv_auth_path: str = "/api/account/authentication"  # POST {account,password}
     infolv_counters_path: str = "/api/warehouse/consumer/counters/last-factors"  # GET
-    # SPA calls it `setMultipleFactors` → POST here. Body shape is in a lazy chunk and
-    # unverified, so the live POST stays OFF until confirmed via a browser devtools
-    # capture; while off the bot falls back to handing back the value for manual filing.
+    # SPA calls it `setMultipleFactors` → POST here. Body verified:
+    # [{"factor": "<value>", "factorTypeCode": "", "counterId": <int>}]. The enable flag
+    # is a kill-switch — when off the bot falls back to handing back the value for manual
+    # filing rather than POSTing a real reading.
     infolv_submit_path: str = "/api/warehouse/consumer/counter/factor"  # POST
     infolv_submit_enabled: bool = False
     infolv_ttl_seconds: int = 1800  # cache so a button tap doesn't re-auth every time

@@ -68,11 +68,11 @@ zero / spike vs history → `needs_confirm`) → store `MeterReading` → submit
   window the reply offers an approve tap (`sf:<rid>`) → one tap files it; **before** the
   window it offers «подай раніше» (`se:<rid>:<attempt>`) which **resists twice and files
   on the 3rd** insistence. Filing calls `infolviv.submit_infolviv_reading(kind, value)`
-  (`setMultipleFactors` → `POST /counter/factor`). That live POST is **off by default
-  (`INFOLV_SUBMIT_ENABLED=false`)** because the request body is unverified (it's in a
-  lazy SPA chunk) — while off it raises `InfolvivSubmitDisabled` and the bot **falls back
-  to manual filing** (hand back the value + «Відправив ✓» `ms:` tap). The window label is
-  `28–{last-day}` computed from the calendar (handles 28/29/30/31).
+  (`setMultipleFactors` → `POST /counter/factor`, body verified:
+  `[{"factor":"<value>","factorTypeCode":"","counterId":<int>}]`). `INFOLV_SUBMIT_ENABLED`
+  is a **kill-switch** — when off the call raises `InfolvivSubmitDisabled` and the bot
+  **falls back to manual filing** (hand back the value + «Відправив ✓» `ms:` tap). The
+  window label is `28–{last-day}` computed from the calendar (handles 28/29/30/31).
 - Legacy per-provider `SubmissionChannel`s (`ManualAssistChannel` default, Sms/WebForm
   opt-in via `SUBMISSION_CHANNELS`) still exist for the `auto_submit=True` path, but the
   bot's photo flow now routes everything through the infolviv date-gate above.

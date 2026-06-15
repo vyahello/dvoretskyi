@@ -157,4 +157,6 @@ async def test_submission_when_enabled_posts_to_factor_endpoint(monkeypatch):
 
     assert counter_id == 222  # the gas counter from _COUNTERS
     assert "POST /factor" in calls
-    assert posted["body"] == [{"counterId": 222, "valueZone1": 2010.5}]
+    assert posted["body"] == [
+        {"factor": "2010.5", "factorTypeCode": "", "counterId": 222}
+    ]
