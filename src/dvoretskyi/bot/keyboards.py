@@ -8,6 +8,8 @@ Callback grammar:
   mc:<reading_id>:ok|re          confirm / re-photograph a needs_confirm reading
   ms:<reading_id>                «відправив» → mark the reading submitted
   sm:<provider_id>:<days>        snooze meter reminders for N days
+  sf:<reading_id>                approve → submit the reading now (in the 28+ window)
+  se:<reading_id>:<attempt>      «подай раніше» before the window; submits on attempt 3
 """
 
 from __future__ import annotations
@@ -115,6 +117,33 @@ def meter_submitted_keyboard(reading_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="Відправив ✓", callback_data=f"ms:{reading_id}")]
+        ]
+    )
+
+
+def meter_approve_keyboard(reading_id: int) -> InlineKeyboardMarkup:
+    """In the submission window (28th+): a single tap approves → the bot files it."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📤 Подати на портал", callback_data=f"sf:{reading_id}"
+                )
+            ]
+        ]
+    )
+
+
+def meter_early_keyboard(reading_id: int, attempt: int = 1) -> InlineKeyboardMarkup:
+    """Before the window: «подай раніше». The attempt count rides in the callback so we
+    can resist twice and file on the 3rd tap without any server-side state."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="⏳ Подати раніше", callback_data=f"se:{reading_id}:{attempt}"
+                )
+            ]
         ]
     )
 

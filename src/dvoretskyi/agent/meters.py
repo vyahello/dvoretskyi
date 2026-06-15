@@ -32,6 +32,25 @@ def window_open(meter_window: int, now: datetime) -> bool:
     return days_until_month_end(now) <= meter_window
 
 
+def submit_now(
+    now: datetime,
+    *,
+    attempt: int,
+    submit_from_day: int = 28,
+    max_attempts: int = 3,
+) -> bool:
+    """Decide whether to file a reading right now, or hold it for end of month.
+
+    A reading is "current enough" to file from `submit_from_day` (28th) to month end —
+    in that window we submit on the user's approval. Before it we hold, BUT if the user
+    insists we relent: the `attempt`-th «подай раніше» tap submits once it reaches
+    `max_attempts` (resist twice, file on the 3rd). The submission window is always open
+    on the 28th+ regardless of month length (28/29/30/31)."""
+    if now.day >= submit_from_day:
+        return True
+    return attempt >= max_attempts
+
+
 @dataclass
 class Validation:
     ok: bool  # True → safe to treat as validated; False → needs_confirm

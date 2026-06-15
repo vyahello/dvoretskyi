@@ -1,9 +1,37 @@
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 
-from dvoretskyi.agent.meters import validate
+from dvoretskyi import clock
+from dvoretskyi.agent.meters import submit_now, validate
 from dvoretskyi.db.models import MeterStatus
+
+
+def _at(day: int, *, month: int = 6, year: int = 2026) -> datetime:
+    return datetime(year, month, day, 12, 0, tzinfo=clock.KYIV)
+
+
+# --- submit_now: file from the 28th; before it, relent only on the 3rd insistence ---
+
+
+def test_in_window_submits_on_first_approval():
+    # On/after the 28th, the very first approval (attempt 1) files immediately.
+    assert submit_now(_at(28), attempt=1) is True
+    assert submit_now(_at(30), attempt=1) is True
+
+
+def test_before_window_holds_until_third_insistence():
+    assert submit_now(_at(10), attempt=1) is False  # «подай раніше» #1 → ні
+    assert submit_now(_at(10), attempt=2) is False  # #2 → ні
+    assert submit_now(_at(10), attempt=3) is True  # #3 → подаю
+
+
+def test_window_start_is_28_regardless_of_month_length():
+    # 28th opens the window in a 28-day Feb, a 30-day month, and a 31-day month alike.
+    assert submit_now(_at(28, month=2), attempt=1) is True  # Feb 2026 (28 days)
+    assert submit_now(_at(28, month=7), attempt=1) is True  # July (31 days)
+    assert submit_now(_at(27, month=7), attempt=1) is False  # 27th still holds
 
 
 def D(x: str | int) -> Decimal:

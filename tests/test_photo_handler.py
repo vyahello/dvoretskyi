@@ -35,6 +35,13 @@ def _patch_io(
     return vis
 
 
+async def _stored_provider_id(session):
+    from sqlalchemy import select
+
+    reading = (await session.execute(select(MeterReading))).scalars().one()
+    return reading.provider_id, reading.status
+
+
 async def test_light_meter_auto_routes_to_gas(engine, providers, monkeypatch):
     # Vision says it's a light meter → gas, no window/no question.
     vis = _patch_io(monkeypatch, Decimal("1000"), kind="gas")
@@ -44,8 +51,12 @@ async def test_light_meter_auto_routes_to_gas(engine, providers, monkeypatch):
 
     assert vis.calls, "OCR should have run once"
     text, kb = msg.answers[-1]
-    assert "Газ (постачання)" in text
-    assert isinstance(kb, InlineKeyboardMarkup)  # validated → «Відправив ✓»
+    assert "Записав показник 1000" in text  # stored, not yet submitted
+    assert isinstance(kb, InlineKeyboardMarkup)  # approve / «подай раніше» button
+    async with bot_app.session_scope() as session:
+        pid, status = await _stored_provider_id(session)
+    assert pid == providers["Газ (постачання)"].id
+    assert status is MeterStatus.validated  # validated, awaiting the date gate
 
 
 async def test_dark_meter_auto_routes_to_water(engine, providers, monkeypatch):
@@ -56,8 +67,9 @@ async def test_dark_meter_auto_routes_to_water(engine, providers, monkeypatch):
     await bot_app.on_photo(msg)
 
     assert vis.calls
-    text, _ = msg.answers[-1]
-    assert "Холодна вода" in text
+    async with bot_app.session_scope() as session:
+        pid, _ = await _stored_provider_id(session)
+    assert pid == providers["Холодна вода"].id
 
 
 async def test_non_meter_photo_gets_a_joke(engine, providers, monkeypatch):
@@ -92,8 +104,9 @@ async def test_caption_overrides_detected_kind(engine, providers, monkeypatch):
     await bot_app.on_photo(msg)
 
     assert vis.calls
-    text, _ = msg.answers[-1]
-    assert "Газ (постачання)" in text
+    async with bot_app.session_scope() as session:
+        pid, _ = await _stored_provider_id(session)
+    assert pid == providers["Газ (постачання)"].id  # caption won over vision's "water"
 
 
 async def test_unknown_kind_asks_which(engine, providers, monkeypatch):

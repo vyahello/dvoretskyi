@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     # Meter-reading nudge lead time: how many days before month end to start nudging
     # (readings are due by the last day of the month). Seeds Provider.meter_window.
     meter_window_days: int = 3
+    # Day-of-month from which a reading is "current enough" to file. We submit from this
+    # day to the last day of the month; before it we hold (a photo is still stored). The
+    # submission window shown to the user is `meter_submit_from_day`..last-day-of-month.
+    meter_submit_from_day: int = 28
+    # Number of early-submit insistences tolerated before we file anyway (resist, resist,
+    # then on the 3rd «подай раніше» tap we submit even though it's before the 28th).
+    meter_early_submit_attempts: int = 3
 
     # --- pay links per provider (iOS apps / Portmone; no personal data) ---
     # Utilities paid in mono «Комунальні» → open the monobank app; ДАХ → the ДАХ app.
@@ -101,7 +108,11 @@ class Settings(BaseSettings):
     infolv_base_url: str = "https://infolviv.com.ua"
     infolv_auth_path: str = "/api/account/authentication"  # POST {account,password}
     infolv_counters_path: str = "/api/warehouse/consumer/counters/last-factors"  # GET
-    infolv_submit_path: str = "/api/warehouse/consumer/counter/factor"  # POST (Phase 3)
+    # SPA calls it `setMultipleFactors` → POST here. Body shape is in a lazy chunk and
+    # unverified, so the live POST stays OFF until confirmed via a browser devtools
+    # capture; while off the bot falls back to handing back the value for manual filing.
+    infolv_submit_path: str = "/api/warehouse/consumer/counter/factor"  # POST
+    infolv_submit_enabled: bool = False
     infolv_ttl_seconds: int = 1800  # cache so a button tap doesn't re-auth every time
 
     # --- misc ---

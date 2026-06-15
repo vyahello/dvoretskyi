@@ -135,7 +135,8 @@ async def test_menu_button_meters_shows_infolviv_when_available(engine, monkeypa
     out = msg.answers[0]
     assert "infolviv" in out
     assert "Холодна вода" in out and "100.500" in out
-    assert "№ACC-WATER-1" in out  # рахунок shown, not the meter serial
+    # рахунок shown (in a <code> span so Telegram won't auto-link it), not the serial.
+    assert "№<code>ACC-WATER-1</code>" in out
     assert "10000001" not in out  # the physical serial is never displayed
     assert "травень 2026" in out
     assert "число місяця" in out  # end-of-month submission window

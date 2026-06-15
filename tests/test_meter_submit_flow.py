@@ -1,0 +1,175 @@
+from __future__ import annotations
+
+from datetime import datetime
+from decimal import Decimal
+
+from dvoretskyi import clock
+from dvoretskyi.bot import app as bot_app
+from dvoretskyi.config import get_settings
+from dvoretskyi.db.models import MeterReading, MeterStatus
+
+
+def _at(day: int, *, month: int = 6, year: int = 2026) -> datetime:
+    return datetime(year, month, day, 12, 0, tzinfo=clock.KYIV)
+
+
+def _first_cb(kb) -> str:
+    return kb.inline_keyboard[0][0].callback_data
+
+
+def _validated(rid: int = 7, value: str = "100.5", cons: str | None = "1.2") -> dict:
+    return {
+        "reading_id": rid,
+        "status": MeterStatus.validated.value,
+        "value": value,
+        "consumption": cons,
+    }
+
+
+# --- _gated_meter_reply: the date decides which action we offer --------------
+
+
+def test_gated_reply_in_window_offers_approve():
+    text, kb = bot_app._gated_meter_reply(_validated(), now=_at(29))
+    assert "Записав показник 100.5" in text
+    assert "Вікно подачі відкрите" in text
+    assert _first_cb(kb) == "sf:7"  # one tap files it
+
+
+def test_gated_reply_before_window_offers_early():
+    text, kb = bot_app._gated_meter_reply(_validated(cons=None), now=_at(10))
+    assert "Подам у вікні" in text and "тисни нижче" in text
+    assert _first_cb(kb) == "se:7:1"  # «подай раніше», attempt 1
+
+
+# --- _file_reading: enabled → submitted; disabled → manual fallback ----------
+
+
+async def test_file_reading_disabled_falls_back_to_manual(
+    engine, providers, session, monkeypatch
+):
+    monkeypatch.setattr(get_settings(), "infolv_submit_enabled", False)
+    gas = providers["Газ (постачання)"]
+    r = MeterReading(
+        provider_id=gas.id,
+        cycle="2026-06",
+        value=Decimal("1877.78"),
+        status=MeterStatus.validated,
+        created_at=clock.now(),
+    )
+    session.add(r)
+    await session.commit()
+
+    text, kb = await bot_app._file_reading(r.id)
+    assert "подай на порталі infolviv" in text
+    assert _first_cb(kb) == f"ms:{r.id}"  # falls back to the «Відправив ✓» tap
+    await session.refresh(r)
+    assert r.status is MeterStatus.validated  # not marked submitted by us
+
+
+async def test_file_reading_enabled_marks_submitted(
+    engine, providers, session, monkeypatch
+):
+    async def fake_submit(kind, value):
+        assert kind == "water"
+        return 222
+
+    monkeypatch.setattr(bot_app, "submit_infolviv_reading", fake_submit)
+    water = providers["Холодна вода"]
+    r = MeterReading(
+        provider_id=water.id,
+        cycle="2026-06",
+        value=Decimal("106.4"),
+        status=MeterStatus.validated,
+        created_at=clock.now(),
+    )
+    session.add(r)
+    await session.commit()
+
+    text, kb = await bot_app._file_reading(r.id)
+    assert "Подав на infolviv" in text and "106.4" in text
+    assert kb is None
+    await session.refresh(r)
+    assert r.status is MeterStatus.submitted
+    assert r.submitted_at is not None
+
+
+# --- early insistence: resist twice, file on the 3rd «подай раніше» tap ------
+
+
+class _FakeBot:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, object]] = []
+
+    async def send_message(self, chat_id, text, reply_markup=None, **kw) -> None:
+        self.sent.append((text, reply_markup))
+
+
+class _FakeCallback:
+    """Duck-typed CallbackQuery; .message is NOT an aiogram Message, so _edit routes
+    through bot.send_message (which we record)."""
+
+    def __init__(self, data: str) -> None:
+        self.data = data
+        self.bot = _FakeBot()
+        self.message = type("M", (), {"chat": type("C", (), {"id": 1})()})()
+        self.answered = False
+
+    async def answer(self, text: str | None = None, **kw) -> None:
+        self.answered = True
+
+
+async def test_early_insistence_resists_twice_then_files(
+    engine, providers, session, monkeypatch
+):
+    monkeypatch.setattr(bot_app.clock, "now", lambda: _at(10))  # before the window
+    monkeypatch.setattr(get_settings(), "infolv_submit_enabled", False)
+    gas = providers["Газ (постачання)"]
+    r = MeterReading(
+        provider_id=gas.id,
+        cycle="2026-06",
+        value=Decimal("1877.78"),
+        status=MeterStatus.validated,
+        created_at=_at(10),
+    )
+    session.add(r)
+    await session.commit()
+
+    # tap 1 → pushback, button now carries attempt 2
+    cb = _FakeCallback(f"se:{r.id}:1")
+    await bot_app.on_meter_early(cb)
+    text, kb = cb.bot.sent[-1]
+    assert "зачека" in text.lower() or "рано" in text.lower()
+    assert _first_cb(kb) == f"se:{r.id}:2"
+
+    # tap 2 → still resists, button carries attempt 3
+    cb = _FakeCallback(f"se:{r.id}:2")
+    await bot_app.on_meter_early(cb)
+    _, kb = cb.bot.sent[-1]
+    assert _first_cb(kb) == f"se:{r.id}:3"
+
+    # tap 3 → files (live POST disabled → manual fallback message)
+    cb = _FakeCallback(f"se:{r.id}:3")
+    await bot_app.on_meter_early(cb)
+    text, _ = cb.bot.sent[-1]
+    assert "подай на порталі infolviv" in text
+
+
+async def test_approve_in_window_files(engine, providers, session, monkeypatch):
+    monkeypatch.setattr(get_settings(), "infolv_submit_enabled", False)
+    water = providers["Холодна вода"]
+    r = MeterReading(
+        provider_id=water.id,
+        cycle="2026-06",
+        value=Decimal("106.4"),
+        status=MeterStatus.validated,
+        created_at=clock.now(),
+    )
+    session.add(r)
+    await session.commit()
+
+    cb = _FakeCallback(f"sf:{r.id}")
+    await bot_app.on_meter_approve(cb)
+    text, _ = cb.bot.sent[-1]
+    assert "подай на порталі infolviv" in text  # disabled → manual fallback
+    assert cb.answered

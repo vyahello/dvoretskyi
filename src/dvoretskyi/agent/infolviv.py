@@ -47,9 +47,30 @@ class InfolvivReading:
 _cache: tuple[float, list[InfolvivReading]] | None = None
 
 
+class InfolvivSubmitDisabled(RuntimeError):
+    """Raised when a live submission is attempted while `infolv_submit_enabled` is off.
+
+    The submit body shape (`setMultipleFactors` → POST /counter/factor) is unverified, so
+    the live POST stays off until confirmed. Callers catch this and fall back to handing
+    the value back for manual filing — never silently dropping the reading.
+    """
+
+
 def clear_cache() -> None:
     global _cache
     _cache = None
+
+
+async def _authenticate(client: httpx.AsyncClient) -> str | None:
+    """POST credentials → return the Bearer accessToken (or None). Never logs creds."""
+    st = get_settings()
+    auth = await client.post(
+        st.infolv_auth_path,
+        json={"account": st.infolv_login, "password": st.infolv_pwd},
+    )
+    auth.raise_for_status()
+    token = auth.json().get("accessToken")
+    return token if token else None
 
 
 def _to_decimal(value: object) -> Decimal | None:
@@ -115,12 +136,7 @@ async def fetch_infolviv_readings(
         )
 
     try:
-        auth = await client.post(
-            st.infolv_auth_path,
-            json={"account": st.infolv_login, "password": st.infolv_pwd},
-        )
-        auth.raise_for_status()
-        token = auth.json().get("accessToken")
+        token = await _authenticate(client)
         if not token:
             return _cache[1] if _cache else []
         resp = await client.get(
@@ -145,21 +161,64 @@ async def fetch_infolviv_readings(
     return readings
 
 
+async def counter_id_for_kind(
+    kind: str, *, client: httpx.AsyncClient | None = None, use_cache: bool = True
+) -> int | None:
+    """The infolviv counter id for our meter `kind` ("water"|"gas"), or None."""
+    for r in await fetch_infolviv_readings(client=client, use_cache=use_cache):
+        if r.kind == kind and r.counter_id is not None:
+            return r.counter_id
+    return None
+
+
 async def submit_infolviv_reading(
-    counter_id: int,
-    current_value: Decimal,
+    kind: str,
+    value: Decimal,
     *,
     client: httpx.AsyncClient | None = None,
-) -> None:
-    """SCAFFOLD (Phase 3) — file a new «Показник поточний» on infolviv. NOT ENABLED.
+) -> int:
+    """File a new reading on infolviv for our meter `kind`; return the counter id filed.
 
-    Planned flow (intentionally disabled): the user sends a photo → vision parses it and
-    picks the meter → on the user's approval we authenticate (same as the reader) and
-    `POST {infolv_submit_path}` with `counter_id` + the new reading value. We never
-    submit without an explicit approve, so the call is guarded by NotImplementedError
-    until the payload is confirmed against the live form and the approve UX is wired.
+    Mirrors the SPA's `setMultipleFactors` → `POST /counter/factor`. The exact JSON body
+    is in a lazy-loaded chunk and is **unverified**, so this only runs when
+    `infolv_submit_enabled` is True — otherwise it raises `InfolvivSubmitDisabled` and the
+    caller falls back to manual filing. Resolves the counter id by `kind`, authenticates
+    (same as the reader), then POSTs. Creds/PII are never logged.
     """
-    raise NotImplementedError(
-        "подача показників на infolviv ще не ввімкнена — "
-        "спершу фото→парсинг→апрув (Phase 3)"
-    )
+    st = get_settings()
+    if not st.infolv_submit_enabled:
+        raise InfolvivSubmitDisabled(
+            "подача на infolviv вимкнена (infolv_submit_enabled=false) — "
+            "треба підтвердити тіло запиту POST /counter/factor"
+        )
+    if not st.infolv_login or not st.infolv_pwd:
+        raise InfolvivSubmitDisabled("немає кредів infolviv")
+
+    owns_client = client is None
+    if client is None:
+        client = httpx.AsyncClient(
+            base_url=st.infolv_base_url,
+            timeout=30.0,
+            headers={"Accept": "application/json"},
+        )
+    try:
+        counter_id = await counter_id_for_kind(kind, client=client, use_cache=False)
+        if counter_id is None:
+            raise InfolvivSubmitDisabled(f"не знайшов лічильник «{kind}» на порталі")
+        token = await _authenticate(client)
+        if not token:
+            raise InfolvivSubmitDisabled("не вдалося авторизуватися на infolviv")
+        # setMultipleFactors: a list of factor entries. Single-zone meters → valueZone1.
+        # NOTE: field names UNVERIFIED until a real request is captured; gated above.
+        body = [{"counterId": counter_id, "valueZone1": float(value)}]
+        resp = await client.post(
+            st.infolv_submit_path,
+            json=body,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        resp.raise_for_status()
+    finally:
+        if owns_client:
+            await client.aclose()
+    clear_cache()  # the filed reading changes last-factors → drop the stale cache
+    return counter_id

@@ -7,6 +7,7 @@ notifier (used by FastAPI) is built here too, so confirmations/prompts share the
 from __future__ import annotations
 
 import calendar
+import html
 import logging
 import os
 import random
@@ -30,7 +31,13 @@ from sqlalchemy import select
 
 from dvoretskyi import clock
 from dvoretskyi.agent import dispatcher as agent_dispatcher
-from dvoretskyi.agent.infolviv import InfolvivReading, fetch_infolviv_readings
+from dvoretskyi.agent import meters
+from dvoretskyi.agent.infolviv import (
+    InfolvivReading,
+    InfolvivSubmitDisabled,
+    fetch_infolviv_readings,
+    submit_infolviv_reading,
+)
 from dvoretskyi.agent.provider import get_provider
 from dvoretskyi.agent.tools import (
     ToolError,
@@ -250,22 +257,28 @@ _KIND_LABEL = {"water": "💧 Холодна вода", "gas": "🔥 Газ"}
 
 
 def _submission_window_label(now: datetime | None = None) -> str:
-    """End-of-month submission window, e.g. «28–30 число місяця» for a 30-day month.
-    We submit at month end (the last `meter_window_days` days), not by factorEditing."""
+    """End-of-month submission window: from `meter_submit_from_day` to the real last day
+    of the month, e.g. «28–30» (June), «28–31» (July), «28–29» (Feb leap). The last day
+    comes from the calendar — never hardcoded, so it handles 28/29/30/31."""
     now = now or clock.now()
     last_day = calendar.monthrange(now.year, now.month)[1]
-    days = get_settings().meter_window_days
-    start = max(1, last_day - days + 1)
+    start = min(get_settings().meter_submit_from_day, last_day)
+    if start >= last_day:
+        return f"{last_day} число місяця"
     return f"{start}–{last_day} число місяця"
 
 
 def _format_infolviv_readings(readings: list[InfolvivReading]) -> str:
-    """Render the readings filed on the infolviv portal — the authoritative record."""
+    """Render the readings filed on the infolviv portal — the authoritative record.
+
+    Returns HTML (sent with parse_mode="HTML"): the «рахунок» is wrapped in a <code>
+    span so Telegram doesn't auto-link the long digit run as a phone number.
+    """
     window = _submission_window_label()
     blocks: list[str] = []
     for r in readings:
-        label = _KIND_LABEL.get(r.kind, f"🔢 {r.service or 'Лічильник'}")
-        num = f" (№{r.account_code})" if r.account_code else ""
+        label = html.escape(_KIND_LABEL.get(r.kind, f"🔢 {r.service or 'Лічильник'}"))
+        num = f" (№<code>{html.escape(r.account_code)}</code>)" if r.account_code else ""
         lines = [f"{label}{num}"]
         if r.value is not None:
             period = _format_cycle(r.period) if r.period else "останній період"
@@ -296,7 +309,7 @@ async def menu_meters(message: Message) -> None:
         log.exception("infolviv fetch raised")
         readings = []
     if readings:
-        await message.answer(_format_infolviv_readings(readings))
+        await message.answer(_format_infolviv_readings(readings), parse_mode="HTML")
     else:
         # Portal not configured / unreachable → show what I've saved from photos.
         await message.answer(await _local_journal())
@@ -454,16 +467,78 @@ async def _meter_providers(session) -> list[Provider]:
     )
 
 
-def _meter_reply(result: dict) -> tuple[str, InlineKeyboardMarkup | None]:
-    """Map a pipeline result dict → (text, keyboard) in the butler's voice."""
-    text = result.get("message") or "…"
+def _stored_line(result: dict) -> str:
+    """«Записав показник X (+спожито).» — what I saved from the photo."""
+    value = result.get("value")
+    cons = result.get("consumption")
+    extra = f" (намотало +{cons})" if cons not in (None, "None") else ""
+    return f"Записав показник {value}{extra}."
+
+
+def _gated_meter_reply(
+    result: dict, now: datetime | None = None
+) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Reply for a freshly-read reading, gated by the calendar.
+
+    needs_confirm → confirm/re-photo. validated → store it and offer the date-gated
+    action: inside the 28+ window an approve button (one tap files it); before it, a
+    «подай раніше» button that resists twice and files on the 3rd tap."""
     rid = result.get("reading_id")
     status = result.get("status")
     if status == MeterStatus.needs_confirm.value and rid is not None:
-        return text, keyboards.meter_confirm_keyboard(rid)
-    if status == MeterStatus.validated.value and rid is not None:
-        return text, keyboards.meter_submitted_keyboard(rid)
-    return text, None
+        return result.get("message") or "…", keyboards.meter_confirm_keyboard(rid)
+    if status != MeterStatus.validated.value or rid is None:
+        return result.get("message") or "…", None
+
+    now = now or clock.now()
+    window = _submission_window_label(now)
+    stored = _stored_line(result)
+    if now.day >= get_settings().meter_submit_from_day:
+        text = f"{stored}\n🗓 Вікно подачі відкрите ({window}). Подати на портал?"
+        return text, keyboards.meter_approve_keyboard(rid)
+    text = (
+        f"{stored}\n🗓 Подам у вікні {window} — наприкінці місяця показник "
+        "найактуальніший.\nЯкщо дуже треба раніше — тисни нижче."
+    )
+    return text, keyboards.meter_early_keyboard(rid, 1)
+
+
+# Butler-voice pushback for the 1st/2nd «подай раніше» tap (the 3rd actually files).
+_EARLY_PUSHBACK = (
+    "Ще рано — до {window} показник може ще «підрости», тоді подамо найсвіжіший. "
+    "Точно подати зараз?",
+    "Я б усе ж зачекав до кінця місяця. Але як наполягаєш — тисни ще раз, і подаю.",
+)
+
+
+async def _file_reading(rid: int) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Submit a stored reading to infolviv. On success → submitted; if the live POST is
+    disabled (body unverified) → fall back to manual filing + the «Відправив ✓» tap."""
+    async with session_scope() as session:
+        reading = await session.get(MeterReading, rid)
+        if reading is None or reading.value is None or reading.provider_id is None:
+            return "Показник зник — надішли фото ще раз.", None
+        provider = await session.get(Provider, reading.provider_id)
+        kind = provider.category.value if provider else ""
+        value = reading.value
+        try:
+            await submit_infolviv_reading(kind, value)
+        except InfolvivSubmitDisabled:
+            # Live POST not enabled yet → hand back the value for manual filing.
+            reading.status = MeterStatus.validated
+            await session.flush()
+            text = (
+                f"Підготував до подачі: {value} — подай на порталі infolviv "
+                "і тисни «Відправив ✓»."
+            )
+            return text, keyboards.meter_submitted_keyboard(rid)
+        except Exception:
+            log.exception("infolviv submit failed")
+            return "Не вдалося подати на портал — спробуй ще раз за мить.", None
+        reading.status = MeterStatus.submitted
+        reading.submitted_at = clock.now()
+        await session.flush()
+    return f"✅ Подав на infolviv: {value}.", None
 
 
 @router.message(F.photo)
@@ -512,9 +587,14 @@ async def on_photo(message: Message) -> None:
                 return
 
             result = await submit_meter_reading(
-                session, chosen.name, path, vision=get_vision_provider(), read=read
+                session,
+                chosen.name,
+                path,
+                vision=get_vision_provider(),
+                read=read,
+                auto_submit=False,  # store now; file via the date-gated flow
             )
-        text, kb = _meter_reply(result)
+        text, kb = _gated_meter_reply(result)
         await message.answer(text, reply_markup=kb)
     except Exception:
         log.exception("on_photo failed")
@@ -544,8 +624,9 @@ async def on_meter_route(callback: CallbackQuery) -> None:
             path,
             vision=get_vision_provider(),
             reading_id=reading.id,
+            auto_submit=False,
         )
-    text, kb = _meter_reply(result)
+    text, kb = _gated_meter_reply(result)
     await _edit(callback, text, kb)
     if path and os.path.exists(path):
         os.unlink(path)
@@ -569,11 +650,11 @@ async def on_meter_confirm(callback: CallbackQuery) -> None:
             await callback.answer()
             return
         try:
-            result = await confirm_meter_reading(session, reading.id)
+            result = await confirm_meter_reading(session, reading.id, auto_submit=False)
         except ToolError as exc:
             await callback.answer(str(exc))
             return
-    text, kb = _meter_reply(result)
+    text, kb = _gated_meter_reply(result)
     await _edit(callback, text, kb)
     await callback.answer()
 
@@ -591,6 +672,47 @@ async def on_meter_submitted(callback: CallbackQuery) -> None:
             await callback.answer(str(exc))
             return
     await _edit(callback, result["message"])
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("sf:"))
+async def on_meter_approve(callback: CallbackQuery) -> None:
+    """In-window approval («📤 Подати на портал») → file the reading now."""
+    if not callback.data:
+        await callback.answer()
+        return
+    _, rid_s = callback.data.split(":", 1)
+    text, kb = await _file_reading(int(rid_s))
+    await _edit(callback, text, kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("se:"))
+async def on_meter_early(callback: CallbackQuery) -> None:
+    """«⏳ Подати раніше» before the 28th: resist twice, file on the 3rd insistence."""
+    if not callback.data:
+        await callback.answer()
+        return
+    _, rid_s, attempt_s = callback.data.split(":", 2)
+    rid, attempt = int(rid_s), int(attempt_s)
+    now = clock.now()
+    settings = get_settings()
+    if meters.submit_now(
+        now,
+        attempt=attempt,
+        submit_from_day=settings.meter_submit_from_day,
+        max_attempts=settings.meter_early_submit_attempts,
+    ):
+        text, kb = await _file_reading(rid)
+        await _edit(callback, text, kb)
+    else:
+        # Resist; the next tap carries the bumped attempt count.
+        pushback = _EARLY_PUSHBACK[min(attempt - 1, len(_EARLY_PUSHBACK) - 1)]
+        await _edit(
+            callback,
+            pushback.format(window=_submission_window_label(now)),
+            keyboards.meter_early_keyboard(rid, attempt + 1),
+        )
     await callback.answer()
 
 

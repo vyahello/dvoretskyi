@@ -62,10 +62,20 @@ zero / spike vs history → `needs_confirm`) → store `MeterReading` → submit
 - **Which meter?** Caption hint ("показники газу") → else the single meter provider in
   its window → else ask `[Газ][Вода]` (an `ocr_pending` row holds the photo until the
   tap routes it).
-- **Submission is `ManualAssistChannel` by default**: the bot hands back the validated
-  value + how/where to submit (gas→SMS 4647/gas.ua, water→ВК), marks the reading
-  `validated`; the **«Відправив ✓»** tap (`ms:`) flips it to `submitted`. **No
-  auto-submission** unless a channel is explicitly enabled in `SUBMISSION_CHANNELS`.
+- **Date-gated submission to infolviv** (the photo flow): a photo is OCR'd, validated and
+  **stored** (`auto_submit=False`), never filed on the spot. Filing is gated on the day of
+  month (`meters.submit_now`, `meter_submit_from_day=28`): inside the **28→month-end**
+  window the reply offers an approve tap (`sf:<rid>`) → one tap files it; **before** the
+  window it offers «подай раніше» (`se:<rid>:<attempt>`) which **resists twice and files
+  on the 3rd** insistence. Filing calls `infolviv.submit_infolviv_reading(kind, value)`
+  (`setMultipleFactors` → `POST /counter/factor`). That live POST is **off by default
+  (`INFOLV_SUBMIT_ENABLED=false`)** because the request body is unverified (it's in a
+  lazy SPA chunk) — while off it raises `InfolvivSubmitDisabled` and the bot **falls back
+  to manual filing** (hand back the value + «Відправив ✓» `ms:` tap). The window label is
+  `28–{last-day}` computed from the calendar (handles 28/29/30/31).
+- Legacy per-provider `SubmissionChannel`s (`ManualAssistChannel` default, Sms/WebForm
+  opt-in via `SUBMISSION_CHANNELS`) still exist for the `auto_submit=True` path, but the
+  bot's photo flow now routes everything through the infolviv date-gate above.
 - Only **gas** and **water** have meters (set `Provider.meter_window`). Electricity /
   internet / housing have none. OCR failure → `value=None` → ask to retype (never guess).
 - Temp photos live in a private dir and are deleted right after processing (image bytes
@@ -95,10 +105,12 @@ and pass `now` explicitly to reminder/window logic (no time-freezing dependency)
 ## Env vars (see `.env.example`)
 `MONO_TOKEN`, `MONO_WEBHOOK_SECRET`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID`,
 `DATABASE_URL`, `REDIS_URL`, `CLAUDE_BIN`, `LLM_PROVIDER` (claude_code|anthropic_api),
-`UTILITY_MCCS`, `TZ`, `PUBLIC_BASE_URL`. **Meters:** `CLAUDE_VISION_TIMEOUT_SECONDS`
-(vision is slower than text), `SUBMISSION_CHANNELS=gas:manual,water:manual`,
-`SMS_GATEWAY_URL` (empty → deep link only), `OCR_MAX_LONG_SIDE`, `DELTA_SPIKE_K`,
-`DELTA_ABS_CAP`, `GAS_METER_DAY`, `WATER_METER_DAY`.
+`UTILITY_MCCS`, `TZ`, `PUBLIC_BASE_URL`. **infolviv:** `INFOLV_LOGIN`, `INFOLV_PWD`,
+`INFOLV_SUBMIT_ENABLED` (default false — live POST stays off until the body is verified).
+**Meters:** `CLAUDE_VISION_TIMEOUT_SECONDS` (vision is slower than text),
+`SUBMISSION_CHANNELS=gas:manual,water:manual`, `SMS_GATEWAY_URL` (empty → deep link only),
+`OCR_MAX_LONG_SIDE`, `DELTA_SPIKE_K`, `DELTA_ABS_CAP`, `METER_WINDOW_DAYS`,
+`METER_SUBMIT_FROM_DAY` (28), `METER_EARLY_SUBMIT_ATTEMPTS` (3).
 
 ## Conventions
 - Conventional commits, one logical change each.

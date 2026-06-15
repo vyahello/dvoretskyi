@@ -459,6 +459,23 @@ async def _run_submission(
     }
 
 
+def _validated_result(prov: Provider, reading: MeterReading) -> dict:
+    """A stored, validated reading that is NOT yet submitted (awaiting the date gate)."""
+    return {
+        "ok": True,
+        "reading_id": reading.id,
+        "provider": prov.name,
+        "value": str(reading.value),
+        "status": MeterStatus.validated.value,
+        "consumption": (
+            str(reading.consumption_delta)
+            if reading.consumption_delta is not None
+            else None
+        ),
+        "message": "Записав показник.",
+    }
+
+
 async def submit_meter_reading(
     session: AsyncSession,
     provider_name: str,
@@ -467,6 +484,7 @@ async def submit_meter_reading(
     vision: VisionProvider | None = None,
     reading_id: int | None = None,
     read: MeterRead | None = None,
+    auto_submit: bool = True,
 ) -> dict:
     """Full meter pipeline: OCR → delta-validate → store → submit (channel).
 
@@ -474,6 +492,8 @@ async def submit_meter_reading(
     A reading that fails delta validation is stored `needs_confirm` and returned for a
     confirm/re-photo prompt — never submitted until confirmed. `read` lets the caller
     pass an already-OCR'd MeterRead (e.g. the photo handler) to avoid a second call.
+    `auto_submit=False` stores the validated reading but defers submission to the caller
+    (the bot's date-gated approve/insistence flow) instead of running the channel now.
     """
     prov = await _provider_by_name(session, provider_name)
     settings = get_settings()
@@ -539,11 +559,18 @@ async def submit_meter_reading(
             "message": verdict.reason,
         }
 
+    if not auto_submit:
+        return _validated_result(prov, reading)
     return await _run_submission(session, prov, reading)
 
 
-async def confirm_meter_reading(session: AsyncSession, reading_id: object) -> dict:
-    """User confirmed a `needs_confirm` reading → validate it and run submission."""
+async def confirm_meter_reading(
+    session: AsyncSession, reading_id: object, *, auto_submit: bool = True
+) -> dict:
+    """User confirmed a `needs_confirm` reading → validate it (and maybe run submission).
+
+    `auto_submit=False` validates without submitting — the bot then runs its date-gated
+    approve/insistence flow, mirroring the photo path."""
     try:
         rid = int(str(reading_id).strip())
     except (TypeError, ValueError) as exc:
@@ -566,6 +593,9 @@ async def confirm_meter_reading(session: AsyncSession, reading_id: object) -> di
     if prov is None:
         raise ToolError("Провайдера для цього показника нема.")
     reading.status = MeterStatus.validated
+    if not auto_submit:
+        await session.flush()
+        return _validated_result(prov, reading)
     return await _run_submission(session, prov, reading)
 
 

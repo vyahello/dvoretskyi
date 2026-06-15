@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from decimal import Decimal
 
 import httpx
@@ -110,11 +111,50 @@ async def test_unexpected_payload_returns_empty(monkeypatch):
         assert await fetch_infolviv_readings(client=c, use_cache=False) == []
 
 
-async def test_submission_is_disabled_scaffold():
-    # Phase 3 scaffold must never actually submit until explicitly enabled.
+async def test_submission_disabled_by_default_raises(monkeypatch):
+    # Live POST stays off until the body is verified → must not contact the portal.
     import pytest
+
+    from dvoretskyi.agent.infolviv import InfolvivSubmitDisabled, submit_infolviv_reading
+
+    st = get_settings()
+    monkeypatch.setattr(st, "infolv_submit_enabled", False)
+    with pytest.raises(InfolvivSubmitDisabled):
+        await submit_infolviv_reading("water", Decimal("123.45"))
+
+
+async def test_submission_when_enabled_posts_to_factor_endpoint(monkeypatch):
+    # When explicitly enabled it resolves the counter by kind and POSTs the reading.
+    st = get_settings()
+    monkeypatch.setattr(st, "infolv_submit_enabled", True)
+    monkeypatch.setattr(st, "infolv_submit_path", "/factor")
+    calls: list[str] = []
+    posted: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(f"{request.method} {request.url.path}")
+        if request.url.path == "/auth":
+            return httpx.Response(200, json={"accessToken": "jwt.t.t"})
+        if request.url.path == "/counters":
+            return httpx.Response(200, json=_COUNTERS)
+        if request.url.path == "/factor":
+            posted["body"] = json.loads(request.content)
+            return httpx.Response(200, json={"ok": True})
+        return httpx.Response(404)
+
+    monkeypatch.setattr(st, "infolv_login", "user@example.com")
+    monkeypatch.setattr(st, "infolv_pwd", "secret")
+    monkeypatch.setattr(st, "infolv_auth_path", "/auth")
+    monkeypatch.setattr(st, "infolv_counters_path", "/counters")
+    infolviv.clear_cache()
 
     from dvoretskyi.agent.infolviv import submit_infolviv_reading
 
-    with pytest.raises(NotImplementedError):
-        await submit_infolviv_reading(111, Decimal("123.45"))
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://infolviv.example"
+    ) as c:
+        counter_id = await submit_infolviv_reading("gas", Decimal("2010.5"), client=c)
+
+    assert counter_id == 222  # the gas counter from _COUNTERS
+    assert "POST /factor" in calls
+    assert posted["body"] == [{"counterId": 222, "valueZone1": 2010.5}]
