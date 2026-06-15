@@ -69,7 +69,10 @@ async def test_routes_to_get_stats_attaches_chart(session, providers):
         [Decision(tool="get_stats", args={"period": "all"}, message=line)]
     )
     reply = await dispatcher.handle_message("статистика", session, llm)
-    assert reply.text == line
+    # The persona preamble is kept and the rendered stats summary is appended, so the
+    # numbers actually reach the user (not just "зараз гляну").
+    assert reply.text.startswith(line)
+    assert "480" in reply.text
     assert reply.chart_path is not None
 
     import os

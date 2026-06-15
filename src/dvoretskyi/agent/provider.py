@@ -70,10 +70,23 @@ class ClaudeCodeProvider(LLMProvider):
         self.timeout = settings.claude_timeout_seconds
 
     def _build_user_prompt(self, user_text: str, context: dict) -> str:
-        ctx = json.dumps(context, ensure_ascii=False, default=str, indent=2)
+        # Pull dialogue out of the context blob so it reads as a transcript, not buried
+        # JSON — short replies («давай») hinge on it.
+        ctx = {k: v for k, v in context.items() if k != "recent_dialogue"}
+        ctx_json = json.dumps(ctx, ensure_ascii=False, default=str, indent=2)
+        dialogue = ""
+        turns = context.get("recent_dialogue") or []
+        if turns:
+            lines = "\n".join(
+                f"{'Ти' if t.get('role') == 'assistant' else 'Користувач'}: "
+                f"{t.get('text', '')}"
+                for t in turns
+            )
+            dialogue = f"ОСТАННІ РЕПЛІКИ РОЗМОВИ (зважай на них):\n{lines}\n\n"
         return (
             f"{TOOL_CATALOG}\n"
-            f"КОНТЕКСТ (поточний стан, лише для довідки):\n{ctx}\n\n"
+            f"КОНТЕКСТ (поточний стан, лише для довідки):\n{ctx_json}\n\n"
+            f"{dialogue}"
             f"ПОВІДОМЛЕННЯ КОРИСТУВАЧА:\n{user_text}\n\n"
             'Поверни ЛИШЕ JSON виду {"tool": ..., "args": {...}, "message": ...}. '
             "Жодного тексту поза JSON."

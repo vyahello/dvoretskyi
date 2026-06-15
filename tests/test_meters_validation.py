@@ -83,3 +83,25 @@ def test_spike_under_abs_cap_not_flagged():
     v = validate(D(1300), [D(1000), D(950), D(900)], spike_k=3, abs_cap=D(1000))
     assert v.ok and v.status is MeterStatus.validated
     assert v.consumption == D(300)
+
+
+# --- get_stats period parsing: seasons + Ukrainian labels --------------------
+
+
+def test_period_bounds_and_label_for_season_and_year():
+    from datetime import datetime
+
+    from dvoretskyi.agent.tools import _period_bounds, _period_label
+
+    # «зима 2026» = Dec 2025 → Mar 2026 (3 meteorological months across the year edge).
+    start, end = _period_bounds("зима 2026")
+    assert start == datetime(2025, 12, 1, tzinfo=clock.KYIV)
+    assert end == datetime(2026, 3, 1, tzinfo=clock.KYIV)
+    assert _period_label("зима 2026") == "зима 2026"
+
+    # «літо» with no year → current year, Jun→Sep.
+    s2, e2 = _period_bounds("summer-2026")
+    assert (s2.month, e2.month) == (6, 9)
+    assert _period_label("2026") == "2026 рік"
+    assert _period_label("all") == "весь час"
+    assert _period_label("2026-05") == "травень 2026"

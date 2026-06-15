@@ -12,6 +12,7 @@ import logging
 import os
 import random
 import tempfile
+from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -44,6 +45,7 @@ from dvoretskyi.agent.tools import (
     ToolError,
     categorize_payment,
     confirm_meter_reading,
+    delete_meter_reading,
     get_meter_history,
     get_provider_balance,
     get_stats,
@@ -209,30 +211,9 @@ async def menu_balance(message: Message) -> None:
     await message.answer(res.get("message") or "…", reply_markup=markup)
 
 
-_UA_MONTHS = (
-    "",
-    "січень",
-    "лютий",
-    "березень",
-    "квітень",
-    "травень",
-    "червень",
-    "липень",
-    "серпень",
-    "вересень",
-    "жовтень",
-    "листопад",
-    "грудень",
-)
-
-
 def _format_cycle(cycle: str) -> str:
     """'2026-06' → 'червень 2026'; fall back to the raw key if it's malformed."""
-    try:
-        year, month = cycle.split("-")
-        return f"{_UA_MONTHS[int(month)]} {year}"
-    except (ValueError, IndexError):
-        return cycle
+    return clock.format_cycle(cycle)
 
 
 def _format_meters_overview(overview: list[tuple[str, list[dict]]]) -> str:
@@ -331,12 +312,18 @@ async def menu_hello(message: Message) -> None:
     await message.answer(random.choice(_GREETINGS))
 
 
+# Rolling free-text dialogue (single user, single process) so the agent can resolve
+# short replies («давай», «а за травень?») against its own previous line. Kept short.
+_DIALOGUE: deque[dict[str, str]] = deque(maxlen=6)
+
+
 @router.message(F.text)
 async def on_text(message: Message) -> None:
+    user_text = message.text or ""
     try:
         async with session_scope() as session:
             reply = await agent_dispatcher.handle_message(
-                message.text or "", session, get_provider()
+                user_text, session, get_provider(), history=list(_DIALOGUE)
             )
     except Exception:
         # Anything from context-building, the LLM path, or the DB lands here.
@@ -345,6 +332,9 @@ async def on_text(message: Message) -> None:
         log.exception("on_text failed for message %r", message.text)
         await message.answer("Щось у моїх паперах заклинило — спробуйте ще раз за мить.")
         return
+    # Record the turn so the next message has this exchange as context.
+    _DIALOGUE.append({"role": "user", "text": user_text})
+    _DIALOGUE.append({"role": "assistant", "text": reply.text or ""})
     markup = None
     if reply.tool_result and reply.tool_result.get("pay_link"):
         markup = keyboards.pay_keyboard(
@@ -469,11 +459,12 @@ async def _meter_providers(session) -> list[Provider]:
 
 
 def _stored_line(result: dict) -> str:
-    """«Записав показник X (+спожито).» — what I saved from the photo."""
+    """«💧 Холодна вода: записав X (+спожито).» — names the meter + value saved."""
+    label = _KIND_LABEL.get(result.get("kind") or "", "🔢 Лічильник")
     value = result.get("value")
     cons = result.get("consumption")
     extra = f" (намотало +{cons})" if cons not in (None, "None") else ""
-    return f"Записав показник {value}{extra}."
+    return f"{label}: записав {value}{extra}."
 
 
 def _gated_meter_reply(
@@ -486,8 +477,14 @@ def _gated_meter_reply(
     «подай раніше» button that resists twice and files on the 3rd tap."""
     rid = result.get("reading_id")
     status = result.get("status")
+    label = _KIND_LABEL.get(result.get("kind") or "", "🔢 Лічильник")
+    value = result.get("value")
     if status == MeterStatus.needs_confirm.value and rid is not None:
-        return result.get("message") or "…", keyboards.meter_confirm_keyboard(rid)
+        # Always name the meter + the number I read, then the doubt — so it's never a
+        # bare «Нуль споживання…» with no idea which meter or value.
+        head = f"{label}: бачу {value}." if value else f"{label}:"
+        reason = result.get("message") or ""
+        return f"{head}\n{reason}".strip(), keyboards.meter_confirm_delete_keyboard(rid)
     if status != MeterStatus.validated.value or rid is None:
         return result.get("message") or "…", None
 
@@ -691,6 +688,23 @@ async def on_meter_approve(callback: CallbackQuery) -> None:
     _, rid_s = callback.data.split(":", 1)
     text, kb = await _file_reading(int(rid_s))
     await _edit(callback, text, kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("md:"))
+async def on_meter_delete(callback: CallbackQuery) -> None:
+    """«🗑 Видалити» → drop the stored reading (wrong value entered)."""
+    if not callback.data:
+        await callback.answer()
+        return
+    _, rid_s = callback.data.split(":", 1)
+    async with session_scope() as session:
+        try:
+            result = await delete_meter_reading(session, reading_id=rid_s)
+        except ToolError as exc:
+            await callback.answer(str(exc))
+            return
+    await _edit(callback, result["message"])
     await callback.answer()
 
 

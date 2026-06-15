@@ -51,7 +51,7 @@ async def test_light_meter_auto_routes_to_gas(engine, providers, monkeypatch):
 
     assert vis.calls, "OCR should have run once"
     text, kb = msg.answers[-1]
-    assert "Записав показник 1000" in text  # stored, not yet submitted
+    assert "🔥 Газ" in text and "1000" in text  # names the meter + value, stored
     assert isinstance(kb, InlineKeyboardMarkup)  # approve / «подай раніше» button
     async with bot_app.session_scope() as session:
         pid, status = await _stored_provider_id(session)

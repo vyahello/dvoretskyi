@@ -10,6 +10,7 @@ Callback grammar:
   sm:<provider_id>:<days>        snooze meter reminders for N days
   sf:<reading_id>                approve → submit the reading now (in the 28+ window)
   se:<reading_id>:<attempt>      «подай раніше» before the window; submits on attempt 3
+  md:<reading_id>                delete a stored reading (wrong value entered)
 """
 
 from __future__ import annotations
@@ -121,29 +122,52 @@ def meter_submitted_keyboard(reading_id: int) -> InlineKeyboardMarkup:
     )
 
 
+def _delete_button(reading_id: int) -> InlineKeyboardButton:
+    return InlineKeyboardButton(text="🗑 Видалити", callback_data=f"md:{reading_id}")
+
+
 def meter_approve_keyboard(reading_id: int) -> InlineKeyboardMarkup:
-    """In the submission window (28th+): a single tap approves → the bot files it."""
+    """In the submission window (28th+): tap to file, or delete if the value is wrong."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="📤 Подати на портал", callback_data=f"sf:{reading_id}"
                 )
-            ]
+            ],
+            [_delete_button(reading_id)],
         ]
     )
 
 
 def meter_early_keyboard(reading_id: int, attempt: int = 1) -> InlineKeyboardMarkup:
-    """Before the window: «подай раніше». The attempt count rides in the callback so we
-    can resist twice and file on the 3rd tap without any server-side state."""
+    """Before the window: «подай раніше» (attempt count rides in the callback so we resist
+    twice and file on the 3rd tap, no server-side state), or delete a wrong value."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="⏳ Подати раніше", callback_data=f"se:{reading_id}:{attempt}"
                 )
-            ]
+            ],
+            [_delete_button(reading_id)],
+        ]
+    )
+
+
+def meter_confirm_delete_keyboard(reading_id: int) -> InlineKeyboardMarkup:
+    """needs_confirm reading: confirm / re-photo / delete (wrong number)."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Підтвердити", callback_data=f"mc:{reading_id}:ok"
+                ),
+                InlineKeyboardButton(
+                    text="Перефотографувати", callback_data=f"mc:{reading_id}:re"
+                ),
+            ],
+            [_delete_button(reading_id)],
         ]
     )
 

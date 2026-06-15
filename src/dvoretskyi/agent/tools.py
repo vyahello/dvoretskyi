@@ -52,10 +52,59 @@ def _cycle_bounds(cycle: str) -> tuple[datetime, datetime]:
     return start, end
 
 
+# Meteorological seasons → Ukrainian label. Winter wraps the year boundary (Dec..Feb).
+_SEASON_LABEL = {
+    "winter": "зима",
+    "зима": "зима",
+    "spring": "весна",
+    "весна": "весна",
+    "summer": "літо",
+    "літо": "літо",
+    "autumn": "осінь",
+    "fall": "осінь",
+    "осінь": "осінь",
+}
+_SEASON_START_MONTH = {"зима": 12, "весна": 3, "літо": 6, "осінь": 9}
+
+
+def _season_parts(period: str) -> tuple[str, int] | None:
+    """('зима', 2026) from 'winter 2026' / 'зима-2026' / 'літо' (→ current year)."""
+    season: str | None = None
+    year: int | None = None
+    for tok in period.strip().lower().replace(":", " ").replace("-", " ").split():
+        if tok in _SEASON_LABEL:
+            season = _SEASON_LABEL[tok]
+        elif len(tok) == 4 and tok.isdigit():
+            year = int(tok)
+    if season is None:
+        return None
+    return season, year or clock.now().year
+
+
+def _season_bounds(season: str, year: int) -> tuple[datetime, datetime]:
+    sm = _SEASON_START_MONTH[season]
+    if season == "зима":  # Dec (year-1) → Mar (year)
+        return (
+            datetime(year - 1, 12, 1, tzinfo=clock.KYIV),
+            datetime(year, 3, 1, tzinfo=clock.KYIV),
+        )
+    em = sm + 3
+    return (
+        datetime(year, sm, 1, tzinfo=clock.KYIV),
+        datetime(year, em, 1, tzinfo=clock.KYIV),
+    )
+
+
 def _period_bounds(period: str | None) -> tuple[datetime | None, datetime | None]:
-    """Resolve a stats period to [start, end) bounds. None ends = open."""
+    """Resolve a stats period to [start, end) bounds. None ends = open.
+
+    Accepts 'all', 'YYYY', 'YYYY-MM', and a season (зима/літо/весна/осінь, optional year)
+    so the agent can answer «скільки за зиму» as a real 3-month range."""
     if not period or period == "all":
         return None, None
+    parts = _season_parts(period)
+    if parts is not None:
+        return _season_bounds(*parts)
     if len(period) == 4 and period.isdigit():  # "YYYY"
         year = int(period)
         return (
@@ -63,6 +112,19 @@ def _period_bounds(period: str | None) -> tuple[datetime | None, datetime | None
             datetime(year + 1, 1, 1, tzinfo=clock.KYIV),
         )
     return _cycle_bounds(period)  # "YYYY-MM"
+
+
+def _period_label(period: str | None) -> str:
+    """Ukrainian label: 'весь час' / '2026 рік' / 'зима 2026' / 'травень 2026'."""
+    if not period or period == "all":
+        return "весь час"
+    parts = _season_parts(period)
+    if parts is not None:
+        season, year = parts
+        return f"{season} {year}"
+    if len(period) == 4 and period.isdigit():
+        return f"{period} рік"
+    return clock.format_cycle(period)
 
 
 async def _provider_by_name(session: AsyncSession, name: str) -> Provider:
@@ -229,16 +291,25 @@ async def get_stats(
         for label, amount in sorted(buckets.items(), key=lambda kv: kv[1], reverse=True)
     ]
 
-    chart_path = (
-        _render_chart(buckets, period or clock.current_cycle()) if buckets else None
-    )
+    period_key = period or clock.current_cycle()
+    label = _period_label(period_key)
+
+    chart_path = _render_chart(buckets, label) if buckets else None
+
+    if not items:
+        # Empty period (e.g. a month with no payments) must still answer — never hang.
+        message = f"За {label} платежів не бачу — порожньо."
+    else:
+        top = items[0]
+        message = f"{label} — {total} ₴. Найбільше: {top['label']} ({top['total']} ₴)."
 
     return {
-        "period": period or clock.current_cycle(),
+        "period": period_key,
         "breakdown": breakdown,
         "total": str(total),
         "items": items,
         "chart_path": chart_path,
+        "message": message,
     }
 
 
@@ -465,6 +536,7 @@ def _validated_result(prov: Provider, reading: MeterReading) -> dict:
         "ok": True,
         "reading_id": reading.id,
         "provider": prov.name,
+        "kind": prov.category.value,
         "value": str(reading.value),
         "status": MeterStatus.validated.value,
         "consumption": (
@@ -522,6 +594,7 @@ async def submit_meter_reading(
             "ok": False,
             "reading_id": reading.id,
             "provider": prov.name,
+            "kind": prov.category.value,
             "status": MeterStatus.failed.value,
             "message": (
                 "Не зміг розібрати показник на фото. "
@@ -551,6 +624,7 @@ async def submit_meter_reading(
             "ok": False,
             "reading_id": reading.id,
             "provider": prov.name,
+            "kind": prov.category.value,
             "value": str(value),
             "status": verdict.status.value,
             "consumption": (
@@ -617,6 +691,62 @@ async def mark_meter_submitted(session: AsyncSession, reading_id: object) -> dic
         "reading_id": reading.id,
         "status": reading.status.value,
         "message": "✅ Зафіксував, що передано.",
+    }
+
+
+async def delete_meter_reading(
+    session: AsyncSession,
+    provider_name: str | None = None,
+    *,
+    reading_id: object | None = None,
+) -> dict:
+    """Remove a stored reading from memory (wrong value entered, etc.).
+
+    By `reading_id` (button) or, conversationally, the latest reading for `provider_name`.
+    A reading already filed on the portal (`submitted`) can't be un-filed there, so we
+    refuse to silently drop it — say so instead. Hard-deletes the row so it stops skewing
+    history."""
+    reading: MeterReading | None = None
+    if reading_id is not None:
+        try:
+            reading = await session.get(MeterReading, int(str(reading_id).strip()))
+        except (TypeError, ValueError) as exc:
+            raise ToolError(f"Поганий ідентифікатор показника: {reading_id!r}") from exc
+    elif provider_name:
+        prov = await _provider_by_name(session, provider_name)
+        reading = (
+            await session.execute(
+                select(MeterReading)
+                .where(MeterReading.provider_id == prov.id)
+                .order_by(MeterReading.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    else:
+        raise ToolError("Не вказано, який показник видалити.")
+
+    if reading is None:
+        raise ToolError("Такого показника не знайшов — нема що видаляти.")
+    if reading.status is MeterStatus.submitted:
+        raise ToolError(
+            "Цей показник уже подано на портал — звідти його прибрати я не можу, "
+            "лише на самому infolviv."
+        )
+
+    owner = (
+        await session.get(Provider, reading.provider_id)
+        if reading.provider_id is not None
+        else None
+    )
+    value = str(reading.value) if reading.value is not None else "—"
+    name = owner.name if owner else "лічильник"
+    await session.delete(reading)
+    await session.flush()
+    return {
+        "ok": True,
+        "provider": name,
+        "value": value,
+        "message": f"🗑 Видалив показник {value} ({name}) з пам'яті.",
     }
 
 
@@ -731,6 +861,7 @@ TOOLS: dict[str, Tool] = {
     # handler, not the LLM); confirm/history are LLM-callable.
     "submit_meter_reading": submit_meter_reading,
     "confirm_meter_reading": confirm_meter_reading,
+    "delete_meter_reading": delete_meter_reading,
     "get_meter_history": get_meter_history,
     # Stub until a balance source exists (spec §9):
     "get_provider_balance": get_provider_balance,

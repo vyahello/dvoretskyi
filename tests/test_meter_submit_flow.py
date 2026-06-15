@@ -21,6 +21,7 @@ def _validated(rid: int = 7, value: str = "100.5", cons: str | None = "1.2") -> 
     return {
         "reading_id": rid,
         "status": MeterStatus.validated.value,
+        "kind": "water",
         "value": value,
         "consumption": cons,
     }
@@ -31,7 +32,7 @@ def _validated(rid: int = 7, value: str = "100.5", cons: str | None = "1.2") -> 
 
 def test_gated_reply_in_window_offers_approve():
     text, kb = bot_app._gated_meter_reply(_validated(), now=_at(29))
-    assert "Записав показник 100.5" in text
+    assert "Холодна вода" in text and "100.5" in text  # names meter + value
     assert "Вікно подачі відкрите" in text
     assert _first_cb(kb) == "sf:7"  # one tap files it
 
@@ -200,3 +201,51 @@ async def test_approve_in_window_files(engine, providers, session, monkeypatch):
     text, _ = cb.bot.sent[-1]
     assert "подай на порталі infolviv" in text  # disabled → manual fallback
     assert cb.answered
+
+
+# --- delete_meter_reading: remove a wrong reading from memory ----------------
+
+
+async def test_delete_meter_reading_by_id_removes_row(engine, providers, session):
+    from sqlalchemy import select
+
+    from dvoretskyi.agent.tools import delete_meter_reading
+    from dvoretskyi.db.models import MeterReading as MR
+
+    gas = providers["Газ (постачання)"]
+    r = MR(
+        provider_id=gas.id,
+        cycle="2026-06",
+        value=Decimal("12.0"),
+        status=MeterStatus.validated,
+        created_at=clock.now(),
+    )
+    session.add(r)
+    await session.commit()
+    rid = r.id
+
+    result = await delete_meter_reading(session, reading_id=rid)
+    assert result["ok"] and "Видалив" in result["message"]
+    remaining = (await session.execute(select(MR))).scalars().all()
+    assert remaining == []  # actually gone from memory
+
+
+async def test_delete_meter_reading_refuses_submitted(engine, providers, session):
+    import pytest
+
+    from dvoretskyi.agent.tools import ToolError, delete_meter_reading
+    from dvoretskyi.db.models import MeterReading as MR
+
+    water = providers["Холодна вода"]
+    r = MR(
+        provider_id=water.id,
+        cycle="2026-06",
+        value=Decimal("106.4"),
+        status=MeterStatus.submitted,
+        created_at=clock.now(),
+    )
+    session.add(r)
+    await session.commit()
+
+    with pytest.raises(ToolError, match="подано на портал"):
+        await delete_meter_reading(session, reading_id=r.id)

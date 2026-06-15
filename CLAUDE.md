@@ -18,7 +18,13 @@ Auth Claude Code via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
   (`process_statement_item` is bot-agnostic + the FastAPI router), `client` (register).
 - `agent/` — `persona` (BUTLER_SYSTEM_PROMPT), `provider` (LLMProvider ABC +
   ClaudeCodeProvider + AnthropicAPIProvider stub), `tools` (TOOLS registry),
-  `dispatcher` (handle_message: deterministic tool routing). **L2 meters:** `vision`
+  `dispatcher` (handle_message: deterministic tool routing; takes a short `history` of
+  recent turns → `context["recent_dialogue"]` so the model resolves short replies like
+  «давай»/«а за травень?» against its own last line). **Tool replies must surface data:**
+  tools that compute numbers return a `message` the dispatcher appends — `get_stats` now
+  renders a summary (and answers seasons «зима/літо» as 3-month ranges via `_period_bounds`/
+  `_period_label`) so a conversational stats ask never dead-ends on a «зараз гляну»
+  preamble. `delete_meter_reading` removes a wrongly-entered reading. **L2 meters:** `vision`
   (VisionProvider ABC + ClaudeCodeVisionProvider — `claude -p --allowed-tools "Read"`,
   Pillow downscale, robust JSON extract), `meters` (pure delta `validate` + `window_open`),
   `submission` (SubmissionChannel ABC + `ManualAssistChannel` default + Sms/WebForm

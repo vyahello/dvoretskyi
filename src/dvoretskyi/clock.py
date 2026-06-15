@@ -26,3 +26,29 @@ def cycle_of(moment: datetime) -> str:
 
 def current_cycle() -> str:
     return cycle_of(now())
+
+
+_UA_MONTHS = (
+    "",
+    "січень",
+    "лютий",
+    "березень",
+    "квітень",
+    "травень",
+    "червень",
+    "липень",
+    "серпень",
+    "вересень",
+    "жовтень",
+    "листопад",
+    "грудень",
+)
+
+
+def format_cycle(cycle: str) -> str:
+    """'2026-06' → 'червень 2026'; 'all'/'2026' pass through; malformed → raw key."""
+    try:
+        year, month = cycle.split("-")
+        return f"{_UA_MONTHS[int(month)]} {year}"
+    except (ValueError, IndexError):
+        return cycle

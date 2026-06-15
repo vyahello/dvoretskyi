@@ -96,9 +96,17 @@ async def build_context(session: AsyncSession) -> dict:
 
 
 async def handle_message(
-    user_text: str, session: AsyncSession, llm: LLMProvider
+    user_text: str,
+    session: AsyncSession,
+    llm: LLMProvider,
+    *,
+    history: list[dict] | None = None,
 ) -> Reply:
     context = await build_context(session)
+    if history:
+        # Last few turns so the model can resolve short replies («давай», «а за травень?»)
+        # against its own previous line instead of restarting from a blank slate.
+        context["recent_dialogue"] = history
     decision: Decision = await llm.decide(user_text, context)
 
     # No tool → the persona reply stands on its own.
