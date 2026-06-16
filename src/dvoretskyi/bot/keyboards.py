@@ -11,7 +11,8 @@ Callback grammar:
   sf:<reading_id>                approve → submit the reading now (in the 28+ window)
   se:<reading_id>:<attempt>      «подай раніше» before the window; submits on attempt 3
   md:<reading_id>                delete a stored reading (wrong value entered)
-  mdc:<scope>|no                 confirm a bulk delete (scope='all'|provider_id) / cancel
+  mdc:<scope>|no                 confirm a scoped delete / cancel.
+                                 scope='all' | '<pid>' | '<pid|*>:<cycle>' (by month)
 """
 
 from __future__ import annotations

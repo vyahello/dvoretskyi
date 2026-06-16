@@ -337,6 +337,45 @@ async def test_supersede_keeps_submitted_history(engine, providers, session):
     assert len(rows) == 2
 
 
+async def test_delete_scoped_to_provider_and_cycle(engine, providers, session):
+    # «видали показник газу за травень» → only that meter + month is targeted.
+    from dvoretskyi.agent.tools import delete_meter_reading, execute_meter_delete
+    from dvoretskyi.db.models import MeterReading as MR
+
+    gas = providers["Газ (постачання)"]
+    water = providers["Холодна вода"]
+    for prov, cyc, val in (
+        (gas, "2026-05", "1800.00"),
+        (gas, "2026-06", "1877.78"),
+        (water, "2026-05", "100.500"),
+    ):
+        session.add(
+            MR(
+                provider_id=prov.id,
+                cycle=cyc,
+                value=Decimal(val),
+                status=MeterStatus.validated,
+                created_at=clock.now(),
+            )
+        )
+    await session.commit()
+
+    res = await delete_meter_reading(session, "Газ (постачання)", cycle="2026-05")
+    assert res["confirm_delete"] and res["count"] == 1  # only the May gas reading
+    assert "травень 2026" in res["message"] and "Газ (постачання)" in res["message"]
+
+    from sqlalchemy import select
+
+    out = await execute_meter_delete(session, res["confirm_scope"])
+    assert out["deleted"] == 1
+    survivors = {
+        (r.provider_id, r.cycle)
+        for r in (await session.execute(select(MR))).scalars().all()
+    }
+    assert (gas.id, "2026-05") not in survivors  # gone
+    assert (gas.id, "2026-06") in survivors and (water.id, "2026-05") in survivors
+
+
 async def test_execute_meter_delete_all_wipes(engine, providers, session):
     from sqlalchemy import select
 

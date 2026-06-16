@@ -755,13 +755,46 @@ _DELETED_LINES = (
 )
 
 
+def _normalize_cycle(cycle: object) -> str:
+    """Coerce a period to a 'YYYY-MM' cycle key ('2026-05-01T…' → '2026-05')."""
+    text = str(cycle).strip()
+    if len(text) >= 7 and text[4] == "-" and text[:4].isdigit() and text[5:7].isdigit():
+        return text[:7]
+    raise ToolError(f"Не зрозумів місяць: {cycle!r} (потрібен формат на кшталт 2026-05).")
+
+
+def _encode_scope(provider_id: int | None, cycle: str | None) -> str:
+    """Pack a delete scope into a callback-safe string the confirm button carries.
+
+    'all' (everything) | '<pid>' (one meter, any month) | '<pid|*>:<cycle>' (by month).
+    """
+    if provider_id is None and cycle is None:
+        return "all"
+    if cycle is None:
+        return str(provider_id)
+    return f"{provider_id if provider_id is not None else '*'}:{cycle}"
+
+
+def _decode_scope(scope: str) -> tuple[int | None, str | None]:
+    """Inverse of `_encode_scope` → (provider_id|None, cycle|None)."""
+    if scope == "all":
+        return None, None
+    pid_s, _, cycle = scope.partition(":")
+    provider_id = None if pid_s in ("", "*") else int(pid_s)
+    return provider_id, (cycle or None)
+
+
 async def _deletable_readings(
-    session: AsyncSession, provider_id: int | None = None
+    session: AsyncSession,
+    provider_id: int | None = None,
+    cycle: str | None = None,
 ) -> list[MeterReading]:
     """Readings we may drop (anything not already filed on the portal)."""
     conds: list[ColumnElement[bool]] = [MeterReading.status != MeterStatus.submitted]
     if provider_id is not None:
         conds.append(MeterReading.provider_id == provider_id)
+    if cycle is not None:
+        conds.append(MeterReading.cycle == cycle)
     rows = (
         await session.execute(
             select(MeterReading).where(*conds).order_by(MeterReading.created_at.desc())
@@ -775,14 +808,18 @@ async def delete_meter_reading(
     provider_name: str | None = None,
     *,
     reading_id: object | None = None,
+    cycle: object | None = None,
 ) -> dict:
     """Remove stored readings from memory (wrong value entered, etc.).
 
     Two modes:
     - `reading_id` (the 🗑 button on a specific reading) → an explicit tap, delete now.
     - conversationally (no id) → DON'T delete yet: return a confirmation listing what
-      would go (all readings, or just `provider_name`'s), so the bot asks first. The bulk
-      deletion happens in `execute_meter_delete` once the user confirms.
+      would go, scoped by `provider_name` and/or `cycle` ("YYYY-MM"), so the bot asks
+      first. Examples the LLM maps onto args: «видали всі показники» → no scope;
+      «видали показник газу» → provider_name; «видали газ за минулий місяць» →
+      provider_name + cycle. The bulk deletion happens in `execute_meter_delete` once
+      the user confirms.
     A reading already filed on the portal (`submitted`) can't be un-filed there — we keep
     it and say so. Deletes are hard (the row is gone, so it stops skewing history)."""
     if reading_id is not None:
@@ -823,9 +860,11 @@ async def delete_meter_reading(
     provider_id: int | None = None
     if provider_name:
         provider_id = (await _provider_by_name(session, provider_name)).id
-    targets = await _deletable_readings(session, provider_id)
+    cycle_key = _normalize_cycle(cycle) if cycle else None
+    targets = await _deletable_readings(session, provider_id, cycle_key)
+    scope_label = _delete_scope_label(provider_name, cycle_key)
     if not targets:
-        raise ToolError("Не бачу показників, які можна видалити.")
+        raise ToolError(f"Не бачу показників{scope_label}, які можна видалити.")
     names = {p.id: p.name for p in (await session.execute(select(Provider))).scalars()}
     preview = "; ".join(
         f"{names.get(r.provider_id or -1, '?')} — {r.value}"
@@ -835,19 +874,30 @@ async def delete_meter_reading(
     return {
         "ok": True,
         "confirm_delete": True,
-        "confirm_scope": "all" if provider_id is None else str(provider_id),
+        "confirm_scope": _encode_scope(provider_id, cycle_key),
         "count": len(targets),
         "message": (
-            f"У пам'яті {len(targets)} показник(ів): {preview}. "
+            f"Знайшов {len(targets)} показник(ів){scope_label}: {preview}. "
             "Точно видалити? Підтвердь кнопкою."
         ),
     }
 
 
+def _delete_scope_label(provider_name: str | None, cycle: str | None) -> str:
+    """' — «Газ (постачання)» за травень 2026' for the confirm/ empty message (or '')."""
+    bits = []
+    if provider_name:
+        bits.append(f"«{provider_name}»")
+    if cycle:
+        bits.append(f"за {clock.format_cycle(cycle)}")
+    return f" {' '.join(bits)}" if bits else ""
+
+
 async def execute_meter_delete(session: AsyncSession, scope: str) -> dict:
-    """Bulk-delete after the user confirms. `scope` = 'all' or a provider id (str)."""
-    provider_id = None if scope == "all" else int(scope)
-    targets = await _deletable_readings(session, provider_id)
+    """Bulk-delete after the user confirms. `scope` is the packed string from
+    `_encode_scope` ('all' | '<pid>' | '<pid|*>:<cycle>')."""
+    provider_id, cycle = _decode_scope(scope)
+    targets = await _deletable_readings(session, provider_id, cycle)
     for reading in targets:
         await session.delete(reading)
     await session.flush()

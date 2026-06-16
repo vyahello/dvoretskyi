@@ -89,8 +89,11 @@ zero / spike vs history → `needs_confirm`) → store `MeterReading` → submit
   un-filed draft (`_supersede_pending` hard-deletes earlier non-`submitted` readings of
   the same provider when a new one is stored). So the journal never piles up duplicates,
   and the freshest is what gets submitted. `submitted` readings are the permanent record
-  — never superseded. «видали показники з фото» (no provider) wipes all drafts after a
-  confirm tap; name a meter to scope it.
+  — never superseded. `delete_meter_reading(provider_name?, cycle?)` is **precisely
+  scopeable**: «видали всі» → no scope (wipe all drafts); «видали показник газу» →
+  provider; «видали газ за минулий місяць» → provider + `cycle="YYYY-MM"`. It always
+  confirms first; `confirm_scope` is packed by `_encode_scope` ('all'|'<pid>'|'<pid|*>:
+  <cycle>') and decoded in `execute_meter_delete`. Submitted readings are still refused.
 - `_format_unpaid` phrasings (all-clear / mobile-autopay note) are **randomized** so the
   deterministic `/unpaid` reply never reads like a canned autoreply.
 - Legacy per-provider `SubmissionChannel`s (`ManualAssistChannel` default, Sms/WebForm
