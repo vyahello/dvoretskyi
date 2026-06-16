@@ -305,7 +305,9 @@ async def _local_journal() -> str:
     async with session_scope() as session:
         overview: list[tuple[str, list[dict]]] = []
         for prov in await _meter_providers(session):
-            hist = await get_meter_history(session, prov.name, limit=6)
+            # Local-only: this is the fallback for when the portal is unreachable, so it
+            # must not try infolviv again.
+            hist = await get_meter_history(session, prov.name, limit=6, use_portal=False)
             overview.append((prov.name, hist["readings"]))
     return _format_meters_overview(overview)
 

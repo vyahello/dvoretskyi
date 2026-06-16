@@ -100,6 +100,12 @@ zero / spike vs history → `needs_confirm`) → store `MeterReading` → submit
   provider; «видали газ за минулий місяць» → provider + `cycle="YYYY-MM"`. It always
   confirms first; `confirm_scope` is packed by `_encode_scope` ('all'|'<pid>'|'<pid|*>:
   <cycle>') and decoded in `execute_meter_delete`. Submitted readings are still refused.
+- **Conversational history pulls from the portal:** `get_meter_history` consults infolviv
+  (`reading_for_kind`) by default — the filed value leads (authoritative) + un-filed photo
+  drafts after it — so «покажи показники газу» mirrors the «Мої показники» button.
+  `use_portal=False` keeps it local-only (the portal-down fallback `_local_journal` passes
+  it). Reply text is built tool-side in `result["message"]` (the dispatcher surfaces only
+  that), so the readings reach the user instead of a bare «зараз гляну».
 - `_format_unpaid` phrasings (all-clear / mobile-autopay note) are **randomized** so the
   deterministic `/unpaid` reply never reads like a canned autoreply.
 - Legacy per-provider `SubmissionChannel`s (`ManualAssistChannel` default, Sms/WebForm
@@ -137,7 +143,7 @@ The mono webhook must be reachable over public HTTPS at
 
 ## Test, lint, types
 ```bash
-pytest -q                       # 160 tests, in-memory SQLite, no network, no API key
+pytest -q                       # 162 tests, in-memory SQLite, no network, no API key
 ruff check src tests            # lint (E,W,F,I,UP,B)
 ruff format src tests           # format (black-compatible; the project standard)
 mypy                            # type-check src/ (config in pyproject)

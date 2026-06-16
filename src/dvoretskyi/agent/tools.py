@@ -7,6 +7,7 @@ Amounts are Decimal internally and stringified at the dict boundary.
 
 from __future__ import annotations
 
+import logging
 import random
 import tempfile
 from collections.abc import Awaitable, Callable
@@ -33,6 +34,8 @@ from dvoretskyi.db.models import (
     Provider,
 )
 from dvoretskyi.mono import matcher
+
+log = logging.getLogger(__name__)
 
 
 class ToolError(Exception):
@@ -910,22 +913,64 @@ async def execute_meter_delete(session: AsyncSession, scope: str) -> dict:
     }
 
 
-def _meter_history_message(provider: str, readings: list[dict]) -> str:
-    """Render the recent readings so the dispatcher can surface them — the conversational
-    path shows only result["message"], so without it the numbers never reach the user."""
-    if not readings:
-        return f"Поки що показників по «{provider}» нема — журнал чистий. 🔢"
-    lines = [f"🔢 {provider} — останні показники:"]
-    for r in readings:  # newest-first
-        cons = f" (спожито {r['consumption']})" if r.get("consumption") else ""
-        lines.append(f"• {clock.format_cycle(r['cycle'])}: {r.get('value') or '—'}{cons}")
-    return "\n".join(lines)
+async def _portal_reading_for(provider: Provider) -> Any | None:
+    """The infolviv portal record for this provider's meter kind, or None if it isn't a
+    meter / the portal is unreachable. Kept best-effort: any failure → None (fall back to
+    the local journal). Imported lazily to keep the network dep out of the import path."""
+    kind = provider.category.value
+    if kind not in ("gas", "water"):
+        return None
+    try:
+        from dvoretskyi.agent.infolviv import reading_for_kind
+
+        return await reading_for_kind(kind)
+    except Exception:  # network/auth/parse — never let it sink the whole reply
+        log.warning("infolviv lookup for %s failed", kind, exc_info=True)
+        return None
+
+
+def _meter_history_message(provider: str, readings: list[dict], portal: Any) -> str:
+    """Render readings for the conversational reply (the dispatcher surfaces only
+    result["message"]). Portal reachable → its filed record (authoritative) leads, with
+    un-filed photo drafts after it; portal unreachable → fall back to the full local
+    journal so the question still gets an answer."""
+    if portal is not None and portal.value is not None:
+        period = clock.format_cycle(portal.period) if portal.period else "останній період"
+        cons = f" (спожито {portal.difference})" if portal.difference is not None else ""
+        blocks = [
+            f"🔢 {provider} — на порталі infolviv:\n• {period}: {portal.value}{cons}"
+        ]
+        drafts = [
+            r for r in readings if r.get("status") in ("validated", "needs_confirm")
+        ]
+        if drafts:
+            lines = "\n".join(
+                f"• {clock.format_cycle(r['cycle'])}: {r.get('value') or '—'}"
+                for r in drafts
+            )
+            blocks.append("📝 Збережено з фото (ще не подано на портал):\n" + lines)
+        return "\n\n".join(blocks)
+    # No portal record → show whatever local history we have.
+    if readings:
+        lines = "\n".join(
+            f"• {clock.format_cycle(r['cycle'])}: {r.get('value') or '—'}"
+            + (f" (спожито {r['consumption']})" if r.get("consumption") else "")
+            for r in readings
+        )
+        return f"🔢 {provider} — останні показники:\n" + lines
+    return f"Поки що показників по «{provider}» нема — журнал чистий. 🔢"
 
 
 async def get_meter_history(
-    session: AsyncSession, provider_name: str, limit: int = 6
+    session: AsyncSession,
+    provider_name: str,
+    limit: int = 6,
+    use_portal: bool = True,
 ) -> dict:
-    """Recent readings + consumption for a provider (context/stats)."""
+    """Recent readings for a provider. By default consults the **infolviv portal** (the
+    authoritative filed value) and adds any un-filed photo drafts — so a conversational
+    «покажи показники газу» mirrors the «Мої показники» button. `use_portal=False` keeps
+    it local-only (the portal-down fallback journal)."""
     prov = await _provider_by_name(session, provider_name)
     rows = (
         (
@@ -955,10 +1000,11 @@ async def get_meter_history(
         }
         for r in rows
     ]
+    portal = await _portal_reading_for(prov) if use_portal else None
     return {
         "provider": prov.name,
         "readings": readings,
-        "message": _meter_history_message(prov.name, readings),
+        "message": _meter_history_message(prov.name, readings, portal),
     }
 
 

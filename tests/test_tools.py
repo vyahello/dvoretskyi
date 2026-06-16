@@ -209,7 +209,8 @@ async def test_get_meter_history_surfaces_readings_in_message(session, providers
     )
     await session.commit()
 
-    res = await tools.get_meter_history(session, "Холодна вода")
+    # use_portal=False → pure local rendering (the portal path is covered separately).
+    res = await tools.get_meter_history(session, "Холодна вода", use_portal=False)
     msg = res["message"]
     assert "Холодна вода" in msg
     assert "100.500" in msg and "95.300" in msg  # the actual readings reach the user
@@ -217,6 +218,50 @@ async def test_get_meter_history_surfaces_readings_in_message(session, providers
 
 
 async def test_get_meter_history_empty_is_friendly(session, providers):
-    res = await tools.get_meter_history(session, "Холодна вода")
+    res = await tools.get_meter_history(session, "Холодна вода", use_portal=False)
     assert res["readings"] == []
+    assert "журнал чистий" in res["message"]
+
+
+async def test_meter_history_leads_with_portal(session, providers, monkeypatch):
+    # When the infolviv portal answers, its filed value is authoritative and leads the
+    # reply (conversational «покажи показники води» mirrors the «Мої показники» button).
+    from dvoretskyi.agent import infolviv as infolviv_mod
+    from dvoretskyi.agent.infolviv import InfolvivReading
+
+    fake = InfolvivReading(
+        kind="water",
+        account_code="ACC-WATER-1",
+        counter_number="111",
+        provider="Львівводоканал",
+        service="Вода",
+        period="2026-06",
+        value=Decimal("100.500"),
+        difference=Decimal("5.200"),
+        window_start_day=28,
+        window_end_day=30,
+        window_open=True,
+        counter_id=111,
+    )
+
+    async def fake_reading_for_kind(kind, **kw):
+        return fake if kind == "water" else None
+
+    monkeypatch.setattr(infolviv_mod, "reading_for_kind", fake_reading_for_kind)
+
+    res = await tools.get_meter_history(session, "Холодна вода")
+    msg = res["message"]
+    assert "порталі infolviv" in msg
+    assert "100.500" in msg and "спожито 5.200" in msg
+
+
+async def test_meter_history_local_only_skips_portal(session, providers, monkeypatch):
+    # use_portal=False (the portal-down fallback journal) must never touch infolviv.
+    from dvoretskyi.agent import infolviv as infolviv_mod
+
+    async def boom(kind, **kw):
+        raise AssertionError("portal must not be consulted when use_portal=False")
+
+    monkeypatch.setattr(infolviv_mod, "reading_for_kind", boom)
+    res = await tools.get_meter_history(session, "Холодна вода", use_portal=False)
     assert "журнал чистий" in res["message"]
