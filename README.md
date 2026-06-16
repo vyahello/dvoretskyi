@@ -88,7 +88,9 @@ Telegram menu (also published in code via `set_my_commands`): `/start`, `/unpaid
 `/help`. Commands run **deterministically** — no LLM. Anything else you type is free
 text handled by the agent (e.g. «що треба заплатити?»). Send a **photo of a meter**
 to record a reading (gas/water) — the bot routes, OCRs, validates, and tells you how
-to submit.
+to submit. You can also send a **voice note**: it's transcribed locally (faster-whisper,
+on-box — audio is deleted right after), echoed back («🎙 Почув: …»), then handled like a
+typed message. Meter values stay photo-only (speech misreads digits).
 
 ## How it works
 - **Webhook** → idempotent (by `mono_tx_id`), outflow-only. Matches the description
@@ -138,7 +140,8 @@ src/dvoretskyi/  config·clock·app(FastAPI lifespan)·cli
   mono/ schemas · matcher · webhook · client
   agent/ persona · provider (LLMProvider) · tools · dispatcher
          vision (VisionProvider OCR) · meters (delta validation) · submission (channels)
-  bot/  aiogram bot + allowlist + keyboards + photo handler
+  bot/  aiogram bot + allowlist + keyboards + photo & voice handlers
+         agent/transcription (local Whisper STT for voice notes)
   reminders/ APScheduler engine (payment + meter nudges)
 tests/  conftest + matcher/webhook/tools/dispatcher/reminders + vision/meters/submission/photo
 alembic/  migrations (0001 schema · 0002 meter_readings · 0003 meter_decimals)

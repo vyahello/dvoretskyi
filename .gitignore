@@ -6,6 +6,7 @@ __pycache__/
 .pytest_cache/
 .env
 *.db
+*.db.bak.*
 *.sqlite
 *.sqlite3
 /charts/

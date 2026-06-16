@@ -31,11 +31,16 @@ Auth Claude Code via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
   (VisionProvider ABC + ClaudeCodeVisionProvider — `claude -p --allowed-tools "Read"`,
   Pillow downscale, robust JSON extract), `meters` (pure delta `validate` + `window_open`),
   `submission` (SubmissionChannel ABC + `ManualAssistChannel` default + Sms/WebForm
-  opt-in).
+  opt-in). **L2.5 voice:** `transcription` (TranscriptionProvider ABC +
+  `WhisperTranscriptionProvider` — local faster-whisper, model cached on the class &
+  loaded lazily, runs off-loop via `asyncio.to_thread` with a timeout; `Null…` when
+  `STT_PROVIDER=none`). Contract on any failure: empty string → bot asks to retype.
 - `bot/` — aiogram 3 bot, allowlist middleware, slash commands (`/start /unpaid
   /stats /help` — deterministic, registered before the free-text catch-all and
   mirrored via `set_my_commands`), text + callback handlers, **photo handler**
-  (`F.photo` → meter pipeline), keyboards, and the webhook→Telegram notifier.
+  (`F.photo` → meter pipeline), **voice handler** (`F.voice` → transcribe → echo
+  «🎙 Почув: …» → `_respond_to_text` = the same agent path as text), keyboards, and
+  the webhook→Telegram notifier.
 - `reminders/` — APScheduler daily payment **and** meter nudges (Redis jobstore,
   memory fallback).
 - `app.py` — FastAPI; lifespan starts bot long-polling + scheduler + notifier.
@@ -104,6 +109,16 @@ zero / spike vs history → `needs_confirm`) → store `MeterReading` → submit
 - Temp photos live in a private dir and are deleted right after processing (image bytes
   never logged).
 
+## Voice (L2.5)
+Send the bot a **voice note** → `F.voice` handler downloads the OGG to the private media
+dir, transcribes it locally (faster-whisper via `agent/transcription.py`; ffmpeg decodes
+Opus), **echoes** «🎙 Почув: „…"» so a misrecognition is visible, then feeds the
+transcript into `_respond_to_text` — the **exact same agent path** as a typed message, so
+stats/unpaid/balance/deletes all work for free. The audio file is deleted right after
+(transient; bytes never logged). Empty/failed transcript → «не розчув, напиши текстом».
+**Meter values stay photo-only** — STT misreads digits, so a voice turn can ask or act but
+never files a reading; destructive actions (delete) keep their existing confirm-tap.
+
 ## Run
 ```bash
 dvoretskyi register-mono-webhook --dry-run   # inspect the request (token masked)
@@ -115,13 +130,15 @@ The mono webhook must be reachable over public HTTPS at
 
 ## Test, lint, types
 ```bash
-pytest -q                       # 70 tests, in-memory SQLite, no network, no API key
+pytest -q                       # 147 tests, in-memory SQLite, no network, no API key
 ruff check src tests            # lint (E,W,F,I,UP,B)
 ruff format src tests           # format (black-compatible; the project standard)
 mypy                            # type-check src/ (config in pyproject)
 ```
-Tests use a fake `LLMProvider` **and a fake `VisionProvider`** (no real `claude` calls)
-and pass `now` explicitly to reminder/window logic (no time-freezing dependency). Formatting/linting is **Ruff**
+Tests use a fake `LLMProvider`, a fake `VisionProvider` **and a fake
+`TranscriptionProvider`** (no real `claude`/Whisper calls; faster-whisper is imported
+lazily so the suite never loads it) and pass `now` explicitly to reminder/window logic
+(no time-freezing dependency). Formatting/linting is **Ruff**
 (`ruff format` replaces black); type-checking is **mypy** with `ignore_missing_imports`
 (aiogram/apscheduler ship partial/no stubs).
 
@@ -134,6 +151,8 @@ and pass `now` explicitly to reminder/window logic (no time-freezing dependency)
 `SUBMISSION_CHANNELS=gas:manual,water:manual`, `SMS_GATEWAY_URL` (empty → deep link only),
 `OCR_MAX_LONG_SIDE`, `DELTA_SPIKE_K`, `DELTA_ABS_CAP`, `METER_WINDOW_DAYS`,
 `METER_SUBMIT_FROM_DAY` (28), `METER_EARLY_SUBMIT_ATTEMPTS` (3).
+**Voice:** `STT_PROVIDER` (whisper|none), `WHISPER_MODEL` (base; small for better
+accuracy), `WHISPER_COMPUTE_TYPE` (int8), `WHISPER_LANGUAGE` (uk), `STT_TIMEOUT_SECONDS`.
 
 ## Conventions
 - Conventional commits, one logical change each.

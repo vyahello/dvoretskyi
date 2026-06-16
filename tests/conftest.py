@@ -143,6 +143,19 @@ class FakeLLMProvider(LLMProvider):
         return self._decisions[idx]
 
 
+class FakeTranscriptionProvider:
+    """Returns a canned transcript — no real Whisper call. `text=""` simulates a
+    transcription failure (unintelligible audio)."""
+
+    def __init__(self, text: str = "") -> None:
+        self.text = text
+        self.calls: list[str] = []
+
+    async def transcribe(self, audio_path: str) -> str:
+        self.calls.append(audio_path)
+        return self.text
+
+
 class FakeVisionProvider(VisionProvider):
     """Returns a canned MeterRead — no real `claude` call. `value=None` simulates an
     OCR failure."""

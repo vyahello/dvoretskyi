@@ -57,6 +57,7 @@ from dvoretskyi.agent.tools import (
     snooze_reminder,
     submit_meter_reading,
 )
+from dvoretskyi.agent.transcription import get_transcription_provider
 from dvoretskyi.agent.vision import get_vision_provider
 from dvoretskyi.bot import keyboards
 from dvoretskyi.config import get_settings
@@ -408,9 +409,9 @@ async def _thinking(message: Message) -> AsyncIterator[None]:
 _DIALOGUE: deque[dict[str, str]] = deque(maxlen=6)
 
 
-@router.message(F.text)
-async def on_text(message: Message) -> None:
-    user_text = message.text or ""
+async def _respond_to_text(message: Message, user_text: str) -> None:
+    """Run one free-text turn through the agent and render the reply (buttons + chart).
+    Shared by the text handler and the voice handler (voice = transcript → here)."""
     try:
         async with _thinking(message), session_scope() as session:
             reply = await agent_dispatcher.handle_message(
@@ -420,7 +421,7 @@ async def on_text(message: Message) -> None:
         # Anything from context-building, the LLM path, or the DB lands here.
         # Log the traceback (otherwise it's swallowed → silent Telegram) and still
         # reply, so the user never faces dead air.
-        log.exception("on_text failed for message %r", message.text)
+        log.exception("agent turn failed for %r", user_text)
         await message.answer("Щось у моїх паперах заклинило — спробуйте ще раз за мить.")
         return
     # Record the turn so the next message has this exchange as context.
@@ -435,6 +436,11 @@ async def on_text(message: Message) -> None:
     await message.answer(reply.text or "…", reply_markup=markup)
     if reply.chart_path:
         await message.answer_photo(FSInputFile(reply.chart_path))
+
+
+@router.message(F.text)
+async def on_text(message: Message) -> None:
+    await _respond_to_text(message, message.text or "")
 
 
 async def _edit(
@@ -518,6 +524,17 @@ async def _download_photo(message: Message) -> str:
     _MEDIA_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = _MEDIA_DIR / f"{photo.file_unique_id}.jpg"
     await message.bot.download(photo, destination=str(path))
+    return str(path)
+
+
+async def _download_voice(message: Message) -> str:
+    """Download a voice note (OGG/Opus) to the private media dir. Injectable in tests."""
+    if not message.voice or message.bot is None:
+        raise RuntimeError("no voice to download")
+    voice = message.voice
+    _MEDIA_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path = _MEDIA_DIR / f"{voice.file_unique_id}.ogg"
+    await message.bot.download(voice, destination=str(path))
     return str(path)
 
 
@@ -700,6 +717,35 @@ async def on_photo(message: Message) -> None:
     finally:
         if path and os.path.exists(path):
             os.unlink(path)
+
+
+@router.message(F.voice)
+async def on_voice(message: Message) -> None:
+    """Voice note → transcribe locally → echo what I heard → run it as a normal text turn.
+    The audio file is deleted right after; bytes are never logged. Meter *values* still
+    come only from photos (STT misreads digits), so a voice turn can ask or act but never
+    files a reading — and destructive actions keep their existing confirm-tap."""
+    if get_settings().stt_provider.casefold() == "none":
+        await message.answer("Голосові я поки не слухаю — напиши, будь ласка, текстом.")
+        return
+    path: str | None = None
+    transcript = ""
+    try:
+        async with _thinking(message):
+            path = await _download_voice(message)
+            transcript = await get_transcription_provider().transcribe(path)
+    except Exception:
+        log.exception("on_voice download/transcribe failed")
+    finally:
+        if path and os.path.exists(path):
+            os.unlink(path)  # audio is transient — never linger on disk
+    transcript = transcript.strip()
+    if not transcript:
+        await message.answer("Не розчув голосове — спробуй ще раз або напиши текстом.")
+        return
+    # Echo what I heard first, so a misrecognition is obvious before I act on it.
+    await message.answer(f"🎙 Почув: «{html.escape(transcript)}»")
+    await _respond_to_text(message, transcript)
 
 
 @router.callback_query(F.data.startswith("m:"))

@@ -70,6 +70,15 @@ class Settings(BaseSettings):
     # then on the 3rd «подай раніше» tap we submit even though it's before the 28th).
     meter_early_submit_attempts: int = 3
 
+    # --- speech-to-text (voice messages, L2.5) ---
+    # Local faster-whisper by default — audio never leaves the box (the OGG is deleted
+    # right after, like a meter photo). "none" disables voice handling entirely.
+    stt_provider: str = "whisper"  # whisper | none
+    whisper_model: str = "base"  # tiny|base|small|medium; base fits the 2-core VPS
+    whisper_compute_type: str = "int8"  # CTranslate2 quantization (CPU-friendly)
+    whisper_language: str = "uk"  # transcription language hint (empty → autodetect)
+    stt_timeout_seconds: int = 60  # cap a slow transcription so the bot never hangs
+
     # --- pay links per provider (iOS apps / Portmone; no personal data) ---
     # Utilities paid in mono «Комунальні» → open the monobank app; ДАХ → the ДАХ app.
     monobank_pay_url: str = "https://apps.apple.com/app/id1287005205"
