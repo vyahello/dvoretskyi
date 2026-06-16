@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     # Local faster-whisper by default — audio never leaves the box (the OGG is deleted
     # right after, like a meter photo). "none" disables voice handling entirely.
     stt_provider: str = "whisper"  # whisper | none
-    whisper_model: str = "base"  # tiny|base|small|medium; base fits the 2-core VPS
+    whisper_model: str = "small"  # tiny|base|small|medium; small = better UA accuracy
     whisper_compute_type: str = "int8"  # CTranslate2 quantization (CPU-friendly)
     whisper_language: str = "uk"  # transcription language hint (empty → autodetect)
     stt_timeout_seconds: int = 60  # cap a slow transcription so the bot never hangs

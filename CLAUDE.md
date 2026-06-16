@@ -151,8 +151,8 @@ lazily so the suite never loads it) and pass `now` explicitly to reminder/window
 `SUBMISSION_CHANNELS=gas:manual,water:manual`, `SMS_GATEWAY_URL` (empty → deep link only),
 `OCR_MAX_LONG_SIDE`, `DELTA_SPIKE_K`, `DELTA_ABS_CAP`, `METER_WINDOW_DAYS`,
 `METER_SUBMIT_FROM_DAY` (28), `METER_EARLY_SUBMIT_ATTEMPTS` (3).
-**Voice:** `STT_PROVIDER` (whisper|none), `WHISPER_MODEL` (base; small for better
-accuracy), `WHISPER_COMPUTE_TYPE` (int8), `WHISPER_LANGUAGE` (uk), `STT_TIMEOUT_SECONDS`.
+**Voice:** `STT_PROVIDER` (whisper|none), `WHISPER_MODEL` (small default; base to save
+RAM), `WHISPER_COMPUTE_TYPE` (int8), `WHISPER_LANGUAGE` (uk), `STT_TIMEOUT_SECONDS`.
 
 ## Conventions
 - Conventional commits, one logical change each.
