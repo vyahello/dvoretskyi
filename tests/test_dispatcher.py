@@ -101,3 +101,40 @@ async def test_unknown_tool_ignored(session, providers):
     reply = await dispatcher.handle_message("хочу телепорт", session, llm)
     assert reply.text == "Гм."
     assert reply.error is not None
+
+
+async def test_promise_without_tool_triggers_one_retry(session, providers):
+    # «давай по воді» → model stalls with a promise and no tool; the guard re-asks once
+    # and the second answer actually calls a tool, so the user gets data not a preamble.
+    llm = FakeLLMProvider(
+        [
+            Decision(tool=None, args={}, message="Зараз підніму показники, секунду. 🎩"),
+            Decision(tool="get_unpaid", args={}, message="Ось що відкрите."),
+        ]
+    )
+    reply = await dispatcher.handle_message("давай по воді", session, llm)
+    assert reply.tool == "get_unpaid"  # it retried into a real tool
+    assert len(llm.calls) == 2  # exactly one retry
+    assert "СИСТЕМА" in llm.calls[1][0]  # the corrective nudge rode the second prompt
+
+
+async def test_promise_retry_does_not_loop(session, providers):
+    # If the model keeps promising without a tool, we retry only once and surface the
+    # message — never an infinite re-ask loop.
+    llm = FakeLLMProvider(
+        [Decision(tool=None, args={}, message="Зараз гляну, хвилинку.")]
+    )
+    reply = await dispatcher.handle_message("а по газу?", session, llm)
+    assert reply.tool is None
+    assert reply.text == "Зараз гляну, хвилинку."
+    assert len(llm.calls) == 2  # retried once, then gave up gracefully
+
+
+async def test_plain_no_tool_reply_does_not_retry(session, providers):
+    # A normal no-tool answer (no «зараз гляну» promise) must NOT trigger the retry.
+    llm = FakeLLMProvider(
+        [Decision(tool=None, args={}, message="Усе закрито — питань нема.")]
+    )
+    reply = await dispatcher.handle_message("як справи?", session, llm)
+    assert reply.text == "Усе закрито — питань нема."
+    assert len(llm.calls) == 1  # no needless second call

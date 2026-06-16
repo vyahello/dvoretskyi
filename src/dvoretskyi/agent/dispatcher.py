@@ -8,6 +8,7 @@ fabricate tool *results*.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -20,6 +21,26 @@ from dvoretskyi.agent.tools import ToolError
 from dvoretskyi.db.models import MeterReading, MeterStatus, Payment, Provider
 
 log = logging.getLogger(__name__)
+
+# A reply that *promises* to fetch something («зараз гляну», «підніму показники»,
+# «секунду») but carries no tool is a dead-end — the bot can't call back, so the user
+# is left with a preamble and no data. When we see this shape we re-ask the model once
+# (below), telling it to actually call the tool or answer in full without promises.
+_ACTION_PROMISE_RE = re.compile(
+    r"гля[нм]|підні[мж]|підтягн|пораху|зведу|за мить|секунд|хвилин|зачекай|момент",
+    re.IGNORECASE,
+)
+_RETRY_NUDGE = (
+    "\n\n[СИСТЕМА: твоя попередня відповідь лише пообіцяла дію (напр. «зараз гляну»), "
+    "але не викликала інструмент — користувач лишиться без даних. Зараз АБО виклич "
+    "потрібний інструмент (tool) з аргументами, АБО дай повну відповідь одразу, без "
+    "обіцянок «зараз гляну».]"
+)
+
+
+def _promises_action(message: str) -> bool:
+    """True if the persona line promises a fetch it never delivered (no tool)."""
+    return bool(_ACTION_PROMISE_RE.search(message or ""))
 
 
 @dataclass
@@ -108,6 +129,13 @@ async def handle_message(
         # against its own previous line instead of restarting from a blank slate.
         context["recent_dialogue"] = history
     decision: Decision = await llm.decide(user_text, context)
+
+    # Guard against a stalled promise: if the reply pledges to look something up but
+    # picked no tool, re-ask once so the model either calls the tool or answers in full.
+    # (This is what dead-ended «давай по воді» → «зараз підніму показники» with no data.)
+    if not decision.tool and _promises_action(decision.message):
+        log.info("LLM promised an action without a tool — re-asking once")
+        decision = await llm.decide(user_text + _RETRY_NUDGE, context)
 
     # No tool → the persona reply stands on its own.
     if not decision.tool:
