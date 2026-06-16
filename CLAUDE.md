@@ -38,9 +38,9 @@ Auth Claude Code via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
 - `bot/` — aiogram 3 bot, allowlist middleware, slash commands (`/start /unpaid
   /stats /help` — deterministic, registered before the free-text catch-all and
   mirrored via `set_my_commands`), text + callback handlers, **photo handler**
-  (`F.photo` → meter pipeline), **voice handler** (`F.voice` → transcribe → echo
-  «🎙 Почув: …» → `_respond_to_text` = the same agent path as text), keyboards, and
-  the webhook→Telegram notifier.
+  (`F.photo` → meter pipeline), **voice handler** (`F.voice` → transcribe →
+  `_respond_to_text` = the same agent path as text, with an `on_progress` line instead of
+  echoing the user), keyboards, and the webhook→Telegram notifier.
 - `reminders/` — APScheduler daily payment **and** meter nudges (Redis jobstore,
   memory fallback).
 - `app.py` — FastAPI; lifespan starts bot long-polling + scheduler + notifier.
@@ -112,12 +112,16 @@ zero / spike vs history → `needs_confirm`) → store `MeterReading` → submit
 ## Voice (L2.5)
 Send the bot a **voice note** → `F.voice` handler downloads the OGG to the private media
 dir, transcribes it locally (faster-whisper via `agent/transcription.py`; ffmpeg decodes
-Opus), **echoes** «🎙 Почув: „…"» so a misrecognition is visible, then feeds the
-transcript into `_respond_to_text` — the **exact same agent path** as a typed message, so
-stats/unpaid/balance/deletes all work for free. The audio file is deleted right after
-(transient; bytes never logged). Empty/failed transcript → «не розчув, напиши текстом».
-**Meter values stay photo-only** — STT misreads digits, so a voice turn can ask or act but
-never files a reading; destructive actions (delete) keep their existing confirm-tap.
+Opus), then feeds the transcript into `_respond_to_text` — the **exact same agent path** as
+a typed message, so stats/unpaid/balance/deletes all work for free. **No verbatim echo** of
+the user's words: instead, once the agent picks a tool the bot sends a short, natural,
+topic-aware «I'm on it» line (`dispatcher._progress_line` via the `on_progress` callback —
+«Зазираю в кабінет інтернету…», «Підіймаю показники газу…»; varied, deterministic). When a
+progress line is sent the reply carries **just the data** (no «зараз гляну» preamble to
+double it). A plain chat reply (no tool) just answers — no progress line. The audio file is
+deleted right after (transient; bytes never logged). Empty/failed transcript → «не розчув,
+напиши текстом». **Meter values stay photo-only** — STT misreads digits, so a voice turn
+can ask or act but never files a reading; destructive actions (delete) keep their confirm-tap.
 
 ## Run
 ```bash
@@ -130,7 +134,7 @@ The mono webhook must be reachable over public HTTPS at
 
 ## Test, lint, types
 ```bash
-pytest -q                       # 154 tests, in-memory SQLite, no network, no API key
+pytest -q                       # 156 tests, in-memory SQLite, no network, no API key
 ruff check src tests            # lint (E,W,F,I,UP,B)
 ruff format src tests           # format (black-compatible; the project standard)
 mypy                            # type-check src/ (config in pyproject)

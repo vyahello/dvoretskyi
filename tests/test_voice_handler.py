@@ -27,13 +27,14 @@ def _patch_voice(monkeypatch, transcript: str) -> FakeTranscriptionProvider:
     return stt
 
 
-async def test_voice_echoes_then_routes_transcript(engine, monkeypatch):
+async def test_voice_routes_transcript_without_echoing_it(engine, monkeypatch):
     stt = _patch_voice(monkeypatch, "що треба заплатити?")
 
-    captured: list[str] = []
+    captured: dict = {}
 
-    async def fake_respond(message, text):
-        captured.append(text)
+    async def fake_respond(message, text, on_progress=None):
+        captured["text"] = text
+        captured["on_progress"] = on_progress
         await message.answer("(відповідь агента)")
 
     monkeypatch.setattr(bot_app, "_respond_to_text", fake_respond)
@@ -42,16 +43,23 @@ async def test_voice_echoes_then_routes_transcript(engine, monkeypatch):
     await bot_app.on_voice(msg)
 
     assert stt.calls, "transcription should have run once"
-    # First reply echoes what was heard; then the transcript is routed to the agent.
-    assert msg.answers[0][0] == "🎙 Почув: «що треба заплатити?»"
-    assert captured == ["що треба заплатити?"]
+    # The transcript is routed to the agent…
+    assert captured["text"] == "що треба заплатити?"
+    # …with a progress callback (the natural «I'm on it» line replaces the echo)…
+    assert callable(captured["on_progress"])
+    # …and the bot never echoes the user's words back verbatim.
+    assert all("🎙 Почув" not in text for text, _ in msg.answers)
 
 
 async def test_voice_unintelligible_asks_to_retry(engine, monkeypatch):
     _patch_voice(monkeypatch, "")  # empty transcript = could not understand
 
     routed: list[str] = []
-    monkeypatch.setattr(bot_app, "_respond_to_text", lambda m, t: routed.append(t))
+
+    async def fake_respond(message, text, on_progress=None):
+        routed.append(text)
+
+    monkeypatch.setattr(bot_app, "_respond_to_text", fake_respond)
 
     msg = FakeVoiceMessage()
     await bot_app.on_voice(msg)

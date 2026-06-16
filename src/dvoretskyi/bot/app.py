@@ -409,13 +409,22 @@ async def _thinking(message: Message) -> AsyncIterator[None]:
 _DIALOGUE: deque[dict[str, str]] = deque(maxlen=6)
 
 
-async def _respond_to_text(message: Message, user_text: str) -> None:
+async def _respond_to_text(
+    message: Message,
+    user_text: str,
+    on_progress: Callable[[str], Awaitable[None]] | None = None,
+) -> None:
     """Run one free-text turn through the agent and render the reply (buttons + chart).
-    Shared by the text handler and the voice handler (voice = transcript → here)."""
+    Shared by the text handler and the voice handler. `on_progress` (voice) sends a short
+    natural «I'm on it» line before the tool runs, instead of echoing the user's words."""
     try:
         async with _thinking(message), session_scope() as session:
             reply = await agent_dispatcher.handle_message(
-                user_text, session, get_provider(), history=list(_DIALOGUE)
+                user_text,
+                session,
+                get_provider(),
+                history=list(_DIALOGUE),
+                on_progress=on_progress,
             )
     except Exception:
         # Anything from context-building, the LLM path, or the DB lands here.
@@ -743,9 +752,14 @@ async def on_voice(message: Message) -> None:
     if not transcript:
         await message.answer("Не розчув голосове — спробуй ще раз або напиши текстом.")
         return
-    # Echo what I heard first, so a misrecognition is obvious before I act on it.
-    await message.answer(f"🎙 Почув: «{html.escape(transcript)}»")
-    await _respond_to_text(message, transcript)
+
+    # No verbatim echo of the user's words. Instead, once the agent picks a tool it sends
+    # a short natural «I'm on it» line («зазираю в кабінет інтернету…») — like a real
+    # assistant, not a transcription mirror. A plain chat reply (no tool) just answers.
+    async def _say_progress(line: str) -> None:
+        await message.answer(line)
+
+    await _respond_to_text(message, transcript, on_progress=_say_progress)
 
 
 @router.callback_query(F.data.startswith("m:"))

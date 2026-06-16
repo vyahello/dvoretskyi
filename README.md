@@ -89,8 +89,10 @@ Telegram menu (also published in code via `set_my_commands`): `/start`, `/unpaid
 text handled by the agent (e.g. «що треба заплатити?»). Send a **photo of a meter**
 to record a reading (gas/water) — the bot routes, OCRs, validates, and tells you how
 to submit. You can also send a **voice note**: it's transcribed locally (faster-whisper,
-on-box — audio is deleted right after), echoed back («🎙 Почув: …»), then handled like a
-typed message. Meter values stay photo-only (speech misreads digits).
+on-box — audio is deleted right after), then handled like a typed message. Instead of
+echoing your words back, the butler sends a short natural «I'm on it» line
+(«зазираю в кабінет інтернету…») once it knows what you want. Meter values stay
+photo-only (speech misreads digits).
 
 ## How it works
 - **Webhook** → idempotent (by `mono_tx_id`), outflow-only. Matches the description
@@ -119,9 +121,11 @@ typed message. Meter values stay photo-only (speech misreads digits).
   once to a local cache and load lazily into RAM on the first voice note (cached for the
   process lifetime); inference runs off the event loop (`asyncio.to_thread`) with a
   timeout so the bot never blocks. Audio is deleted right after; bytes are never logged.
-  The bot **echoes** «🎙 Почув: …» so a misrecognition is visible before it acts. Meter
-  *values* stay photo-only (speech misreads digits); destructive actions keep their
-  confirm-tap. Kill-switch: `STT_PROVIDER=none`.
+  Rather than echoing your words back, once the agent picks a tool the bot sends a short,
+  natural, topic-aware «I'm on it» line («Зазираю в кабінет інтернету…», «Підіймаю
+  показники газу…») and the answer then carries just the data. Meter *values* stay
+  photo-only (speech misreads digits); destructive actions keep their confirm-tap.
+  Kill-switch: `STT_PROVIDER=none`.
 
   ```
   voice note (OGG/Opus)
@@ -135,17 +139,15 @@ typed message. Meter values stay photo-only (speech misreads digits).
         │   • model loaded once, cached on the class
         │   • asyncio.to_thread + timeout  (CPU-bound, off the loop)
         ▼
-  transcript ──► "🎙 Почув: «…»"   (echo first — catch misrecognition)
-        │
-        ▼
-  _respond_to_text(transcript)      ◄── SAME path as typed text
+  transcript ──► _respond_to_text(transcript)   ◄── SAME path as typed text
         │
         ▼
   agent_dispatcher.handle_message
         │   LLM (Claude) returns JSON {tool, args, message}
+        │   tool picked? → on_progress: "Зазираю в кабінет інтернету…"  (no echo)
         │   Python runs the tool deterministically (TOOLS registry)
         ▼
-  reply text  (+ pay button / delete-confirm tap / PNG chart)
+  reply text = just the data  (+ pay button / delete-confirm tap / PNG chart)
   ```
 - **Reminders:** daily jobs nudge for (1) **payments** inside the due-day window
   (escalating near the deadline), (2) **meters** inside the submission window (the last
@@ -159,7 +161,7 @@ typed message. Meter values stay photo-only (speech misreads digits).
 
 ## Test & static analysis
 ```bash
-pytest -q              # 154 tests, in-memory SQLite, no network, no API key needed
+pytest -q              # 156 tests, in-memory SQLite, no network, no API key needed
 ruff check src tests   # lint (E,W,F,I,UP,B)
 ruff format src tests  # format (black-compatible; project standard)
 mypy                   # type-check src/

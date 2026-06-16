@@ -8,7 +8,9 @@ fabricate tool *results*.
 from __future__ import annotations
 
 import logging
+import random
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -41,6 +43,72 @@ _RETRY_NUDGE = (
 def _promises_action(message: str) -> bool:
     """True if the persona line promises a fetch it never delivered (no tool)."""
     return bool(_ACTION_PROMISE_RE.search(message or ""))
+
+
+def _topic(args: dict) -> str:
+    """A short noun for the thing being looked up, taken from a provider_name arg, so the
+    progress line can name it («…показники газу»). Empty when there's nothing to name."""
+    name = str((args or {}).get("provider_name") or "").casefold()
+    if "інтернет" in name or "gigabit" in name:
+        return "інтернет"
+    if "мобільн" in name:
+        return "мобільний"
+    if "газ" in name:
+        return "газ"
+    if "вод" in name:
+        return "воду"
+    if "світл" in name or "електро" in name:
+        return "світло"
+    if "дах" in name or "кварт" in name:
+        return "квартплату"
+    return ""
+
+
+def _progress_line(tool: str, args: dict) -> str:
+    """A short, natural «I'm on it» line in the butler's voice — sent before the work so
+    the reply doesn't echo the user's words back. Topic-aware where we can name the thing,
+    varied so repeated asks never read like a canned autoreply."""
+    topic = _topic(args)
+    if tool == "get_provider_balance":
+        if topic == "мобільний":
+            return random.choice(
+                ["Готую посилання на мобільний…", "Збираю лінк на поповнення…"]
+            )
+        return random.choice(
+            [
+                "Зазираю в кабінет інтернету…",
+                "Дивлюся баланс інтернету…",
+                "Перевіряю рахунок Gigabit+…",
+            ]
+        )
+    if tool == "get_meter_history":
+        tail = f" {topic}" if topic else ""
+        return random.choice(
+            [f"Підіймаю показники{tail}…", f"Дивлюся на лічильник{tail}…"]
+        )
+    if tool == "get_unpaid":
+        return random.choice(
+            [
+                "Гляну, що ще відкрито…",
+                "Дивлюся, що лишилось цього місяця…",
+                "Зараз перевірю рахунки…",
+            ]
+        )
+    if tool == "get_stats":
+        return random.choice(
+            ["Зводжу цифри…", "Підбиваю витрати…", "Рахую, секунду…"]
+        )
+    if tool == "log_payment_manual":
+        return random.choice(["Записую платіж…", "Фіксую…"])
+    if tool == "categorize_payment":
+        return "Розношу платіж по полицях…"
+    if tool == "snooze_reminder":
+        return "Відкладаю нагадування…"
+    if tool == "confirm_meter_reading":
+        return "Підтверджую показник…"
+    if tool == "delete_meter_reading":
+        return "Гляну, що саме прибрати…"
+    return random.choice(["Хвилинку…", "Зараз гляну…"])
 
 
 @dataclass
@@ -122,6 +190,7 @@ async def handle_message(
     llm: LLMProvider,
     *,
     history: list[dict] | None = None,
+    on_progress: Callable[[str], Awaitable[None]] | None = None,
 ) -> Reply:
     context = await build_context(session)
     if history:
@@ -145,6 +214,11 @@ async def handle_message(
     if tool_fn is None:
         log.warning("LLM chose unknown tool %r; ignoring", decision.tool)
         return Reply(text=decision.message, error=f"unknown tool {decision.tool}")
+
+    # Acknowledge naturally before doing the work («зазираю в кабінет інтернету…»)
+    # instead of echoing the user's words back. Only when the caller opted in (voice).
+    if on_progress is not None:
+        await on_progress(_progress_line(decision.tool, decision.args))
 
     try:
         result = await tool_fn(session, **decision.args)
@@ -172,9 +246,14 @@ async def handle_message(
     # return no "message" and are unaffected.
     chart_path = result.get("chart_path") if isinstance(result, dict) else None
     result_msg = result.get("message") if isinstance(result, dict) else None
-    text = decision.message or ""
-    if result_msg:
-        text = f"{text}\n\n{result_msg}".strip()
+    if on_progress is not None:
+        # We already acknowledged with a progress line, so the reply is just the payload —
+        # no «зараз гляну» preamble to double up on what we just said.
+        text = (result_msg or decision.message or "").strip()
+    else:
+        text = decision.message or ""
+        if result_msg:
+            text = f"{text}\n\n{result_msg}".strip()
     return Reply(
         text=text,
         chart_path=chart_path,

@@ -138,3 +138,49 @@ async def test_plain_no_tool_reply_does_not_retry(session, providers):
     reply = await dispatcher.handle_message("як справи?", session, llm)
     assert reply.text == "Усе закрито — питань нема."
     assert len(llm.calls) == 1  # no needless second call
+
+
+async def test_progress_line_sent_and_preamble_dropped(session, providers, monkeypatch):
+    # With on_progress (voice), the bot first says a natural «I'm on it» line, and the
+    # answer carries just the data — no «Гляну баланс» preamble doubling it up.
+    from dvoretskyi.agent import tools as tools_mod
+
+    async def fake_balance(session, **kw):
+        return {"ok": True, "message": "Усе гаразд: 400 ₴ на рахунку."}
+
+    monkeypatch.setitem(tools_mod.TOOLS, "get_provider_balance", fake_balance)
+    llm = FakeLLMProvider(
+        [
+            Decision(
+                tool="get_provider_balance",
+                args={"provider_name": "Інтернет (Gigabit+)"},
+                message="Гляну баланс.",
+            )
+        ]
+    )
+    progress: list[str] = []
+
+    async def on_progress(line: str) -> None:
+        progress.append(line)
+
+    reply = await dispatcher.handle_message(
+        "скільки на інтернеті?", session, llm, on_progress=on_progress
+    )
+    assert len(progress) == 1 and progress[0]  # one natural acknowledgment
+    assert reply.text == "Усе гаразд: 400 ₴ на рахунку."  # preamble dropped
+    assert "Гляну баланс." not in reply.text
+
+
+async def test_progress_not_sent_for_a_plain_chat_reply(session, providers):
+    # A joke / chat answer (no tool) must not trigger a progress line.
+    llm = FakeLLMProvider([Decision(tool=None, args={}, message="Ось вам жарт. 🎩")])
+    progress: list[str] = []
+
+    async def on_progress(line: str) -> None:
+        progress.append(line)
+
+    reply = await dispatcher.handle_message(
+        "розкажи жарт", session, llm, on_progress=on_progress
+    )
+    assert progress == []  # nothing to be «on», so no «I'm on it» line
+    assert reply.text == "Ось вам жарт. 🎩"
