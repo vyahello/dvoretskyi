@@ -112,6 +112,41 @@ typed message. Meter values stay photo-only (speech misreads digits).
   submit (gas→SMS 4647/gas.ua, water→ВК) and the **«Відправив ✓»** tap marks it sent.
   **No auto-submission** unless a channel is enabled in `SUBMISSION_CHANNELS`. OCR
   failure → it asks you to retype, never guesses.
+- **Voice notes:** send a **voice message** → it's transcribed **locally** and handled
+  exactly like a typed message. Whisper here is **not a server** — `faster-whisper` is a
+  Python library that runs **in the bot's own process** (CTranslate2, a C++ inference
+  engine with Python bindings); no daemon, no HTTP, no port. The model weights download
+  once to a local cache and load lazily into RAM on the first voice note (cached for the
+  process lifetime); inference runs off the event loop (`asyncio.to_thread`) with a
+  timeout so the bot never blocks. Audio is deleted right after; bytes are never logged.
+  The bot **echoes** «🎙 Почув: …» so a misrecognition is visible before it acts. Meter
+  *values* stay photo-only (speech misreads digits); destructive actions keep their
+  confirm-tap. Kill-switch: `STT_PROVIDER=none`.
+
+  ```
+  voice note (OGG/Opus)
+        │  aiogram  @router.message(F.voice)
+        ▼
+  _download_voice ──► private tmp dir (deleted in `finally`)
+        │
+        ▼
+  get_transcription_provider().transcribe(path)
+        │   WhisperTranscriptionProvider  (faster-whisper, IN-PROCESS)
+        │   • model loaded once, cached on the class
+        │   • asyncio.to_thread + timeout  (CPU-bound, off the loop)
+        ▼
+  transcript ──► "🎙 Почув: «…»"   (echo first — catch misrecognition)
+        │
+        ▼
+  _respond_to_text(transcript)      ◄── SAME path as typed text
+        │
+        ▼
+  agent_dispatcher.handle_message
+        │   LLM (Claude) returns JSON {tool, args, message}
+        │   Python runs the tool deterministically (TOOLS registry)
+        ▼
+  reply text  (+ pay button / delete-confirm tap / PNG chart)
+  ```
 - **Reminders:** daily jobs nudge for (1) **payments** inside the due-day window
   (escalating near the deadline), (2) **meters** inside the submission window (the last
   `meter_window` days of the month), and (3) a **low Gigabit+ balance** (below the
@@ -124,14 +159,15 @@ typed message. Meter values stay photo-only (speech misreads digits).
 
 ## Test & static analysis
 ```bash
-pytest -q              # 100 tests, in-memory SQLite, no network, no API key needed
+pytest -q              # 147 tests, in-memory SQLite, no network, no API key needed
 ruff check src tests   # lint (E,W,F,I,UP,B)
 ruff format src tests  # format (black-compatible; project standard)
 mypy                   # type-check src/
 ```
-All four are green on a clean tree. Tests use a fake `LLMProvider` and a fake
-`VisionProvider` (no real `claude` calls) and pass time explicitly to the reminder /
-window logic.
+All four are green on a clean tree. Tests use a fake `LLMProvider`, a fake
+`VisionProvider` and a fake `TranscriptionProvider` (no real `claude`/Whisper calls;
+faster-whisper is imported lazily so the suite never loads it) and pass time explicitly
+to the reminder / window logic.
 
 ## Repo map
 ```
