@@ -951,6 +951,54 @@ async def get_meter_history(
 # --- provider balance (L2) -------------------------------------------------
 
 
+# Varied phrasings so a repeated «Баланс інтернету» tap never reads like a canned
+# autoreply. The numbers (balance/fee/last top-up) stay factual; only the wording rolls.
+def _balance_ok_message(balance: str, last_topup: str | None) -> str:
+    head = random.choice(
+        [
+            f"Платити не треба — баланс {balance} ₴ спокійно перекриває абонплату",
+            f"Усе гаразд: {balance} ₴ на рахунку, цього стане надовго",
+            f"Інтернет проплачений наперед — {balance} ₴, можна про нього не думати",
+            f"Баланс {balance} ₴ — більш ніж досить, не чіпаємо",
+            f"З інтернетом тиша: {balance} ₴ у запасі, без приводу для хвилювань",
+        ]
+    )
+    if not last_topup:
+        return head + "."
+    tail = random.choice(
+        [
+            f". Останнє поповнення — {last_topup}.",
+            f" (поповнював {last_topup}).",
+            f"; від {last_topup} баланс не чіпав.",
+        ]
+    )
+    return head + tail
+
+
+def _balance_low_message(balance: str, fee: str) -> str:
+    return random.choice(
+        [
+            f"Час поповнити: {balance} ₴ на рахунку — менше за абонплату {fee} ₴.",
+            f"Інтернет просить уваги — баланс {balance} ₴ не дотягує до {fee} ₴.",
+            f"Треба докинути: {balance} ₴ замало, абонплата {fee} ₴.",
+            f"Баланс {balance} ₴ просів нижче за {fee} ₴ — варто поповнити.",
+        ]
+    )
+
+
+def _mobile_balance_message() -> str:
+    return random.choice(
+        [
+            "Мобільний списується сам (запланований платіж monobank). Захочеш докинути "
+            "вручну — ось посилання:",
+            "За мобільний не клопочись — autopay monobank усе зробить. Та якщо кортить "
+            "поповнити самому:",
+            "Мобільний на автопілоті (monobank спише за планом). Ручне поповнення — тут:",
+            "Мобільний оплачується автоматично. Як треба поповнити вручну — тримай лінк:",
+        ]
+    )
+
+
 async def get_provider_balance(session: AsyncSession, provider_name: str) -> dict:
     """Provider balance / top-up link. Gigabit+ → scraped balance + «треба платити?».
     Mobile → just a top-up link (no balance API). Others → not configured."""
@@ -969,10 +1017,7 @@ async def get_provider_balance(session: AsyncSession, provider_name: str) -> dic
             "provider": prov.name,
             "pay_link": mobile_pay_link(),
             "pay_label": "💳 Поповнити мобільний",
-            "message": (
-                "Мобільний оплачується автоматично (запланований платіж у monobank). "
-                "Якщо хочеш поповнити вручну — ось посилання:"
-            ),
+            "message": _mobile_balance_message(),
         }
 
     if "gigabit" not in name:
@@ -999,18 +1044,15 @@ async def get_provider_balance(session: AsyncSession, provider_name: str) -> dic
             "need_to_pay": True,
             "pay_link": gigabit_pay_link(fee),  # rendered as a button, not raw URL
             "pay_label": f"💳 Поповнити {fee_label} ₴",
-            "message": (
-                f"Треба поповнити: баланс {bal.balance} ₴ — менший за абонплату {fee} ₴."
-            ),
+            "message": _balance_low_message(str(bal.balance), str(fee)),
         }
-    tail = f", останнє поповнення {bal.last_topup}" if bal.last_topup else ""
     return {
         "ok": True,
         "provider": prov.name,
         "balance": str(bal.balance),
         "monthly_fee": str(fee),
         "need_to_pay": False,
-        "message": f"Платити не треба — баланс {bal.balance} ₴ достатній{tail}.",
+        "message": _balance_ok_message(str(bal.balance), bal.last_topup),
     }
 
 

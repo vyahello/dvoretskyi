@@ -197,3 +197,19 @@ async def test_balance_unsupported_provider_raises(session, providers):
 
     with pytest.raises(NotImplementedError):
         await tools.get_provider_balance(session, "Газ (постачання)")
+
+
+def test_balance_messages_vary_but_keep_numbers():
+    """Repeated taps must not read like a canned autoreply — wording rolls,
+    facts (balance / fee / last top-up) stay put."""
+    from dvoretskyi.agent import tools
+
+    ok = {tools._balance_ok_message("400.00", "2026-06-14") for _ in range(40)}
+    assert len(ok) > 1  # more than one phrasing surfaces
+    assert all("400.00" in m and "2026-06-14" in m for m in ok)
+
+    low = {tools._balance_low_message("120.00", "200.00") for _ in range(40)}
+    assert len(low) > 1
+    assert all("120.00" in m and "200.00" in m for m in low)
+
+    assert len({tools._mobile_balance_message() for _ in range(40)}) > 1
