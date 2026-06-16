@@ -84,9 +84,13 @@ zero / spike vs history → `needs_confirm`) → store `MeterReading` → submit
   window label is `28–{last-day}` computed from the calendar (handles 28/29/30/31).
 - **«Мої показники» (`menu_meters`) merges two sources:** the infolviv portal record
   (authoritative, filed) **and** `_drafts_block` — photo readings stored but not yet
-  filed (`validated`/`needs_confirm`). Every reading is remembered, but per meter only the
-  **freshest** is shown/submitted (older ones counted as «+ще N старіших»). Portal
-  unreachable → fall back to the local `_local_journal`.
+  filed (`validated`/`needs_confirm`). Portal unreachable → fall back to `_local_journal`.
+- **One draft per meter:** a fresh photo of a meter **supersedes** that meter's previous
+  un-filed draft (`_supersede_pending` hard-deletes earlier non-`submitted` readings of
+  the same provider when a new one is stored). So the journal never piles up duplicates,
+  and the freshest is what gets submitted. `submitted` readings are the permanent record
+  — never superseded. «видали показники з фото» (no provider) wipes all drafts after a
+  confirm tap; name a meter to scope it.
 - `_format_unpaid` phrasings (all-clear / mobile-autopay note) are **randomized** so the
   deterministic `/unpaid` reply never reads like a canned autoreply.
 - Legacy per-provider `SubmissionChannel`s (`ManualAssistChannel` default, Sms/WebForm

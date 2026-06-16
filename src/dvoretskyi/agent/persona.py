@@ -88,7 +88,7 @@ TOOL_CATALOG = """\
 - categorize_payment(mono_tx_id: str, provider_name: str) — віднести нерозпізнаний платіж до провайдера.
 - snooze_reminder(provider_name: str, until: "YYYY-MM-DD"|N) — відкласти нагадування.
 - confirm_meter_reading(reading_id: int) — підтвердити сумнівний показник лічильника (далі — передати).
-- delete_meter_reading(provider_name: str) — видалити з пам'яті останній показник лічильника (вода/газ), якщо здали помилкове число.
+- delete_meter_reading(provider_name?: str) — видалити збережені з фото показники (бот спершу перепитає й чекатиме підтвердження). provider_name НЕОБОВ'ЯЗКОВИЙ: «видали показники / усі показники / те, що я слав по фото» → виклич БЕЗ provider_name (зітреться все). Передавай provider_name ЛИШЕ коли названо конкретний лічильник: «видали показник газу» → provider_name="Газ (постачання)".
 - get_meter_history(provider_name: str) — останні показники й споживання.
 - get_provider_balance(provider_name: str) — Інтернет (Gigabit+): баланс і чи треба поповнювати; Мобільний: лінк на поповнення.
 Показники лічильника здаються фотографією (газ, вода) — це окремий потік, не через цей JSON.

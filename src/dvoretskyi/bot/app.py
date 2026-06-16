@@ -310,12 +310,12 @@ async def _local_journal() -> str:
 
 
 async def _drafts_block() -> str | None:
-    """Photo readings I've stored but NOT yet filed on the portal.
+    """Photo readings I've stored but NOT yet filed on the portal — at most one per meter.
 
     The portal view shows only what's already filed; this surfaces the ones still in my
-    pocket so «Мої показники» reflects everything I remember. I keep every reading, but
-    per meter only the freshest gets submitted — so I show the freshest and just note how
-    many older ones sit behind it.
+    pocket so «Мої показники» reflects everything. A fresh photo supersedes the previous
+    draft of the same meter (see `_supersede_pending`), so there's never a confusing pile
+    of duplicates — just the freshest reading per meter, ready for the date gate.
     """
     async with session_scope() as session:
         rows = (
@@ -337,17 +337,12 @@ async def _drafts_block() -> str | None:
         if not rows:
             return None
         provs = {p.id: p for p in (await session.execute(select(Provider))).scalars()}
+    # Defensive de-dup: freshest per meter (supersede already keeps it to one).
     freshest: dict[int, MeterReading] = {}
-    older: dict[int, int] = {}
     for r in rows:
-        pid = r.provider_id
-        if pid is None:
-            continue
-        if pid not in freshest:
-            freshest[pid] = r
-        else:
-            older[pid] = older.get(pid, 0) + 1
-    lines = ["📝 З фото (ще не на порталі) — подам найсвіжіший:"]
+        if r.provider_id is not None and r.provider_id not in freshest:
+            freshest[r.provider_id] = r
+    lines = ["📝 Збережено з фото (ще не подано на портал):"]
     for pid, r in freshest.items():
         prov = provs.get(pid)
         label = (
@@ -356,8 +351,7 @@ async def _drafts_block() -> str | None:
         state = (
             "чекає підтвердження" if r.status is MeterStatus.needs_confirm else "записав"
         )
-        more = f" (+ще {older[pid]} старіших у пам'яті)" if older.get(pid) else ""
-        lines.append(f"{html.escape(label)} — {r.value} ({state}){more}")
+        lines.append(f"{html.escape(label)} — {r.value} ({state})")
     return "\n".join(lines)
 
 

@@ -524,6 +524,34 @@ async def _history_values(session: AsyncSession, provider_id: int) -> list[Decim
     return [r.value for r in rows if r.value is not None]
 
 
+async def _supersede_pending(
+    session: AsyncSession, provider_id: int, keep_id: int | None
+) -> None:
+    """Drop this meter's older un-filed readings — we keep & submit only the freshest.
+
+    A fresh photo of a meter replaces any earlier draft of the SAME meter that hasn't
+    been filed yet, so the journal never accumulates stale duplicates (that confused the
+    user: «виглядає як 3 фото»). Submitted readings are the permanent record — untouched.
+    """
+    rows = (
+        (
+            await session.execute(
+                select(MeterReading).where(
+                    MeterReading.provider_id == provider_id,
+                    MeterReading.id != keep_id,
+                    MeterReading.status != MeterStatus.submitted,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for r in rows:
+        await session.delete(r)
+    if rows:
+        await session.flush()
+
+
 async def _run_submission(
     session: AsyncSession, provider: Provider, reading: MeterReading
 ) -> dict:
@@ -642,6 +670,8 @@ async def submit_meter_reading(
     reading.consumption_delta = verdict.consumption
     reading.status = verdict.status
     await session.flush()
+    # A fresh reading for this meter supersedes any earlier un-filed draft of it.
+    await _supersede_pending(session, prov.id, reading.id)
 
     if not verdict.ok:
         return {

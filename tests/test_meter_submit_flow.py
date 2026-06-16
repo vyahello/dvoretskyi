@@ -282,6 +282,61 @@ async def test_conversational_delete_asks_before_wiping(engine, providers, sessi
     assert len((await session.execute(select(MR))).scalars().all()) == 2  # still there
 
 
+async def test_fresh_reading_supersedes_older_draft(engine, providers, session):
+    # Two photos of the SAME meter → only the freshest draft survives (no pile-up).
+    from sqlalchemy import select
+
+    from dvoretskyi.agent.tools import submit_meter_reading
+    from dvoretskyi.agent.vision import MeterRead
+    from dvoretskyi.db.models import MeterReading as MR
+
+    water = providers["Холодна вода"]
+    for val in ("100.500", "100.700"):
+        await submit_meter_reading(
+            session,
+            water.name,
+            "/tmp/fake.png",
+            read=MeterRead(value=Decimal(val), raw="", note="", kind="water"),
+            auto_submit=False,
+        )
+    rows = (await session.execute(select(MR))).scalars().all()
+    assert len(rows) == 1  # the older draft was superseded
+    assert str(rows[0].value) == "100.700"  # only the freshest is kept
+
+
+async def test_supersede_keeps_submitted_history(engine, providers, session):
+    # A filed (submitted) reading is the permanent record — a new draft must NOT wipe it.
+    from sqlalchemy import select
+
+    from dvoretskyi.agent.tools import submit_meter_reading
+    from dvoretskyi.agent.vision import MeterRead
+    from dvoretskyi.db.models import MeterReading as MR
+
+    water = providers["Холодна вода"]
+    session.add(
+        MR(
+            provider_id=water.id,
+            cycle="2026-05",
+            value=Decimal("99.000"),
+            status=MeterStatus.submitted,
+            created_at=clock.now(),
+        )
+    )
+    await session.commit()
+
+    await submit_meter_reading(
+        session,
+        water.name,
+        "/tmp/fake.png",
+        read=MeterRead(value=Decimal("100.500"), raw="", note="", kind="water"),
+        auto_submit=False,
+    )
+    rows = (await session.execute(select(MR))).scalars().all()
+    statuses = {r.status for r in rows}
+    assert MeterStatus.submitted in statuses  # filed reading preserved
+    assert len(rows) == 2
+
+
 async def test_execute_meter_delete_all_wipes(engine, providers, session):
     from sqlalchemy import select
 
