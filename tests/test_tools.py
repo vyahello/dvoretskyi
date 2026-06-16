@@ -180,3 +180,43 @@ async def test_provider_balance_still_stubbed(session, providers):
     # submit_meter_reading is implemented in Phase 2; balance reads have no source yet.
     with pytest.raises(NotImplementedError):
         await tools.get_provider_balance(session, "Газ (постачання)")
+
+
+async def test_get_meter_history_surfaces_readings_in_message(session, providers):
+    # The conversational path shows only result["message"], so get_meter_history must
+    # render the readings there — otherwise «по воді» dead-ends on a bare promise.
+    from dvoretskyi.db.models import MeterReading, MeterStatus
+
+    water = providers["Холодна вода"]
+    session.add_all(
+        [
+            MeterReading(
+                provider_id=water.id,
+                cycle="2026-05",
+                value=Decimal("95.300"),
+                status=MeterStatus.submitted,
+                created_at=clock.now(),
+            ),
+            MeterReading(
+                provider_id=water.id,
+                cycle="2026-06",
+                value=Decimal("100.500"),
+                consumption_delta=Decimal("5.200"),
+                status=MeterStatus.validated,
+                created_at=clock.now(),
+            ),
+        ]
+    )
+    await session.commit()
+
+    res = await tools.get_meter_history(session, "Холодна вода")
+    msg = res["message"]
+    assert "Холодна вода" in msg
+    assert "100.500" in msg and "95.300" in msg  # the actual readings reach the user
+    assert "спожито 5.200" in msg
+
+
+async def test_get_meter_history_empty_is_friendly(session, providers):
+    res = await tools.get_meter_history(session, "Холодна вода")
+    assert res["readings"] == []
+    assert "журнал чистий" in res["message"]

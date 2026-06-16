@@ -910,6 +910,18 @@ async def execute_meter_delete(session: AsyncSession, scope: str) -> dict:
     }
 
 
+def _meter_history_message(provider: str, readings: list[dict]) -> str:
+    """Render the recent readings so the dispatcher can surface them — the conversational
+    path shows only result["message"], so without it the numbers never reach the user."""
+    if not readings:
+        return f"Поки що показників по «{provider}» нема — журнал чистий. 🔢"
+    lines = [f"🔢 {provider} — останні показники:"]
+    for r in readings:  # newest-first
+        cons = f" (спожито {r['consumption']})" if r.get("consumption") else ""
+        lines.append(f"• {clock.format_cycle(r['cycle'])}: {r.get('value') or '—'}{cons}")
+    return "\n".join(lines)
+
+
 async def get_meter_history(
     session: AsyncSession, provider_name: str, limit: int = 6
 ) -> dict:
@@ -932,19 +944,21 @@ async def get_meter_history(
         .scalars()
         .all()
     )
+    readings = [
+        {
+            "cycle": r.cycle,
+            "value": str(r.value) if r.value is not None else None,
+            "consumption": (
+                str(r.consumption_delta) if r.consumption_delta is not None else None
+            ),
+            "status": r.status.value,
+        }
+        for r in rows
+    ]
     return {
         "provider": prov.name,
-        "readings": [
-            {
-                "cycle": r.cycle,
-                "value": str(r.value) if r.value is not None else None,
-                "consumption": (
-                    str(r.consumption_delta) if r.consumption_delta is not None else None
-                ),
-                "status": r.status.value,
-            }
-            for r in rows
-        ],
+        "readings": readings,
+        "message": _meter_history_message(prov.name, readings),
     }
 
 

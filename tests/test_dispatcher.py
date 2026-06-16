@@ -171,6 +171,22 @@ async def test_progress_line_sent_and_preamble_dropped(session, providers, monke
     assert "Гляну баланс." not in reply.text
 
 
+def test_progress_lines_read_naturally_in_ukrainian():
+    # «показники води», never the broken «лічильник воду».
+    water = dispatcher._progress_line(
+        "get_meter_history", {"provider_name": "Холодна вода"}
+    )
+    assert "води" in water and "воду" not in water
+    gas = dispatcher._progress_line(
+        "get_meter_history", {"provider_name": "Газ (постачання)"}
+    )
+    assert "показники газу" in gas
+    bal = dispatcher._progress_line(
+        "get_provider_balance", {"provider_name": "Інтернет (Gigabit+)"}
+    ).casefold()
+    assert "інтернет" in bal or "gigabit" in bal
+
+
 async def test_progress_not_sent_for_a_plain_chat_reply(session, providers):
     # A joke / chat answer (no tool) must not trigger a progress line.
     llm = FakeLLMProvider([Decision(tool=None, args={}, message="Ось вам жарт. 🎩")])

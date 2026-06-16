@@ -45,22 +45,22 @@ def _promises_action(message: str) -> bool:
     return bool(_ACTION_PROMISE_RE.search(message or ""))
 
 
-def _topic(args: dict) -> str:
-    """A short noun for the thing being looked up, taken from a provider_name arg, so the
-    progress line can name it («…показники газу»). Empty when there's nothing to name."""
+def _topic_gen(args: dict) -> str:
+    """The provider as a GENITIVE modifier, so lines read naturally in Ukrainian
+    («показники води», not «лічильник воду»). Empty when there's nothing to name."""
     name = str((args or {}).get("provider_name") or "").casefold()
     if "інтернет" in name or "gigabit" in name:
-        return "інтернет"
+        return "інтернету"
     if "мобільн" in name:
-        return "мобільний"
+        return "мобільного"
     if "газ" in name:
-        return "газ"
+        return "газу"
     if "вод" in name:
-        return "воду"
+        return "води"
     if "світл" in name or "електро" in name:
-        return "світло"
+        return "світла"
     if "дах" in name or "кварт" in name:
-        return "квартплату"
+        return "квартплати"
     return ""
 
 
@@ -68,9 +68,9 @@ def _progress_line(tool: str, args: dict) -> str:
     """A short, natural «I'm on it» line in the butler's voice — sent before the work so
     the reply doesn't echo the user's words back. Topic-aware where we can name the thing,
     varied so repeated asks never read like a canned autoreply."""
-    topic = _topic(args)
+    topic = _topic_gen(args)
     if tool == "get_provider_balance":
-        if topic == "мобільний":
+        if topic == "мобільного":
             return random.choice(
                 ["Готую посилання на мобільний…", "Збираю лінк на поповнення…"]
             )
@@ -82,10 +82,11 @@ def _progress_line(tool: str, args: dict) -> str:
             ]
         )
     if tool == "get_meter_history":
-        tail = f" {topic}" if topic else ""
-        return random.choice(
-            [f"Підіймаю показники{tail}…", f"Дивлюся на лічильник{tail}…"]
-        )
+        if topic:
+            return random.choice(
+                [f"Підіймаю показники {topic}…", f"Дивлюся показники {topic}…"]
+            )
+        return random.choice(["Підіймаю показники…", "Дивлюся показники…"])
     if tool == "get_unpaid":
         return random.choice(
             [
