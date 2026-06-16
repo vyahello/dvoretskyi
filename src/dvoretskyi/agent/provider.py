@@ -143,7 +143,12 @@ class ClaudeCodeProvider(LLMProvider):
         for attempt in (1, 2):
             raw = await self._invoke(prompt)
             if raw is None:
-                break
+                # Transient failure (a 60s timeout, a non-zero exit, a slow/rate-limited
+                # call). Don't dead-end the user on the first miss — retry once; a second
+                # attempt usually rides it out. (Was `break`, which fell straight to the
+                # fallback and made an occasional slow turn look like a hard error.)
+                log.info("claude call returned nothing (attempt %s) — retrying", attempt)
+                continue
             decision = parse_decision(raw)
             if decision is not None:
                 return decision

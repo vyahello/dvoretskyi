@@ -159,7 +159,7 @@ typed message. Meter values stay photo-only (speech misreads digits).
 
 ## Test & static analysis
 ```bash
-pytest -q              # 147 tests, in-memory SQLite, no network, no API key needed
+pytest -q              # 151 tests, in-memory SQLite, no network, no API key needed
 ruff check src tests   # lint (E,W,F,I,UP,B)
 ruff format src tests  # format (black-compatible; project standard)
 mypy                   # type-check src/
