@@ -275,3 +275,27 @@ async def test_on_text_replies_on_error(engine, monkeypatch):
     msg = FakeMessage(text="що треба заплатити?")
     await on_text(msg)  # must not raise
     assert msg.answers and "заклинило" in msg.answers[0]
+
+
+async def test_on_text_passes_a_progress_callback(engine, monkeypatch):
+    # Typed asks get the same natural «I'm on it» line as voice — on_text must hand the
+    # dispatcher an on_progress callback that sends a message.
+    from dvoretskyi.agent.dispatcher import Reply
+
+    captured: dict = {}
+
+    async def fake_handle(user_text, session, llm, *, history=None, on_progress=None):
+        captured["on_progress"] = on_progress
+        if on_progress is not None:
+            await on_progress("Гляну, що ще відкрито…")
+        return Reply(text="Відкрите: вода.")
+
+    monkeypatch.setattr(bot_app.agent_dispatcher, "handle_message", fake_handle)
+
+    msg = FakeMessage(text="що треба заплатити?")
+    await on_text(msg)
+
+    assert callable(captured["on_progress"])
+    # the progress line lands first, the answer second
+    assert msg.answers[0] == "Гляну, що ще відкрито…"
+    assert "Відкрите: вода." in msg.answers[-1]

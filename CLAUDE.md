@@ -39,8 +39,9 @@ Auth Claude Code via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
   /stats /help` — deterministic, registered before the free-text catch-all and
   mirrored via `set_my_commands`), text + callback handlers, **photo handler**
   (`F.photo` → meter pipeline), **voice handler** (`F.voice` → transcribe →
-  `_respond_to_text` = the same agent path as text, with an `on_progress` line instead of
-  echoing the user), keyboards, and the webhook→Telegram notifier.
+  `_respond_to_text` = the same agent path as text), keyboards, and the webhook→Telegram
+  notifier. `_respond_to_text` (text + voice) wires an `on_progress` line so the bot says
+  a natural «I'm on it» before acting, never echoing the request back.
 - `reminders/` — APScheduler daily payment **and** meter nudges (Redis jobstore,
   memory fallback).
 - `app.py` — FastAPI; lifespan starts bot long-polling + scheduler + notifier.
@@ -116,9 +117,11 @@ Opus), then feeds the transcript into `_respond_to_text` — the **exact same ag
 a typed message, so stats/unpaid/balance/deletes all work for free. **No verbatim echo** of
 the user's words: instead, once the agent picks a tool the bot sends a short, natural,
 topic-aware «I'm on it» line (`dispatcher._progress_line` via the `on_progress` callback —
-«Зазираю в кабінет інтернету…», «Підіймаю показники газу…»; varied, deterministic). When a
-progress line is sent the reply carries **just the data** (no «зараз гляну» preamble to
-double it). A plain chat reply (no tool) just answers — no progress line. The audio file is
+«Зазираю в кабінет інтернету…», «Підіймаю показники газу…»; varied, deterministic). This
+progress line fires for **both typed and voiced** asks (`_respond_to_text` always wires
+`on_progress`). When a progress line is sent the reply carries **just the data** (no «зараз
+гляну» preamble to double it). A plain chat reply (no tool) just answers — no progress
+line. The audio file is
 deleted right after (transient; bytes never logged). Empty/failed transcript → «не розчув,
 напиши текстом». **Meter values stay photo-only** — STT misreads digits, so a voice turn
 can ask or act but never files a reading; destructive actions (delete) keep their confirm-tap.
@@ -134,7 +137,7 @@ The mono webhook must be reachable over public HTTPS at
 
 ## Test, lint, types
 ```bash
-pytest -q                       # 156 tests, in-memory SQLite, no network, no API key
+pytest -q                       # 157 tests, in-memory SQLite, no network, no API key
 ruff check src tests            # lint (E,W,F,I,UP,B)
 ruff format src tests           # format (black-compatible; the project standard)
 mypy                            # type-check src/ (config in pyproject)

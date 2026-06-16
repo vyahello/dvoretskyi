@@ -32,9 +32,8 @@ async def test_voice_routes_transcript_without_echoing_it(engine, monkeypatch):
 
     captured: dict = {}
 
-    async def fake_respond(message, text, on_progress=None):
+    async def fake_respond(message, text):
         captured["text"] = text
-        captured["on_progress"] = on_progress
         await message.answer("(відповідь агента)")
 
     monkeypatch.setattr(bot_app, "_respond_to_text", fake_respond)
@@ -43,10 +42,8 @@ async def test_voice_routes_transcript_without_echoing_it(engine, monkeypatch):
     await bot_app.on_voice(msg)
 
     assert stt.calls, "transcription should have run once"
-    # The transcript is routed to the agent…
+    # The transcript is routed to the agent (which sends its own «I'm on it» line)…
     assert captured["text"] == "що треба заплатити?"
-    # …with a progress callback (the natural «I'm on it» line replaces the echo)…
-    assert callable(captured["on_progress"])
     # …and the bot never echoes the user's words back verbatim.
     assert all("🎙 Почув" not in text for text, _ in msg.answers)
 

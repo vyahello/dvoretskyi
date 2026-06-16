@@ -409,14 +409,15 @@ async def _thinking(message: Message) -> AsyncIterator[None]:
 _DIALOGUE: deque[dict[str, str]] = deque(maxlen=6)
 
 
-async def _respond_to_text(
-    message: Message,
-    user_text: str,
-    on_progress: Callable[[str], Awaitable[None]] | None = None,
-) -> None:
+async def _respond_to_text(message: Message, user_text: str) -> None:
     """Run one free-text turn through the agent and render the reply (buttons + chart).
-    Shared by the text handler and the voice handler. `on_progress` (voice) sends a short
-    natural «I'm on it» line before the tool runs, instead of echoing the user's words."""
+    Shared by the text and voice handlers. Before the tool runs the agent sends a short,
+    natural «I'm on it» line («зазираю в кабінет інтернету…») — for both typed and voiced
+    asks — so the bot feels like a real assistant rather than echoing the request back."""
+
+    async def _say_progress(line: str) -> None:
+        await message.answer(line)
+
     try:
         async with _thinking(message), session_scope() as session:
             reply = await agent_dispatcher.handle_message(
@@ -424,7 +425,7 @@ async def _respond_to_text(
                 session,
                 get_provider(),
                 history=list(_DIALOGUE),
-                on_progress=on_progress,
+                on_progress=_say_progress,
             )
     except Exception:
         # Anything from context-building, the LLM path, or the DB lands here.
@@ -753,13 +754,9 @@ async def on_voice(message: Message) -> None:
         await message.answer("Не розчув голосове — спробуй ще раз або напиши текстом.")
         return
 
-    # No verbatim echo of the user's words. Instead, once the agent picks a tool it sends
-    # a short natural «I'm on it» line («зазираю в кабінет інтернету…») — like a real
-    # assistant, not a transcription mirror. A plain chat reply (no tool) just answers.
-    async def _say_progress(line: str) -> None:
-        await message.answer(line)
-
-    await _respond_to_text(message, transcript, on_progress=_say_progress)
+    # No verbatim echo — `_respond_to_text` sends a natural «I'm on it» line once the
+    # agent knows what to do (same as for typed asks).
+    await _respond_to_text(message, transcript)
 
 
 @router.callback_query(F.data.startswith("m:"))

@@ -86,13 +86,14 @@ dvoretskyi learn-pattern "Газ (постачання)" "naftogaz"
 Telegram menu (also published in code via `set_my_commands`): `/start`, `/unpaid`
 (open this month), `/stats` (this month's spend, as a chart when there's data),
 `/help`. Commands run **deterministically** — no LLM. Anything else you type is free
-text handled by the agent (e.g. «що треба заплатити?»). Send a **photo of a meter**
-to record a reading (gas/water) — the bot routes, OCRs, validates, and tells you how
-to submit. You can also send a **voice note**: it's transcribed locally (faster-whisper,
-on-box — audio is deleted right after), then handled like a typed message. Instead of
-echoing your words back, the butler sends a short natural «I'm on it» line
-(«зазираю в кабінет інтернету…») once it knows what you want. Meter values stay
-photo-only (speech misreads digits).
+text handled by the agent (e.g. «що треба заплатити?»). For both typed and voiced asks,
+once the butler knows what you want it sends a short natural «I'm on it» line
+(«зазираю в кабінет інтернету…») and then the answer — like a real assistant, never
+echoing your words back. Send a **photo of a meter** to record a reading (gas/water) —
+the bot routes, OCRs, validates, and tells you how to submit. You can also send a
+**voice note**: it's transcribed locally (faster-whisper, on-box — audio is deleted
+right after) and handled exactly like a typed message. Meter values stay photo-only
+(speech misreads digits).
 
 ## How it works
 - **Webhook** → idempotent (by `mono_tx_id`), outflow-only. Matches the description
@@ -161,7 +162,7 @@ photo-only (speech misreads digits).
 
 ## Test & static analysis
 ```bash
-pytest -q              # 156 tests, in-memory SQLite, no network, no API key needed
+pytest -q              # 157 tests, in-memory SQLite, no network, no API key needed
 ruff check src tests   # lint (E,W,F,I,UP,B)
 ruff format src tests  # format (black-compatible; project standard)
 mypy                   # type-check src/
