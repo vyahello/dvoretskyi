@@ -22,9 +22,12 @@ Auth Claude Code via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
   recent turns → `context["recent_dialogue"]` so the model resolves short replies like
   «давай»/«а за травень?» against its own last line). **Tool replies must surface data:**
   tools that compute numbers return a `message` the dispatcher appends — `get_stats` now
-  renders a summary (and answers seasons «зима/літо» as 3-month ranges via `_period_bounds`/
-  `_period_label`) so a conversational stats ask never dead-ends on a «зараз гляну»
-  preamble. `delete_meter_reading` removes a wrongly-entered reading. **L2 meters:** `vision`
+  renders an **itemised** summary (`_stats_summary`: «📊 <період у словах> — разом X ₴»
+  + a bullet per provider with its share; amounts space-grouped via `_fmt_uah`) and the
+  two **gas providers stay split** (постачання vs доставлення — no merged «Газ» block).
+  It also answers seasons «зима/літо» as 3-month ranges via `_period_bounds`/`_period_label`,
+  so a conversational stats ask never dead-ends on a «зараз гляну» preamble.
+  `delete_meter_reading` removes a wrongly-entered reading. **L2 meters:** `vision`
   (VisionProvider ABC + ClaudeCodeVisionProvider — `claude -p --allowed-tools "Read"`,
   Pillow downscale, robust JSON extract), `meters` (pure delta `validate` + `window_open`),
   `submission` (SubmissionChannel ABC + `ManualAssistChannel` default + Sms/WebForm
@@ -79,6 +82,13 @@ zero / spike vs history → `needs_confirm`) → store `MeterReading` → submit
   is a **kill-switch** — when off the call raises `InfolvivSubmitDisabled` and the bot
   **falls back to manual filing** (hand back the value + «Відправив ✓» `ms:` tap). The
   window label is `28–{last-day}` computed from the calendar (handles 28/29/30/31).
+- **«Мої показники» (`menu_meters`) merges two sources:** the infolviv portal record
+  (authoritative, filed) **and** `_drafts_block` — photo readings stored but not yet
+  filed (`validated`/`needs_confirm`). Every reading is remembered, but per meter only the
+  **freshest** is shown/submitted (older ones counted as «+ще N старіших»). Portal
+  unreachable → fall back to the local `_local_journal`.
+- `_format_unpaid` phrasings (all-clear / mobile-autopay note) are **randomized** so the
+  deterministic `/unpaid` reply never reads like a canned autoreply.
 - Legacy per-provider `SubmissionChannel`s (`ManualAssistChannel` default, Sms/WebForm
   opt-in via `SUBMISSION_CHANNELS`) still exist for the `auto_submit=True` path, but the
   bot's photo flow now routes everything through the infolviv date-gate above.

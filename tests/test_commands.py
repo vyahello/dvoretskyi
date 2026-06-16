@@ -83,11 +83,14 @@ async def test_cmd_unpaid_all_clear(engine, providers, session):
 
     msg = FakeMessage()
     await cmd_unpaid(msg)
-    assert msg.answers[0].startswith("✅ Усе чисто")
+    # Phrasing is randomized for liveliness, but it's always a ✅ "all clear" line.
+    assert msg.answers[0].startswith("✅")
+    assert msg.answers[0] in bot_app._ALL_CLEAR_LINES
 
 
 def test_format_unpaid_all_clear_unit():
-    assert _format_unpaid({"all_clear": True, "open": []}).startswith("✅ Усе чисто")
+    out = _format_unpaid({"all_clear": True, "open": []})
+    assert out.startswith("✅") and out in bot_app._ALL_CLEAR_LINES
 
 
 # --- main-menu reply keyboard ----------------------------------------------
@@ -238,7 +241,8 @@ async def test_cmd_stats_with_data_sends_photo(engine, providers, session):
     await cmd_stats(msg)
     assert msg.photos and not msg.answers  # chart sent as photo, no text answer
     _photo, caption = msg.photos[0]
-    assert "480.00" in caption and clock.current_cycle() in caption
+    # Caption now reads in words («червень 2026»), not the raw «2026-06» cycle key.
+    assert "480.00" in caption and "червень" in caption
 
     # The handler created a real PNG; clean it up.
     path = msg.photos[0][0].path

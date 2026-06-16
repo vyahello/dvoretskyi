@@ -66,9 +66,8 @@ async def test_get_stats_aggregates_by_provider(session, providers):
     res = await tools.get_stats(session, period="all", breakdown="provider")
     assert res["total"] == "680.00"
     top = res["items"][0]
-    assert (
-        top["label"] == "Газ" and top["total"] == "500.00"
-    )  # gas collapsed to one block
+    # Single gas provider here → its own line (gas is no longer collapsed).
+    assert top["label"] == "Газ (постачання)" and top["total"] == "500.00"
     assert res["chart_path"] and os.path.exists(res["chart_path"])
     os.unlink(res["chart_path"])
 
@@ -90,7 +89,7 @@ async def test_get_stats_breakdown_by_month(session, providers):
         os.unlink(res["chart_path"])
 
 
-async def test_get_stats_collapses_gas_into_one_block(session, providers):
+async def test_get_stats_splits_gas_into_supply_and_delivery(session, providers):
     from dvoretskyi.db.models import Category, PayChannel, Provider
 
     deliv = Provider(
@@ -113,10 +112,12 @@ async def test_get_stats_collapses_gas_into_one_block(session, providers):
 
     res = await tools.get_stats(session, period="all", breakdown="provider")
     labels = {i["label"] for i in res["items"]}
-    assert "Газ" in labels  # both gas providers merged into one block
-    assert "Газ (постачання)" not in labels and "Газ (доставлення)" not in labels
-    gas_item = next(i for i in res["items"] if i["label"] == "Газ")
-    assert gas_item["total"] == "400.00"
+    # Gas stays split: supply and delivery each get their own line, never a merged «Газ».
+    assert "Газ (постачання)" in labels and "Газ (доставлення)" in labels
+    assert "Газ" not in labels
+    by_label = {i["label"]: i["total"] for i in res["items"]}
+    assert by_label["Газ (постачання)"] == "300.00"
+    assert by_label["Газ (доставлення)"] == "100.00"
     if res["chart_path"]:
         os.unlink(res["chart_path"])
 

@@ -110,21 +110,42 @@ HELP_TEXT = (
 )
 
 
+# Varied closings so «нічого не висить» never reads like a canned autoreply (the
+# butler should sound alive even when the news is boring-good).
+_ALL_CLEAR_LINES = (
+    "✅ Усе чисто — цього місяця нічого не висить.",
+    "✅ Жодного відкритого рахунку. Рідкісний спокій.",
+    "✅ Усе закрито — комуналка мовчить, і це добре.",
+    "✅ Боргів нема. Можна видихнути.",
+)
+# When mobile autopay is still pending we must NOT claim «все оплачено» — these heads
+# say «головне закрито» and the auto-note adds the caveat.
+_ALL_CLEAR_WITH_AUTO = (
+    "✅ Усе, що залежало від нас, закрито.",
+    "✅ Ручні оплати позаду.",
+    "✅ З рахунками розібралися.",
+    "✅ Основне закрито.",
+)
+# Auto-note variants. Each keeps «автосписанням», the provider name and the «{day}-го»
+# so the caveat is unambiguous however it's phrased.
+_AUTO_NOTES = (
+    "⏳ {names} — автосписанням monobank {day}-го, ще не пройшло.",
+    "⏳ {names} піде автосписанням {day}-го (monobank) — чекаємо.",
+    "⏳ Лишився {names}: автосписанням monobank {day}-го, поки не списалось.",
+)
+
+
 def _format_unpaid(result: dict) -> str:
-    """Compact butler-voice rendering of get_unpaid output."""
+    """Compact butler-voice rendering of get_unpaid output (phrasing varied each call)."""
     auto = result.get("auto_pending") or []
     auto_note = ""
     if auto:
         names = ", ".join(i["provider"] for i in auto)
         day = auto[0].get("autopay_day") or get_settings().mobile_autopay_day
-        auto_note = f"\n⏳ {names} — автосписанням monobank {day}-го, ще не пройшло."
+        auto_note = "\n" + random.choice(_AUTO_NOTES).format(names=names, day=day)
 
     if result.get("all_clear"):
-        head = (
-            "✅ Усе, що треба, оплачено."
-            if auto
-            else "✅ Усе чисто — цього місяця все оплачено."
-        )
+        head = random.choice(_ALL_CLEAR_WITH_AUTO if auto else _ALL_CLEAR_LINES)
         return head + auto_note
     lines = ["Відкрите цього місяця:"]
     for item in result["open"]:
@@ -139,14 +160,16 @@ def _format_unpaid(result: dict) -> str:
 
 
 def _format_stats(result: dict) -> str:
-    """Compact butler-voice rendering of get_stats output (header line)."""
-    if not result["items"]:
-        return f"{result['period']}: ще порожньо — жодного платежу."
+    """Render get_stats output. The tool already builds an itemised, human-readable
+    summary (period in words, per-provider lines with shares) → use it; only fall back
+    to a terse line if a hand-built dict (e.g. a unit test) carries no `message`."""
+    msg = result.get("message")
+    if msg:
+        return msg
+    if not result.get("items"):
+        return "Платежів не бачу — порожньо."
     top = result["items"][0]
-    return (
-        f"{result['period']} — {result['total']} ₴. "
-        f"Найбільше з'їв {top['label']} ({top['total']} ₴)."
-    )
+    return f"{result['period']} — {result['total']} ₴. Найбільше: {top['label']}."
 
 
 @router.message(CommandStart())
@@ -286,6 +309,58 @@ async def _local_journal() -> str:
     return _format_meters_overview(overview)
 
 
+async def _drafts_block() -> str | None:
+    """Photo readings I've stored but NOT yet filed on the portal.
+
+    The portal view shows only what's already filed; this surfaces the ones still in my
+    pocket so «Мої показники» reflects everything I remember. I keep every reading, but
+    per meter only the freshest gets submitted — so I show the freshest and just note how
+    many older ones sit behind it.
+    """
+    async with session_scope() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(MeterReading)
+                    .where(
+                        MeterReading.status.in_(
+                            (MeterStatus.validated, MeterStatus.needs_confirm)
+                        ),
+                        MeterReading.value.is_not(None),
+                    )
+                    .order_by(MeterReading.created_at.desc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not rows:
+            return None
+        provs = {p.id: p for p in (await session.execute(select(Provider))).scalars()}
+    freshest: dict[int, MeterReading] = {}
+    older: dict[int, int] = {}
+    for r in rows:
+        pid = r.provider_id
+        if pid is None:
+            continue
+        if pid not in freshest:
+            freshest[pid] = r
+        else:
+            older[pid] = older.get(pid, 0) + 1
+    lines = ["📝 З фото (ще не на порталі) — подам найсвіжіший:"]
+    for pid, r in freshest.items():
+        prov = provs.get(pid)
+        label = (
+            _KIND_LABEL.get(prov.category.value, prov.name) if prov else "🔢 Лічильник"
+        )
+        state = (
+            "чекає підтвердження" if r.status is MeterStatus.needs_confirm else "записав"
+        )
+        more = f" (+ще {older[pid]} старіших у пам'яті)" if older.get(pid) else ""
+        lines.append(f"{html.escape(label)} — {r.value} ({state}){more}")
+    return "\n".join(lines)
+
+
 @router.message(F.text == keyboards.MENU_METERS)
 async def menu_meters(message: Message) -> None:
     try:
@@ -294,7 +369,12 @@ async def menu_meters(message: Message) -> None:
         log.exception("infolviv fetch raised")
         readings = []
     if readings:
-        await message.answer(_format_infolviv_readings(readings), parse_mode="HTML")
+        # Portal record (authoritative) + any photo drafts I'm still holding.
+        blocks = [_format_infolviv_readings(readings)]
+        drafts = await _drafts_block()
+        if drafts:
+            blocks.append(drafts)
+        await message.answer("\n\n".join(blocks), parse_mode="HTML")
     else:
         # Portal not configured / unreachable → show what I've saved from photos.
         await message.answer(await _local_journal())

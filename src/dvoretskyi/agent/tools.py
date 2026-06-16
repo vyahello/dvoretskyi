@@ -254,6 +254,30 @@ async def get_unpaid(session: AsyncSession, cycle: str | None = None) -> dict:
     }
 
 
+def _fmt_uah(amount: Decimal) -> str:
+    """'2391.39' → '2 391.39' (space-grouped thousands, always 2 decimals)."""
+    cents = int(amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) * 100)
+    sign = "-" if cents < 0 else ""
+    whole, frac = divmod(abs(cents), 100)
+    return f"{sign}{whole:,}".replace(",", " ") + f".{frac:02d}"
+
+
+def _stats_summary(label: str, total: Decimal, items: list[dict], breakdown: str) -> str:
+    """A readable, itemised summary — header + one bullet per group with its share.
+
+    Beats the old one-liner: «найбільше з'їв X» told you the top line and hid the rest.
+    """
+    head = f"📊 {label} — разом {_fmt_uah(total)} ₴"
+    lines = [head, ""]
+    for it in items:
+        amt = Decimal(it["total"])
+        share = it.get("share") or 0.0
+        # In a by-month view the bucket key is a cycle ("2026-05") → show it in words.
+        name = clock.format_cycle(it["label"]) if breakdown == "month" else it["label"]
+        lines.append(f"• {name} — {_fmt_uah(amt)} ₴ · {share:.0%}")
+    return "\n".join(lines)
+
+
 async def get_stats(
     session: AsyncSession, period: str | None = None, breakdown: str = "provider"
 ) -> dict:
@@ -274,9 +298,9 @@ async def get_stats(
         for p in payments:
             key = clock.cycle_of(p.paid_at)
             buckets[key] = buckets.get(key, Decimal("0")) + p.amount_uah
-    else:  # provider — both gas providers collapse into one "Газ" block
+    else:  # provider — gas stays split (постачання vs доставлення), each its own line
         names = {
-            prov.id: ("Газ" if prov.category is Category.gas else prov.name)
+            prov.id: prov.name
             for prov in (await session.execute(select(Provider))).scalars()
         }
         for p in payments:
@@ -301,8 +325,7 @@ async def get_stats(
         # Empty period (e.g. a month with no payments) must still answer — never hang.
         message = f"За {label} платежів не бачу — порожньо."
     else:
-        top = items[0]
-        message = f"{label} — {total} ₴. Найбільше: {top['label']} ({top['total']} ₴)."
+        message = _stats_summary(label, total, items, breakdown)
 
     return {
         "period": period_key,
