@@ -26,6 +26,7 @@ from dvoretskyi.agent.vision import MeterRead, VisionProvider, get_vision_provid
 from dvoretskyi.config import get_settings
 from dvoretskyi.db.models import (
     Category,
+    Household,
     MeterReading,
     MeterStatus,
     NudgeKind,
@@ -301,15 +302,34 @@ def _stats_summary(label: str, total: Decimal, items: list[dict], breakdown: str
 
 
 async def get_stats(
-    session: AsyncSession, period: str | None = None, breakdown: str = "provider"
+    session: AsyncSession,
+    period: str | None = None,
+    breakdown: str = "provider",
+    household: str | None = None,
 ) -> dict:
-    """Total spend + breakdown by provider or by month, with a PNG chart."""
+    """Total spend + breakdown by provider, month, or household, with a PNG chart.
+
+    `household` (slug or address fragment) filters to one property; breakdown="household"
+    splits the total across properties. No household + provider/month breakdown =
+    combined across both (the default, unchanged)."""
     start, end = _period_bounds(period)
+
+    # provider → (name, household_id); household id → display name (env-seeded).
+    provs = (await session.execute(select(Provider))).scalars().all()
+    prov_name = {p.id: p.name for p in provs}
+    prov_hid = {p.id: p.household_id for p in provs}
+    hh_name = {h.id: h.name for h in (await session.execute(select(Household))).scalars()}
+
+    want = await households.resolve(session, household) if household else None
+
     conds: list[ColumnElement[bool]] = [Payment.provider_id.is_not(None)]
     if start is not None:
         conds.append(Payment.paid_at >= start)
     if end is not None:
         conds.append(Payment.paid_at < end)
+    if want is not None:
+        ids = [p.id for p in provs if p.household_id == want.id]
+        conds.append(Payment.provider_id.in_(ids or [-1]))  # [-1] → matches nothing
 
     payments = (await session.execute(select(Payment).where(*conds))).scalars().all()
 
@@ -320,13 +340,15 @@ async def get_stats(
         for p in payments:
             key = clock.cycle_of(p.paid_at)
             buckets[key] = buckets.get(key, Decimal("0")) + p.amount_uah
-    else:  # provider — gas stays split (постачання vs доставлення), each its own line
-        names = {
-            prov.id: prov.name
-            for prov in (await session.execute(select(Provider))).scalars()
-        }
+    elif breakdown == "household":  # split the total across properties
         for p in payments:
-            key = names.get(p.provider_id, "?") if p.provider_id is not None else "?"
+            hid = prov_hid.get(p.provider_id) if p.provider_id is not None else None
+            name = hh_name.get(hid) if hid is not None else None
+            key = name or households.fallback_label(households.PRIMARY)
+            buckets[key] = buckets.get(key, Decimal("0")) + p.amount_uah
+    else:  # provider — gas stays split (постачання vs доставлення), each its own line
+        for p in payments:
+            key = prov_name.get(p.provider_id, "?") if p.provider_id else "?"
             buckets[key] = buckets.get(key, Decimal("0")) + p.amount_uah
 
     items = [
@@ -340,6 +362,8 @@ async def get_stats(
 
     period_key = period or clock.current_cycle()
     label = _period_label(period_key)
+    if want is not None:  # name the property in the title/caption when filtered
+        label = f"{want.name} · {label}"
 
     # The renderer wants human row labels (by-month buckets are cycles → words).
     rows: list[tuple[str, Decimal, float]] = [
@@ -367,6 +391,7 @@ async def get_stats(
     return {
         "period": period_key,
         "breakdown": breakdown,
+        "household": want.slug if want is not None else None,
         "total": str(total),
         "items": items,
         "chart_path": chart_path,

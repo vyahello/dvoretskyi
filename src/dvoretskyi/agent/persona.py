@@ -83,7 +83,7 @@ message — те, що побачить користувач; tool/args — ді
 TOOL_CATALOG = """\
 Доступні інструменти (обери щонайбільше один; tool=null якщо дія не потрібна):
 - get_unpaid(cycle?: "YYYY-MM") — що ще не оплачено цього періоду.
-- get_stats(period?: "YYYY-MM"|"YYYY"|"all"|сезон("зима"/"літо"/"весна"/"осінь" з опц. роком), breakdown?: "provider"|"month") — статистика + графік. «за травень у розрізі компонентів» → breakdown="provider"; «за зиму» → period="зима" (3 місяці).
+- get_stats(period?: "YYYY-MM"|"YYYY"|"all"|сезон("зима"/"літо"/"весна"/"осінь" з опц. роком), breakdown?: "provider"|"month"|"household", household?: str) — статистика + графік. «за травень у розрізі компонентів» → breakdown="provider"; «за зиму» → period="зима" (3 місяці). Є ДВА житла: «статистика по житлах / розбий по житлах» → breakdown="household"; «скільки за <адреса/назва житла>» → household="<те, що назвав користувач>" (бот сам зіставить з потрібним житлом). Без household — рахунок спільний по обох (як було).
 - log_payment_manual(provider_name: str, amount: number) — записати оплату вручну (поза mono).
 - categorize_payment(mono_tx_id: str, provider_name: str) — віднести нерозпізнаний платіж до провайдера.
 - snooze_reminder(provider_name: str, until: "YYYY-MM-DD"|N) — відкласти нагадування.

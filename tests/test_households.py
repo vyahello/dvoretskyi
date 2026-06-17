@@ -1,12 +1,80 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 from sqlalchemy import select
 
+from dvoretskyi import clock
 from dvoretskyi import households as hh
 from dvoretskyi.agent import tools
 from dvoretskyi.agent.tools import ToolError
-from dvoretskyi.db.models import Category, PayChannel, Provider
+from dvoretskyi.db.models import (
+    Category,
+    PayChannel,
+    Payment,
+    PaymentSource,
+    Provider,
+)
+
+
+def _pay(provider_id, amount, when):
+    return Payment(
+        provider_id=provider_id,
+        amount_uah=Decimal(amount),
+        paid_at=when,
+        source=PaymentSource.mono_webhook,
+        raw_description="",
+    )
+
+
+async def _two_household_payments(session, households, providers):
+    """A primary gas payment (300) + a secondary ЛЕЗ payment (100)."""
+    gas = providers["Газ (постачання)"]  # primary (from the fixture)
+    sec_lez = Provider(
+        name="Електроенергія (ЛЕЗ)",
+        category=Category.electricity,
+        pay_channel=PayChannel.mono_communal,
+        household_id=households["secondary"].id,
+    )
+    session.add(sec_lez)
+    await session.flush()
+    now = clock.now()
+    session.add_all([_pay(gas.id, "300.00", now), _pay(sec_lez.id, "100.00", now)])
+    await session.commit()
+
+
+async def test_stats_combined_sums_both_households(session, households, providers):
+    await _two_household_payments(session, households, providers)
+    res = await tools.get_stats(session, period="all")
+    assert res["total"] == "400.00" and res["household"] is None
+    if res["chart_path"]:
+        import os
+
+        os.unlink(res["chart_path"])
+
+
+async def test_stats_breakdown_by_household(session, households, providers):
+    await _two_household_payments(session, households, providers)
+    res = await tools.get_stats(session, period="all", breakdown="household")
+    by_label = {i["label"]: i["total"] for i in res["items"]}
+    assert by_label == {"Житло 1": "300.00", "Житло 2": "100.00"}
+    if res["chart_path"]:
+        import os
+
+        os.unlink(res["chart_path"])
+
+
+async def test_stats_filter_one_household(session, households, providers):
+    await _two_household_payments(session, households, providers)
+    res = await tools.get_stats(session, period="all", household="secondary")
+    assert res["total"] == "100.00" and res["household"] == "secondary"
+    # Filtered title names the property.
+    assert "Житло 2" in res["message"]
+    if res["chart_path"]:
+        import os
+
+        os.unlink(res["chart_path"])
 
 
 async def test_primary_returns_the_primary_household(session, households):
