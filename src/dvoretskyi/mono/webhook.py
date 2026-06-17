@@ -118,19 +118,10 @@ async def receive_webhook(secret: str, request: Request) -> Response:
         return Response(status_code=403)
 
     try:
-        raw = await request.json()
-        payload = WebhookPayload.model_validate(raw)
+        payload = WebhookPayload.model_validate(await request.json())
     except Exception:
         log.warning("mono webhook: unparseable payload", exc_info=True)
         return Response(status_code=200)  # ack to avoid mono retries on junk
-
-    # DIAGNOSTIC (temporary): dump every field monobank actually sent in statementItem,
-    # so we can see what's there to tell properties apart (counterIban/Edrpou/receipt).
-    try:
-        si = (raw or {}).get("data", {}).get("statementItem", {})
-        log.info("mono RAW statementItem: %s", si)
-    except Exception:  # noqa: BLE001 — diagnostic only, never break the webhook
-        pass
 
     if payload.type != "StatementItem":
         return Response(status_code=200)
