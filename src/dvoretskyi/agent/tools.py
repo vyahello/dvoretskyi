@@ -576,16 +576,22 @@ async def log_payment_manual(
 
 
 async def categorize_payment(
-    session: AsyncSession, mono_tx_id: str, provider_name: str
+    session: AsyncSession,
+    mono_tx_id: str,
+    provider_name: str,
+    household: str | None = None,
 ) -> dict:
-    """Assign an uncategorized webhook payment to a provider and learn its pattern."""
+    """Assign an uncategorized webhook payment to a provider and learn its pattern.
+
+    `household` pins the exact property when the provider name is shared (ЛЕЗ, Газ
+    доставлення) — the button tap passes it so the tap routes to the chosen home."""
     payment = (
         await session.execute(select(Payment).where(Payment.mono_tx_id == mono_tx_id))
     ).scalar_one_or_none()
     if payment is None:
         raise ToolError(f"Платіж не знайдено: {mono_tx_id}")
 
-    prov = await _provider_by_name(session, provider_name)
+    prov = await _provider_by_name(session, provider_name, household)
     payment.provider_id = prov.id
     learned = await matcher.learn_pattern(session, prov.id, payment.raw_description)
     await session.flush()

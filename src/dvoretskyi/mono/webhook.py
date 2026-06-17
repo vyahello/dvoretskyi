@@ -145,6 +145,7 @@ class Notice:
     payment_id: int | None = None
     amount_uah: str | None = None
     provider_name: str | None = None
+    provider_id: int | None = None
     mono_tx_id: str | None = None
     raw_description: str | None = None
 
@@ -156,6 +157,7 @@ def _build_notice(result: ProcessResult) -> Notice | None:
             payment_id=result.payment.id,
             amount_uah=str(result.payment.amount_uah),
             provider_name=result.provider.name if result.provider else None,
+            provider_id=result.provider.id if result.provider else None,
             mono_tx_id=result.payment.mono_tx_id,
         )
     if result.action is Action.UNCATEGORIZED and result.payment is not None:

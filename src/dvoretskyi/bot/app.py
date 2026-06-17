@@ -492,11 +492,22 @@ async def on_categorize(callback: CallbackQuery) -> None:
             if provider is None or payment.mono_tx_id is None:
                 await callback.answer("Не вдалося.")
                 return
-            result = await categorize_payment(session, payment.mono_tx_id, provider.name)
-            text = (
-                f"✅ {result['provider']} — {result['amount_uah']} ₴, "
-                "записав і запам'ятав."
+            hh = (
+                await session.get(Household, provider.household_id)
+                if provider.household_id is not None
+                else None
             )
+            result = await categorize_payment(
+                session,
+                payment.mono_tx_id,
+                provider.name,
+                household=hh.slug if hh else None,
+            )
+            suffix = await _household_suffix(session, provider)
+            # «запам'ятав» only when a pattern was actually learned (a distinctive payee
+            # token, or the особовий рахунок for a shared utility) — else just «записав».
+            tail = "записав і запам'ятав" if result.get("learned_pattern") else "записав"
+            text = f"✅ {result['provider']}{suffix} — {result['amount_uah']} ₴, {tail}."
 
     await _edit(callback, text)
     await callback.answer()
@@ -564,6 +575,23 @@ def _caption_provider(
                 if prov.category.value == cat:
                     return prov
     return None
+
+
+async def _household_suffix(session, provider: Provider | None) -> str:
+    """« · <житло>» when the provider's name is shared across properties (ЛЕЗ, Газ
+    доставлення) — so a confirmation makes clear WHICH home it was filed under. Empty for
+    a provider whose name is unique (the name alone already says which)."""
+    if provider is None or provider.household_id is None:
+        return ""
+    same_name = (
+        (await session.execute(select(Provider).where(Provider.name == provider.name)))
+        .scalars()
+        .all()
+    )
+    if len(same_name) <= 1:
+        return ""
+    hh = await session.get(Household, provider.household_id)
+    return f" · {hh.name}" if hh and hh.name else ""
 
 
 async def _meter_providers(session) -> list[Provider]:
@@ -992,9 +1020,16 @@ def make_notifier(bot: Bot) -> Callable[[Notice], Awaitable[None]]:
 
     async def notify(notice: Notice) -> None:
         if notice.action is Action.LOGGED:
+            async with session_scope() as session:
+                prov = (
+                    await session.get(Provider, notice.provider_id)
+                    if notice.provider_id is not None
+                    else None
+                )
+                suffix = await _household_suffix(session, prov)
             await bot.send_message(
                 chat_id,
-                f"✅ {notice.provider_name} — {notice.amount_uah} ₴, записав.",
+                f"✅ {notice.provider_name}{suffix} — {notice.amount_uah} ₴, записав.",
             )
         elif notice.action is Action.UNCATEGORIZED and notice.payment_id is not None:
             async with session_scope() as session:
