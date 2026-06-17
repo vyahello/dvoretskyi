@@ -120,6 +120,13 @@ async def test_reading_for_kind_filters_by_account_code(monkeypatch):
             "gas", account_code="ACC-GAS-3", client=c, use_cache=False
         )
         assert scoped is not None and scoped.counter_id == 333
+    async with _client(monkeypatch, counters_resp=httpx.Response(200, json=two_gas)) as c:
+        # Water is unique → a gas account_code doesn't gate it; fall back to the lone
+        # water counter (water/gas legitimately have different accounts at one property).
+        water = await reading_for_kind(
+            "water", account_code="ACC-GAS-3", client=c, use_cache=False
+        )
+        assert water is not None and water.counter_id == 111
 
 
 async def test_no_credentials_returns_empty(monkeypatch):

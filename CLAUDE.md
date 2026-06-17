@@ -201,9 +201,13 @@ sends the «📤 Подати на портал» approve tap (the `Notifier`/`_
 `approve_reading_id`; engine stays aiogram-free) instead of «кинь фото». Filing routes by
 household: `infolviv.reading_for_kind(kind, account_code=…)` and
 `submit_infolviv_reading(kind, value, account_code=…)` take the household's
-`infolviv_account_code` (two properties share one login → the account disambiguates the
-counter); `_file_reading` looks it up from the reading's provider→household. `None` account
-= first matching counter (single-household back-compat). Kill-switch unchanged.
+`infolviv_account_code` (the two **gas** counters share one login → the account
+disambiguates them); `_file_reading` looks it up from the reading's provider→household.
+A **unique** kind (water — one counter, its own account) isn't gated: if the account
+matches no counter of that kind, `reading_for_kind` falls back to the lone counter. So
+`HOUSEHOLD_*_INFOLVIV_ACCOUNT` is each property's **gas** account; water self-resolves.
+`None` account = first matching counter (single-household back-compat). Kill-switch
+unchanged.
 Migration `0004` adds it all (batch + `naming_convention` to drop the old `name` unique on
 SQLite). Tests/fixtures use fake names («Житло 1/2»), never real addresses.
 

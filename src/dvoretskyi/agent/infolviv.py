@@ -205,16 +205,25 @@ async def reading_for_kind(
     """The infolviv counter for our meter `kind` ("water"|"gas"), or None — carries both
     the counter id (to submit against) and the current filed value (to pre-check).
 
-    `account_code` disambiguates when two properties share one infolviv login (each
-    counter sits under a different `invoiceAccount.code`); None = the first matching kind
-    (single-household back-compat)."""
-    for r in await fetch_infolviv_readings(client=client, use_cache=use_cache):
-        if r.kind != kind or r.counter_id is None:
-            continue
-        if account_code and r.account_code != account_code:
-            continue
-        return r
-    return None
+    `account_code` disambiguates when two counters of the same kind share one login (the
+    two gas counters across properties each sit under a different `invoiceAccount.code`).
+    A counter of a **unique** kind (e.g. the single water meter) lives under its own
+    account, so if the given `account_code` matches no counter of this kind we fall back
+    to that lone counter — the account only needs to break ties, not gate unique meters.
+    `None` = the first matching kind (single-household back-compat)."""
+    of_kind = [
+        r
+        for r in await fetch_infolviv_readings(client=client, use_cache=use_cache)
+        if r.kind == kind and r.counter_id is not None
+    ]
+    if account_code:
+        scoped = [r for r in of_kind if r.account_code == account_code]
+        if scoped:
+            return scoped[0]
+        # Account given but no counter of this kind has it → it's another kind's account.
+        # Fall back only when this kind is unambiguous (exactly one counter).
+        return of_kind[0] if len(of_kind) == 1 else None
+    return of_kind[0] if of_kind else None
 
 
 async def submit_infolviv_reading(
