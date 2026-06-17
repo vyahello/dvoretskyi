@@ -55,27 +55,29 @@ async def process_statement_item(
     if not item.is_outflow:
         return ProcessResult(Action.INFLOW)
 
-    # Visibility: log every outflow's MCC + description before the candidate filter, so
-    # txs that get silently dropped as "not комуналка" (never written to the DB) still
-    # leave their MCC in the journal. No amount / PII logged. Filter behaviour unchanged
-    # — the same `candidate` value is reused at step 5b below.
-    candidate = matcher.is_utility_candidate(item.mcc, item.description)
+    # Visibility: log MCC + every text field monobank sent (description / comment /
+    # counterparty) before the candidate filter, so we can SEE what actually carries the
+    # address / особовий рахунок that distinguishes two properties. No amount logged.
+    text = item.match_text
+    candidate = matcher.is_utility_candidate(item.mcc, text)
     log.info(
-        "mono tx: mcc=%s desc=%s candidate=%s",
+        "mono tx: mcc=%s desc=%s comment=%s counter=%s candidate=%s",
         item.mcc,
         item.description,
+        item.comment,
+        item.counterName,
         str(candidate).lower(),
     )
 
-    # 5. Match against known provider patterns.
-    provider = await matcher.match(session, item.description)
+    # 5. Match against known provider patterns (over the full text, not just description).
+    provider = await matcher.match(session, text)
     if provider is not None:
         payment = Payment(
             provider_id=provider.id,
             amount_uah=item.amount_uah,
             paid_at=item.paid_at,
             source=PaymentSource.mono_webhook,
-            raw_description=item.description,
+            raw_description=text,
             mcc=item.mcc,
             mono_tx_id=item.id,
         )
@@ -93,7 +95,7 @@ async def process_statement_item(
         amount_uah=item.amount_uah,
         paid_at=item.paid_at,
         source=PaymentSource.mono_webhook,
-        raw_description=item.description,
+        raw_description=text,
         mcc=item.mcc,
         mono_tx_id=item.id,
     )
