@@ -125,7 +125,7 @@ async def receive_webhook(secret: str, request: Request) -> Response:
         return Response(status_code=200)  # ack to avoid mono retries on junk
 
     # DIAGNOSTIC (temporary): dump every field monobank actually sent in statementItem,
-    # so we can see what's available to tell properties apart (counterIban/Edrpou/receipt).
+    # so we can see what's there to tell properties apart (counterIban/Edrpou/receipt).
     try:
         si = (raw or {}).get("data", {}).get("statementItem", {})
         log.info("mono RAW statementItem: %s", si)
