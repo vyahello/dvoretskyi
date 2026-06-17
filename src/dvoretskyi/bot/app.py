@@ -624,17 +624,9 @@ async def _other_household_provider(
 
 
 async def _household_suffix(session, provider: Provider | None) -> str:
-    """« · <житло>» when the provider's name is shared across properties (ЛЕЗ, Газ
-    доставлення) — so a confirmation makes clear WHICH home it was filed under. Empty for
-    a provider whose name is unique (the name alone already says which)."""
+    """« · <житло>» on every confirmation so it's always clear WHICH property it was filed
+    under (the user pays for two homes and wants no ambiguity)."""
     if provider is None or provider.household_id is None:
-        return ""
-    same_name = (
-        (await session.execute(select(Provider).where(Provider.name == provider.name)))
-        .scalars()
-        .all()
-    )
-    if len(same_name) <= 1:
         return ""
     hh = await session.get(Household, provider.household_id)
     return f" · {hh.name}" if hh and hh.name else ""

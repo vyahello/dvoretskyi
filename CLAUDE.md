@@ -190,10 +190,11 @@ property. The LLM passes the user's wording as `household`; `resolve` matches it
 env name. **Payment routing:** the categorize prompt's buttons carry the
 household-specific `provider_id`; `categorize_keyboard` suffixes « · <житло>» on names
 shared across properties (ЛЕЗ, Газ доставлення); the tap threads the exact household into
-`categorize_payment(…, household=…)`. **Confirmations name the household** when the
-provider name is shared (`_household_suffix` in `bot/app.py` — «✅ Електроенергія (ЛЕЗ) ·
-<житло> — … записав») so it's clear where it landed; «запам'ятав» is shown only when a
-pattern was actually learned. **Shared-utility routing — home is the default**
+`categorize_payment(…, household=…)`. **Every confirmation names the household**
+(`_household_suffix` in `bot/app.py` — «✅ <провайдер> · <житло> — … записав») so it's
+always clear where it landed; «запам'ятав» is shown only when a pattern was actually
+learned. Secondary (Шашкевича) seeds **ЛЕЗ + Газ (постачання) + Газ (доставлення)**
+(`SECONDARY_PROVIDERS`); the static gas meter sits on its Газ (доставлення). **Shared-utility routing — home is the default**
 (`mono/matcher.py`, because monobank's webhook carries **nothing** that distinguishes the
 two properties: only `description`=«Електроенергія», `mcc`, a per-tx `receiptId` — no
 `comment`/counterparty/IBAN, verified live). A **shared-name** provider

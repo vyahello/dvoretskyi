@@ -113,6 +113,14 @@ SECONDARY_PROVIDERS = [
         expected_amount=None,
     ),
     dict(
+        name="Газ (постачання)",
+        category=Category.gas,
+        pay_channel=PayChannel.mono_communal,
+        auto_logged=True,
+        due_day=None,
+        expected_amount=None,
+    ),
+    dict(
         name="Газ (доставлення)",
         category=Category.gas,
         pay_channel=PayChannel.mono_communal,
@@ -121,7 +129,8 @@ SECONDARY_PROVIDERS = [
         expected_amount=None,
         meter_window=_settings.meter_window_days,
         meter_decimals=2,
-        # static_reading is injected from env at seed time (kept out of code).
+        # static_reading (the unoccupied flat's fixed gas meter) is injected from env at
+        # seed time onto THIS provider only — see _seed_providers.
     ),
 ]
 
@@ -205,7 +214,8 @@ async def _seed_providers() -> None:
             hid = hs[slug].id
             for spec in specs:
                 spec = dict(spec, household_id=hid)
-                if slug == households.SECONDARY and spec["category"] == Category.gas:
+                # The static gas meter lives on the secondary Газ (доставлення) only.
+                if slug == households.SECONDARY and spec["name"] == "Газ (доставлення)":
                     spec["static_reading"] = _secondary_static_gas()
                 exists = (
                     await session.execute(
