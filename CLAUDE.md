@@ -147,7 +147,7 @@ The mono webhook must be reachable over public HTTPS at
 
 ## Test, lint, types
 ```bash
-pytest -q                       # 170 tests, in-memory SQLite, no network, no API key
+pytest -q                       # 172 tests, in-memory SQLite, no network, no API key
 ruff check src tests            # lint (E,W,F,I,UP,B)
 ruff format src tests           # format (black-compatible; the project standard)
 mypy                            # type-check src/ (config in pyproject)
@@ -187,7 +187,14 @@ seeds households first, then per-household providers; `SECONDARY_PROVIDERS` in `
 `household` = combined across both (default, unchanged); `household=<slug/address frag>`
 filters to one property (title names it); `breakdown="household"` splits the total by
 property. The LLM passes the user's wording as `household`; `resolve` matches it to the
-env name.
+env name. **Payment routing:** the categorize prompt's buttons carry the
+household-specific `provider_id`; `categorize_keyboard` suffixes « · <житло>» on names
+shared across properties (ЛЕЗ, Газ доставлення) so the user picks the right one.
+`matcher.learn_pattern` has a **cross-household collision guard**: if a description token
+would map to providers in two different households (identical descriptions), it drops the
+colliding learned pattern and learns nothing → every such tx keeps prompting instead of
+mis-routing. **Photos are primary-only:** `_meter_providers` filters to the primary
+household (the secondary meter is static, filed without a photo — Phase D).
 Migration `0004` adds it all (batch + `naming_convention` to drop the old `name` unique on
 SQLite). Tests/fixtures use fake names («Житло 1/2»), never real addresses.
 

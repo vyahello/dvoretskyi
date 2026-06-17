@@ -134,3 +134,26 @@ async def test_provider_by_name_disambiguates_by_household(
 async def test_provider_by_name_unknown_raises(session, households, providers):
     with pytest.raises(ToolError):
         await tools._provider_by_name(session, "Нема такого")
+
+
+async def test_categorize_keyboard_labels_shared_names_with_household(
+    session, households, providers
+):
+    from dvoretskyi.bot import keyboards
+
+    sec_gas = Provider(
+        name="Газ (постачання)",  # duplicated across households
+        category=Category.gas,
+        pay_channel=PayChannel.mono_communal,
+        household_id=households["secondary"].id,
+    )
+    session.add(sec_gas)
+    await session.commit()
+    provs = (await session.execute(select(Provider))).scalars().all()
+    hh_names = {h.id: h.name for h in households.values()}
+    kb = keyboards.categorize_keyboard(1, provs, hh_names)
+    labels = [b.text for row in kb.inline_keyboard for b in row]
+    # The shared gas name is suffixed with each property; unique names are left plain.
+    assert "Газ (постачання) · Житло 1" in labels
+    assert "Газ (постачання) · Житло 2" in labels
+    assert "Холодна вода" in labels  # unique → no household suffix

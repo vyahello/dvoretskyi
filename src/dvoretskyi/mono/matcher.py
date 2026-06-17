@@ -103,14 +103,36 @@ async def learn_pattern(
         # leave no pattern so the next one prompts again.
         return None
 
-    existing = (
-        await session.execute(
-            select(ProviderPattern).where(
-                ProviderPattern.provider_id == provider_id,
-                ProviderPattern.pattern == token,
+    target = await session.get(Provider, provider_id)
+    same_token = (
+        (
+            await session.execute(
+                select(ProviderPattern).where(ProviderPattern.pattern == token)
             )
         )
-    ).scalar_one_or_none()
+        .scalars()
+        .all()
+    )
+
+    # Cross-household collision: the same description token already routes to a provider
+    # in a DIFFERENT household (the two shared utilities, ЛЕЗ / Газ доставлення, billed
+    # with identical descriptions). We can't tell the properties apart by description, so
+    # drop the colliding learned pattern(s) and learn nothing — every such tx then prompts
+    # for the household instead of silently mis-routing to the wrong one.
+    target_hid = target.household_id if target is not None else None
+    colliding: list[ProviderPattern] = []
+    for pp in same_token:
+        other = await session.get(Provider, pp.provider_id)
+        if other is not None and other.household_id != target_hid:
+            colliding.append(pp)
+    if colliding:
+        for pp in colliding:
+            if pp.source == PatternSource.learned:
+                await session.delete(pp)
+        await session.flush()
+        return None
+
+    existing = next((pp for pp in same_token if pp.provider_id == provider_id), None)
     if existing is not None:
         return None
 

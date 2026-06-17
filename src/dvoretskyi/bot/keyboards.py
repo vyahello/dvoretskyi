@@ -52,15 +52,23 @@ def main_keyboard() -> ReplyKeyboardMarkup:
 
 
 def categorize_keyboard(
-    payment_id: int, providers: Sequence[Provider]
+    payment_id: int,
+    providers: Sequence[Provider],
+    household_names: dict[int, str] | None = None,
 ) -> InlineKeyboardMarkup:
+    """Provider buttons. A name shared across households (ЛЕЗ, Газ доставлення) is
+    suffixed « · <житло>» so the user can tell which property the payment is for; the
+    callback already carries the household-specific provider id."""
+    household_names = household_names or {}
+    dup = {p.name for p in providers if [q.name for q in providers].count(p.name) > 1}
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
     for prov in providers:
+        label = prov.name
+        if prov.name in dup and prov.household_id in household_names:
+            label = f"{prov.name} · {household_names[prov.household_id]}"
         row.append(
-            InlineKeyboardButton(
-                text=prov.name, callback_data=f"c:{payment_id}:{prov.id}"
-            )
+            InlineKeyboardButton(text=label, callback_data=f"c:{payment_id}:{prov.id}")
         )
         if len(row) == 2:
             rows.append(row)

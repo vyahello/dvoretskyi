@@ -32,7 +32,7 @@ from aiogram.types import (
 from aiogram.utils.chat_action import ChatActionSender
 from sqlalchemy import select
 
-from dvoretskyi import clock
+from dvoretskyi import clock, households
 from dvoretskyi.agent import dispatcher as agent_dispatcher
 from dvoretskyi.agent import meters
 from dvoretskyi.agent.infolviv import (
@@ -62,6 +62,7 @@ from dvoretskyi.agent.vision import get_vision_provider
 from dvoretskyi.bot import keyboards
 from dvoretskyi.config import get_settings
 from dvoretskyi.db.models import (
+    Household,
     MeterReading,
     MeterStatus,
     NudgeKind,
@@ -566,17 +567,14 @@ def _caption_provider(
 
 
 async def _meter_providers(session) -> list[Provider]:
-    return list(
-        (
-            await session.execute(
-                select(Provider)
-                .where(Provider.meter_window.is_not(None))
-                .order_by(Provider.id)
-            )
-        )
-        .scalars()
-        .all()
-    )
+    """Photo meters live in the **primary** household (the home). The secondary property
+    is unoccupied → its meter is a static value filed without a photo (Phase D), so it's
+    excluded here: a photo the user sends is always for home."""
+    prim = await households.primary(session)
+    stmt = select(Provider).where(Provider.meter_window.is_not(None))
+    if prim is not None:
+        stmt = stmt.where(Provider.household_id == prim.id)
+    return list((await session.execute(stmt.order_by(Provider.id))).scalars().all())
 
 
 def _stored_line(result: dict) -> str:
@@ -999,7 +997,11 @@ def make_notifier(bot: Bot) -> Callable[[Notice], Awaitable[None]]:
                     .scalars()
                     .all()
                 )
-            kb = keyboards.categorize_keyboard(notice.payment_id, providers)
+                hh_names = {
+                    h.id: h.name
+                    for h in (await session.execute(select(Household))).scalars()
+                }
+            kb = keyboards.categorize_keyboard(notice.payment_id, providers, hh_names)
             await bot.send_message(
                 chat_id,
                 f"Прилетіло {notice.amount_uah} ₴, а такого в мене нема. Це що?",

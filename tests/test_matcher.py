@@ -48,3 +48,36 @@ async def test_learn_pattern_idempotent(session, providers):
     second = await matcher.learn_pattern(session, gigabit.id, "gigabitplus 2")
     # same stable token "gigabitplus" → no duplicate inserted
     assert second is None
+
+
+async def test_learn_pattern_cross_household_collision_drops_both(
+    session, households, providers
+):
+    """Same description token for the same utility in two properties → we can't tell them
+    apart, so the colliding learned pattern is dropped and nothing auto-matches (the bot
+    keeps prompting which household)."""
+    from dvoretskyi.db.models import Category, PayChannel, Provider
+    from dvoretskyi.mono.matcher import match
+
+    primary_gas = providers["Газ (постачання)"]
+    secondary_gas = Provider(
+        name="Газ (постачання)",
+        category=Category.gas,
+        pay_channel=PayChannel.mono_communal,
+        household_id=households["secondary"].id,
+    )
+    session.add(secondary_gas)
+    await session.flush()
+
+    # First property learns the token.
+    learned = await matcher.learn_pattern(session, primary_gas.id, "OBLGAZ pay 10")
+    assert learned is not None
+    await session.commit()
+    assert (await match(session, "OBLGAZ pay 10")) is not None  # auto-matches for now
+
+    # Same token now routed to the OTHER household → collision → drop, learn nothing.
+    clash = await matcher.learn_pattern(session, secondary_gas.id, "OBLGAZ pay 10 again")
+    assert clash is None
+    await session.commit()
+    # Neither household auto-matches anymore — every such tx prompts.
+    assert (await match(session, "OBLGAZ pay 10 again")) is None
