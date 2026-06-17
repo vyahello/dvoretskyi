@@ -65,6 +65,18 @@ async def test_stats_breakdown_by_household(session, households, providers):
         os.unlink(res["chart_path"])
 
 
+async def test_stats_scope_keyboard_has_a_button_per_household(households):
+    from dvoretskyi.bot import keyboards
+
+    hh = [(h.slug, h.name) for h in households.values()]
+    kb = keyboards.stats_scope_keyboard(hh)
+    labels = [b.text for row in kb.inline_keyboard for b in row]
+    data = [b.callback_data for row in kb.inline_keyboard for b in row]
+    assert "📊 Житло 1" in labels and "📊 Житло 2" in labels
+    assert "st:primary" in data and "st:secondary" in data
+    assert "st:split" in data  # the compare-households button
+
+
 async def test_stats_filter_one_household(session, households, providers):
     await _two_household_payments(session, households, providers)
     res = await tools.get_stats(session, period="all", household="secondary")

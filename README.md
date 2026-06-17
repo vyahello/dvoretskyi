@@ -162,7 +162,7 @@ right after) and handled exactly like a typed message. Meter values stay photo-o
 
 ## Test & static analysis
 ```bash
-pytest -q              # 177 tests, in-memory SQLite, no network, no API key needed
+pytest -q              # 178 tests, in-memory SQLite, no network, no API key needed
 ruff check src tests   # lint (E,W,F,I,UP,B)
 ruff format src tests  # format (black-compatible; project standard)
 mypy                   # type-check src/

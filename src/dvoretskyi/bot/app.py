@@ -198,11 +198,51 @@ async def cmd_stats(message: Message) -> None:
         result = await get_stats(
             session, period=clock.current_cycle(), breakdown="provider"
         )
+        households_list = [
+            (h.slug, h.name)
+            for h in (
+                await session.execute(
+                    select(Household).order_by(Household.is_primary.desc())
+                )
+            ).scalars()
+        ]
     text = _format_stats(result)
+    # >1 household → offer per-property drill-down + a compare button under the total.
+    kb = (
+        keyboards.stats_scope_keyboard(households_list)
+        if len(households_list) > 1
+        else None
+    )
     if result.get("chart_path"):
-        await message.answer_photo(FSInputFile(result["chart_path"]), caption=text)
+        await message.answer_photo(
+            FSInputFile(result["chart_path"]), caption=text, reply_markup=kb
+        )
     else:
-        await message.answer(text)
+        await message.answer(text, reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("st:"))
+async def on_stats_scope(callback: CallbackQuery) -> None:
+    """«📊 <житло>» → that property's breakdown; «🏘 Порівняти житла» → split."""
+    if not callback.data:
+        await callback.answer()
+        return
+    _, scope = callback.data.split(":", 1)
+    cycle = clock.current_cycle()
+    async with session_scope() as session:
+        if scope == "split":
+            result = await get_stats(session, period=cycle, breakdown="household")
+        else:
+            result = await get_stats(session, period=cycle, household=scope)
+    text = _format_stats(result)
+    if isinstance(callback.message, Message):
+        if result.get("chart_path"):
+            await callback.message.answer_photo(
+                FSInputFile(result["chart_path"]), caption=text
+            )
+        else:
+            await callback.message.answer(text)
+    await callback.answer()
 
 
 @router.message(Command("help"))

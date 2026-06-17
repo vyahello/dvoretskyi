@@ -81,6 +81,21 @@ def categorize_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def stats_scope_keyboard(
+    households: list[tuple[str, str]],
+) -> InlineKeyboardMarkup:
+    """Under the combined stats: a button per household to drill into it, plus a
+    «compare» button that splits the total by property. `households` = [(slug, name)]."""
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text=f"📊 {name}", callback_data=f"st:{slug}")]
+        for slug, name in households
+    ]
+    rows.append(
+        [InlineKeyboardButton(text="🏘 Порівняти житла", callback_data="st:split")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def correct_household_keyboard(payment_id: int, label: str) -> InlineKeyboardMarkup:
     """Single «↪ Це <інше житло>» tap to move an auto-logged shared payment to the other
     property (the default is home; this re-points the rare secondary one)."""
