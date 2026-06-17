@@ -843,11 +843,19 @@ async def mark_meter_submitted(session: AsyncSession, reading_id: object) -> dic
     reading.status = MeterStatus.submitted
     reading.submitted_at = clock.now()
     await session.flush()
+    # Name the meter + value so the confirmation isn't an anonymous «передано».
+    provider = (
+        await session.get(Provider, reading.provider_id)
+        if reading.provider_id is not None
+        else None
+    )
+    meter = provider.name if provider else "показник"
+    val = f" — {meter}: {reading.value}" if reading.value is not None else ""
     return {
         "ok": True,
         "reading_id": reading.id,
         "status": reading.status.value,
-        "message": "✅ Зафіксував, що передано.",
+        "message": f"✅ Зафіксував, що передано{val}.",
     }
 
 

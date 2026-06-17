@@ -163,7 +163,7 @@ def _format_unpaid(result: dict) -> str:
 def _format_stats(result: dict) -> str:
     """Render get_stats output. The breakdown now lives in the rendered table image, so
     the tool's `message` is just a one-line caption (period + grand total) — use it; only
-    fall back to a terse line if a hand-built dict (e.g. a unit test) carries no `message`."""
+    fall back to a terse line if a hand-built dict (e.g. a test) carries no `message`."""
     msg = result.get("message")
     if msg:
         return msg
@@ -639,6 +639,9 @@ async def _file_reading(rid: int) -> tuple[str, InlineKeyboardMarkup | None]:
             return "Показник зник — надішли фото ще раз.", None
         provider = await session.get(Provider, reading.provider_id)
         kind = provider.category.value if provider else ""
+        # Name the meter in every reply — «Подав: 107.695» alone left the user guessing
+        # whether it was gas or water (a photo turn can file either).
+        meter = provider.name if provider else "показник"
         value = reading.value
         try:
             await submit_infolviv_reading(kind, value)
@@ -647,7 +650,7 @@ async def _file_reading(rid: int) -> tuple[str, InlineKeyboardMarkup | None]:
             reading.status = MeterStatus.validated
             await session.flush()
             text = (
-                f"Підготував до подачі: {value} — подай на порталі infolviv "
+                f"Підготував до подачі — {meter}: {value}. Подай на порталі infolviv "
                 "і тисни «Відправив ✓»."
             )
             return text, keyboards.meter_submitted_keyboard(rid)
@@ -656,14 +659,14 @@ async def _file_reading(rid: int) -> tuple[str, InlineKeyboardMarkup | None]:
             # and keep the reading stored so a corrected re-photo replaces it.
             reading.status = MeterStatus.validated
             await session.flush()
-            return f"⚠️ infolviv не прийняв показник: {exc}", None
+            return f"⚠️ infolviv не прийняв {meter}: {exc}", None
         except Exception:
             log.exception("infolviv submit failed")
-            return "Не вдалося подати на портал — спробуй ще раз за мить.", None
+            return f"Не вдалося подати {meter} на портал — спробуй ще раз за мить.", None
         reading.status = MeterStatus.submitted
         reading.submitted_at = clock.now()
         await session.flush()
-    return f"✅ Подав на infolviv: {value}.", None
+    return f"✅ Подав на infolviv — {meter}: {value}.", None
 
 
 @router.message(F.photo)

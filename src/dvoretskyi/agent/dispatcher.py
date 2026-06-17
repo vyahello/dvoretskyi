@@ -96,9 +96,7 @@ def _progress_line(tool: str, args: dict) -> str:
             ]
         )
     if tool == "get_stats":
-        return random.choice(
-            ["Зводжу цифри…", "Підбиваю витрати…", "Рахую, секунду…"]
-        )
+        return random.choice(["Зводжу цифри…", "Підбиваю витрати…", "Рахую, секунду…"])
     if tool == "log_payment_manual":
         return random.choice(["Записую платіж…", "Фіксую…"])
     if tool == "categorize_payment":

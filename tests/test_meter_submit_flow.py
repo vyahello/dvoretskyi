@@ -62,7 +62,7 @@ async def test_file_reading_disabled_falls_back_to_manual(
     await session.commit()
 
     text, kb = await bot_app._file_reading(r.id)
-    assert "подай на порталі infolviv" in text
+    assert "Подай на порталі infolviv" in text
     assert _first_cb(kb) == f"ms:{r.id}"  # falls back to the «Відправив ✓» tap
     await session.refresh(r)
     assert r.status is MeterStatus.validated  # not marked submitted by us
@@ -89,7 +89,8 @@ async def test_file_reading_surfaces_portal_rejection(
     await session.commit()
 
     text, kb = await bot_app._file_reading(r.id)
-    assert "не прийняв показник" in text and "менший за поточний" in text
+    # The meter is named so the user knows which reading was refused.
+    assert "не прийняв" in text and "Газ" in text and "менший за поточний" in text
     assert kb is None
     await session.refresh(r)
     assert r.status is MeterStatus.validated  # kept; a corrected re-photo replaces it
@@ -115,7 +116,9 @@ async def test_file_reading_enabled_marks_submitted(
     await session.commit()
 
     text, kb = await bot_app._file_reading(r.id)
+    # Names the meter (which one was filed) alongside the value.
     assert "Подав на infolviv" in text and "106.4" in text
+    assert "Холодна вода" in text
     assert kb is None
     await session.refresh(r)
     assert r.status is MeterStatus.submitted
@@ -180,7 +183,7 @@ async def test_early_insistence_resists_twice_then_files(
     cb = _FakeCallback(f"se:{r.id}:3")
     await bot_app.on_meter_early(cb)
     text, _ = cb.bot.sent[-1]
-    assert "подай на порталі infolviv" in text
+    assert "Подай на порталі infolviv" in text
 
 
 async def test_approve_in_window_files(engine, providers, session, monkeypatch):
@@ -199,7 +202,7 @@ async def test_approve_in_window_files(engine, providers, session, monkeypatch):
     cb = _FakeCallback(f"sf:{r.id}")
     await bot_app.on_meter_approve(cb)
     text, _ = cb.bot.sent[-1]
-    assert "подай на порталі infolviv" in text  # disabled → manual fallback
+    assert "Подай на порталі infolviv" in text  # disabled → manual fallback
     assert cb.answered
 
 

@@ -146,7 +146,7 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             out: dict[str, str] = {}
             for part in value.split(","):
-                if not (part:=part.strip()):
+                if not (part := part.strip()):
                     continue
                 key, _, chan = part.partition(":")
                 out[key.strip()] = chan.strip() or "manual"
