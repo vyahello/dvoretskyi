@@ -73,18 +73,19 @@ async def test_does_not_learn_bare_category_keyword(session, households, provide
     assert await match(session, "Газ (доставлення)") is None
 
 
-async def test_learn_pattern_cross_household_collision_drops_both(
+async def test_shared_name_provider_never_auto_matches_or_learns(
     session, households, providers
 ):
-    """Same description token for the same utility in two properties → we can't tell them
-    apart, so the colliding learned pattern is dropped and nothing auto-matches (the bot
-    keeps prompting which household)."""
+    """A utility present in BOTH households (here Газ постачання in primary+secondary)
+    has identical descriptions per property → no token distinguishes them. So the matcher
+    never auto-routes it and learn_pattern refuses to learn — every such tx prompts for
+    the household instead of silently going to whichever learned first."""
     from dvoretskyi.db.models import Category, PayChannel, Provider
     from dvoretskyi.mono.matcher import match
 
     primary_gas = providers["Газ (постачання)"]
     secondary_gas = Provider(
-        name="Газ (постачання)",
+        name="Газ (постачання)",  # same name in the other household → shared/ambiguous
         category=Category.gas,
         pay_channel=PayChannel.mono_communal,
         household_id=households["secondary"].id,
@@ -92,15 +93,17 @@ async def test_learn_pattern_cross_household_collision_drops_both(
     session.add(secondary_gas)
     await session.flush()
 
-    # First property learns the token.
+    # Learning is refused for a shared-name provider (it could never auto-match safely).
     learned = await matcher.learn_pattern(session, primary_gas.id, "OBLGAZ pay 10")
-    assert learned is not None
+    assert learned is None
     await session.commit()
-    assert (await match(session, "OBLGAZ pay 10")) is not None  # auto-matches for now
+    # And even a pre-existing pattern pointing at a shared-name provider is ignored.
+    from dvoretskyi.db.models import PatternSource, ProviderPattern
 
-    # Same token now routed to the OTHER household → collision → drop, learn nothing.
-    clash = await matcher.learn_pattern(session, secondary_gas.id, "OBLGAZ pay 10 again")
-    assert clash is None
+    session.add(
+        ProviderPattern(
+            provider_id=primary_gas.id, pattern="oblgaz", source=PatternSource.learned
+        )
+    )
     await session.commit()
-    # Neither household auto-matches anymore — every such tx prompts.
-    assert (await match(session, "OBLGAZ pay 10 again")) is None
+    assert (await match(session, "OBLGAZ pay 10")) is None  # forced to prompt

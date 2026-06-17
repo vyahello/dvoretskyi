@@ -43,13 +43,27 @@ AGGREGATOR_TOKENS: frozenset[str] = frozenset(
 )
 
 
+async def _ambiguous_provider_ids(session: AsyncSession) -> set[int]:
+    """Providers whose NAME is shared across households (ЛЕЗ, Газ доставлення). Their
+    descriptions are identical between properties, so no token distinguishes them — they
+    must never auto-match; the user picks the household on the categorize prompt."""
+    provs = (await session.execute(select(Provider))).scalars().all()
+    counts: dict[str, int] = {}
+    for p in provs:
+        counts[p.name] = counts.get(p.name, 0) + 1
+    return {p.id for p in provs if counts[p.name] > 1}
+
+
 async def match(session: AsyncSession, description: str) -> Provider | None:
     """Return the provider whose pattern is a case-insensitive substring of `description`.
 
     Longer patterns win (more specific), so a learned full-name pattern beats a
-    short seed token if both happen to match.
+    short seed token if both happen to match. Patterns for a **shared-name** provider
+    (same utility in both households) are skipped — such a tx can't be auto-routed to one
+    property, so it falls through to the household prompt instead.
     """
     desc = (description or "").casefold()
+    ambiguous = await _ambiguous_provider_ids(session)
     rows = (
         (await session.execute(select(ProviderPattern).order_by(ProviderPattern.id)))
         .scalars()
@@ -58,6 +72,8 @@ async def match(session: AsyncSession, description: str) -> Provider | None:
 
     best: ProviderPattern | None = None
     for row in rows:
+        if row.provider_id in ambiguous:
+            continue
         pat = (row.pattern or "").casefold().strip()
         if pat and pat in desc:
             if best is None or len(pat) > len(best.pattern):
@@ -107,36 +123,22 @@ async def learn_pattern(
         #    a learned «газ» for Газ (постачання) wrongly matches «Газ (доставлення)».
         return None
 
-    target = await session.get(Provider, provider_id)
-    same_token = (
-        (
-            await session.execute(
-                select(ProviderPattern).where(ProviderPattern.pattern == token)
-            )
-        )
-        .scalars()
-        .all()
-    )
-
-    # Cross-household collision: the same description token already routes to a provider
-    # in a DIFFERENT household (the two shared utilities, ЛЕЗ / Газ доставлення, billed
-    # with identical descriptions). We can't tell the properties apart by description, so
-    # drop the colliding learned pattern(s) and learn nothing — every such tx then prompts
-    # for the household instead of silently mis-routing to the wrong one.
-    target_hid = target.household_id if target is not None else None
-    colliding: list[ProviderPattern] = []
-    for pp in same_token:
-        other = await session.get(Provider, pp.provider_id)
-        if other is not None and other.household_id != target_hid:
-            colliding.append(pp)
-    if colliding:
-        for pp in colliding:
-            if pp.source == PatternSource.learned:
-                await session.delete(pp)
-        await session.flush()
+    # A shared-name provider (same utility in both households — ЛЕЗ, Газ доставлення) is
+    # never auto-matched (see `match`): its descriptions are identical between properties,
+    # so learning a pattern for it is pointless and would only mislead. Leave none and let
+    # every such tx prompt for the household. This also subsumes the cross-household token
+    # collision — the only multi-household providers in this app ARE shared-name.
+    if provider_id in await _ambiguous_provider_ids(session):
         return None
 
-    existing = next((pp for pp in same_token if pp.provider_id == provider_id), None)
+    existing = (
+        await session.execute(
+            select(ProviderPattern).where(
+                ProviderPattern.provider_id == provider_id,
+                ProviderPattern.pattern == token,
+            )
+        )
+    ).scalar_one_or_none()
     if existing is not None:
         return None
 

@@ -147,7 +147,7 @@ The mono webhook must be reachable over public HTTPS at
 
 ## Test, lint, types
 ```bash
-pytest -q                       # 174 tests, in-memory SQLite, no network, no API key
+pytest -q                       # 175 tests, in-memory SQLite, no network, no API key
 ruff check src tests            # lint (E,W,F,I,UP,B)
 ruff format src tests           # format (black-compatible; the project standard)
 mypy                            # type-check src/ (config in pyproject)
@@ -190,10 +190,15 @@ property. The LLM passes the user's wording as `household`; `resolve` matches it
 env name. **Payment routing:** the categorize prompt's buttons carry the
 household-specific `provider_id`; `categorize_keyboard` suffixes « · <житло>» on names
 shared across properties (ЛЕЗ, Газ доставлення) so the user picks the right one.
-`matcher.learn_pattern` has a **cross-household collision guard**: if a description token
-would map to providers in two different households (identical descriptions), it drops the
-colliding learned pattern and learns nothing → every such tx keeps prompting instead of
-mis-routing. **Photos are primary-only:** `_meter_providers` filters to the primary
+**Matcher guards against mis-routing** (`mono/matcher.py`): (1) `match` **skips
+shared-name providers** — a utility present in both households (ЛЕЗ, Газ доставлення) has
+identical descriptions per property, so no token distinguishes them; such a tx never
+auto-matches and always falls through to the household prompt (`_ambiguous_provider_ids`).
+(2) `learn_pattern` refuses to learn a **bare category keyword** (`UTILITY_KEYWORDS`:
+«газ»/«вода»/… — a substring of every description in that category, so «газ» would hijack
+«Газ (доставлення)») and refuses to learn for a **shared-name provider** (pointless, it
+never auto-matches). Net: ambiguous descriptions prompt; only a distinctive payee token
+auto-routes. **Photos are primary-only:** `_meter_providers` filters to the primary
 household (the secondary meter is static, filed without a photo).
 **Secondary static meter (Phase D):** a provider with `static_reading` set is unoccupied
 → its month-end meter nudge stages a `validated` `MeterReading` with that fixed value and
