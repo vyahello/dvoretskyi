@@ -50,6 +50,29 @@ async def test_learn_pattern_idempotent(session, providers):
     assert second is None
 
 
+async def test_does_not_learn_bare_category_keyword(session, households, providers):
+    """A bare category word («Газ») is a substring of every gas description, so learning
+    it would let one gas provider hijack the other. It must NOT be learned."""
+    from dvoretskyi.db.models import Category, PayChannel, Provider
+    from dvoretskyi.mono.matcher import match
+
+    supply = providers["Газ (постачання)"]
+    deliv = Provider(
+        name="Газ (доставлення)",
+        category=Category.gas,
+        pay_channel=PayChannel.mono_communal,
+        household_id=households["primary"].id,
+    )
+    session.add(deliv)
+    await session.flush()
+
+    learned = await matcher.learn_pattern(session, supply.id, "Газ")
+    assert learned is None  # «газ» is a utility keyword → never learned
+    await session.commit()
+    # → a «Газ (доставлення)» tx is not hijacked to supply (no «газ» pattern exists).
+    assert await match(session, "Газ (доставлення)") is None
+
+
 async def test_learn_pattern_cross_household_collision_drops_both(
     session, households, providers
 ):

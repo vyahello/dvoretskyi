@@ -97,10 +97,14 @@ async def learn_pattern(
     new pattern, or None if nothing usable / already present.
     """
     token = stable_token(raw_description)
-    if not token or token in AGGREGATOR_TOKENS:
-        # Aggregator descriptions (Portmone/EasyPay/…) are too generic to learn — they'd
-        # match every payment routed through that aggregator. Categorize this tx, but
-        # leave no pattern so the next one prompts again.
+    if not token or token in AGGREGATOR_TOKENS or token in UTILITY_KEYWORDS:
+        # Too generic to learn → categorize this tx but leave no pattern (next one
+        # prompts again):
+        #  • aggregator descriptions (Portmone/EasyPay/…) match every payment routed
+        #    through that aggregator;
+        #  • a bare category keyword («газ», «вода», «світло») is a substring of EVERY
+        #    description in that category, so it would hijack sibling providers — e.g.
+        #    a learned «газ» for Газ (постачання) wrongly matches «Газ (доставлення)».
         return None
 
     target = await session.get(Provider, provider_id)
