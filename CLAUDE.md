@@ -147,7 +147,7 @@ The mono webhook must be reachable over public HTTPS at
 
 ## Test, lint, types
 ```bash
-pytest -q                       # 162 tests, in-memory SQLite, no network, no API key
+pytest -q                       # 167 tests, in-memory SQLite, no network, no API key
 ruff check src tests            # lint (E,W,F,I,UP,B)
 ruff format src tests           # format (black-compatible; the project standard)
 mypy                            # type-check src/ (config in pyproject)
@@ -170,6 +170,21 @@ lazily so the suite never loads it) and pass `now` explicitly to reminder/window
 `METER_SUBMIT_FROM_DAY` (28), `METER_EARLY_SUBMIT_ATTEMPTS` (3).
 **Voice:** `STT_PROVIDER` (whisper|none), `WHISPER_MODEL` (small default; base to save
 RAM), `WHISPER_COMPUTE_TYPE` (int8), `WHISPER_LANGUAGE` (uk), `STT_TIMEOUT_SECONDS`.
+
+## Households (two properties, Phase A+)
+Two properties: **primary** (home; all 7 providers, photo meters) and **secondary**
+(unoccupied; pays only Електроенергія (ЛЕЗ) + Газ (доставлення), no payment nudges yet;
+its gas meter is a **static** value filed monthly). `Household` (`db/models.py`) owns its
+providers via `Provider.household_id`; `Provider.name` is unique **per household**
+(`uq_provider_household_name`), so shared utilities exist once per property. **Addresses
+are PII → never in code**: code uses slugs (`households.PRIMARY`/`SECONDARY` in
+`households.py`); display names + infolviv account codes + the static gas value come from
+env (`HOUSEHOLD_*`, VPS only), seeded into the DB by `dvoretskyi seed-providers` (now
+seeds households first, then per-household providers; `SECONDARY_PROVIDERS` in `cli.py`).
+`households.resolve(text)` maps a slug or address fragment → `Household`;
+`_provider_by_name(name, household?)` disambiguates a shared name (defaults to primary).
+Migration `0004` adds it all (batch + `naming_convention` to drop the old `name` unique on
+SQLite). Tests/fixtures use fake names («Житло 1/2»), never real addresses.
 
 ## Conventions
 - Conventional commits, one logical change each.

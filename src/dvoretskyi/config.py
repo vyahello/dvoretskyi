@@ -127,6 +127,19 @@ class Settings(BaseSettings):
     infolv_submit_enabled: bool = False
     infolv_ttl_seconds: int = 1800  # cache so a button tap doesn't re-auth every time
 
+    # --- households (two properties; addresses are PII → env/VPS only) ---
+    # Code refers to households by slug ("primary"/"secondary"); these are the display
+    # names (addresses). Empty → a neutral fallback label ("Житло 1"/"Житло 2") is used.
+    household_primary_name: str = ""
+    household_secondary_name: str = ""
+    # infolviv invoiceAccount.code per household — routes the right portal counter when
+    # two properties share the same infolviv login. VPS only.
+    household_primary_infolviv_account: str = ""
+    household_secondary_infolviv_account: str = ""
+    # The secondary property is unoccupied → its gas meter reads a fixed value filed each
+    # month. Kept out of code (it pins to a specific meter/address). Empty → no static.
+    household_secondary_static_gas: str = ""
+
     # --- misc ---
     tz: str = "Europe/Kyiv"
     public_base_url: str = "https://example.com"

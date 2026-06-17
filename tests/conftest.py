@@ -19,6 +19,7 @@ from dvoretskyi.db import session as db_session
 from dvoretskyi.db.models import (
     Base,
     Category,
+    Household,
     PatternSource,
     PayChannel,
     Provider,
@@ -54,8 +55,21 @@ async def session(engine) -> AsyncSession:
 
 
 @pytest_asyncio.fixture
-async def providers(session) -> dict[str, Provider]:
-    """Seed a small provider set with real (test) match patterns."""
+async def households(session) -> dict[str, Household]:
+    """Seed two households with fake (non-PII) names — code refers to them by slug."""
+    primary = Household(slug="primary", name="Житло 1", is_primary=True)
+    secondary = Household(
+        slug="secondary", name="Житло 2", is_primary=False, infolviv_account_code="ACC-B"
+    )
+    session.add_all([primary, secondary])
+    await session.commit()
+    return {"primary": primary, "secondary": secondary}
+
+
+@pytest_asyncio.fixture
+async def providers(session, households) -> dict[str, Provider]:
+    """Seed a small provider set with real (test) match patterns, in the primary
+    household (mirrors production where the home household owns the default providers)."""
     # (name, category, pay_channel, auto_logged, due_day, expected, patterns,
     #  meter_window=lead days before month end, meter_decimals)
     specs = [
@@ -116,6 +130,7 @@ async def providers(session) -> dict[str, Provider]:
             account_number=None,
             meter_window=meter_window,
             meter_decimals=decimals,
+            household_id=households["primary"].id,
         )
         session.add(prov)
         await session.flush()

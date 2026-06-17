@@ -162,7 +162,7 @@ right after) and handled exactly like a typed message. Meter values stay photo-o
 
 ## Test & static analysis
 ```bash
-pytest -q              # 162 tests, in-memory SQLite, no network, no API key needed
+pytest -q              # 167 tests, in-memory SQLite, no network, no API key needed
 ruff check src tests   # lint (E,W,F,I,UP,B)
 ruff format src tests  # format (black-compatible; project standard)
 mypy                   # type-check src/
@@ -183,7 +183,7 @@ src/dvoretskyi/  config·clock·app(FastAPI lifespan)·cli
          agent/transcription (local Whisper STT for voice notes)
   reminders/ APScheduler engine (payment + meter nudges)
 tests/  conftest + matcher/webhook/tools/dispatcher/reminders + vision/meters/submission/photo
-alembic/  migrations (0001 schema · 0002 meter_readings · 0003 meter_decimals)
+alembic/  migrations (0001 schema · 0002 meter_readings · 0003 meter_decimals · 0004 households)
 ```
 
 ## Deploy & ops

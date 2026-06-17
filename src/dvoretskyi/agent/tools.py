@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from dvoretskyi import clock
+from dvoretskyi import clock, households
 from dvoretskyi.agent import meters
 from dvoretskyi.agent.submission import channel_for
 from dvoretskyi.agent.vision import MeterRead, VisionProvider, get_vision_provider
@@ -131,18 +131,31 @@ def _period_label(period: str | None) -> str:
     return clock.format_cycle(period)
 
 
-async def _provider_by_name(session: AsyncSession, name: str) -> Provider:
-    prov = (
-        await session.execute(select(Provider).where(Provider.name == name))
-    ).scalar_one_or_none()
-    if prov is None:
-        # tolerate case / whitespace differences
-        wanted = (name or "").strip().casefold()
-        for prov in (await session.execute(select(Provider))).scalars():
-            if prov.name.casefold() == wanted:
-                return prov
+async def _provider_by_name(
+    session: AsyncSession, name: str, household: str | None = None
+) -> Provider:
+    """Resolve a provider by name. A shared name (ЛЕЗ, Газ доставлення) exists in both
+    households → pick the one in `household` if given, else the primary household."""
+    wanted = (name or "").strip().casefold()
+    matches = [
+        p
+        for p in (await session.execute(select(Provider))).scalars()
+        if p.name.casefold() == wanted
+    ]
+    if not matches:
         raise ToolError(f"Невідомий провайдер: {name!r}")
-    return prov
+    if len(matches) == 1:
+        return matches[0]
+    want = await households.resolve(session, household) if household else None
+    if want is not None:
+        for p in matches:
+            if p.household_id == want.id:
+                return p
+    prim = await households.primary(session)
+    for p in matches:
+        if prim and p.household_id == prim.id:
+            return p
+    return matches[0]
 
 
 async def _paid_in_cycle(session: AsyncSession, provider_id: int, cycle: str) -> bool:

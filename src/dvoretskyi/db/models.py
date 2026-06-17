@@ -74,11 +74,37 @@ _Money = Numeric(12, 2)
 _Reading = Numeric(14, 3)
 
 
-class Provider(Base):
-    __tablename__ = "providers"
+class Household(Base):
+    """A property/address the user pays utilities for. The display `name` is the address
+    — **personal data**, so it's seeded from env on the VPS, never hardcoded. Code refers
+    to households by the stable `slug` ("primary"/"secondary")."""
+
+    __tablename__ = "households"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(120), unique=True)
+    slug: Mapped[str] = mapped_column(String(32), unique=True)
+    name: Mapped[str] = mapped_column(String(120))  # display/address; env-seeded
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
+    # infolviv invoiceAccount.code that routes this household's portal counters (gas/
+    # water). Env-seeded (VPS only) — needed to disambiguate two gas counters.
+    infolviv_account_code: Mapped[str | None] = mapped_column(String(64), default=None)
+
+    providers: Mapped[list[Provider]] = relationship(back_populates="household")
+
+
+class Provider(Base):
+    __tablename__ = "providers"
+    # name is unique *within* a household: shared utilities (ЛЕЗ, Газ доставлення) exist
+    # once per property, so the same name legitimately appears across households.
+    __table_args__ = (
+        UniqueConstraint("household_id", "name", name="uq_provider_household_name"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120))
+    household_id: Mapped[int | None] = mapped_column(
+        ForeignKey("households.id"), default=None
+    )
     category: Mapped[Category] = mapped_column(SAEnum(Category, name="category"))
     account_number: Mapped[str | None] = mapped_column(String(64), default=None)
     pay_channel: Mapped[PayChannel] = mapped_column(
@@ -93,8 +119,12 @@ class Provider(Base):
     # Decimal places a reading is kept/submitted at — source of truth for precision.
     # Water = 3 (ВК accepts 3), gas = 2; 0 for non-meter providers.
     meter_decimals: Mapped[int] = mapped_column(Integer, default=0)
+    # Fixed meter value for an unoccupied property (nobody lives there → consumption ~0,
+    # so the reading never changes). Non-null ⇒ no photo/OCR; the bot files this verbatim.
+    static_reading: Mapped[Decimal | None] = mapped_column(_Reading, default=None)
     auto_logged: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    household: Mapped[Household | None] = relationship(back_populates="providers")
     patterns: Mapped[list[ProviderPattern]] = relationship(
         back_populates="provider", cascade="all, delete-orphan"
     )
