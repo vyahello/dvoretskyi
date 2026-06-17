@@ -196,13 +196,24 @@ async def fetch_infolviv_readings(
 
 
 async def reading_for_kind(
-    kind: str, *, client: httpx.AsyncClient | None = None, use_cache: bool = True
+    kind: str,
+    *,
+    account_code: str | None = None,
+    client: httpx.AsyncClient | None = None,
+    use_cache: bool = True,
 ) -> InfolvivReading | None:
     """The infolviv counter for our meter `kind` ("water"|"gas"), or None — carries both
-    the counter id (to submit against) and the current filed value (to pre-check)."""
+    the counter id (to submit against) and the current filed value (to pre-check).
+
+    `account_code` disambiguates when two properties share one infolviv login (each
+    counter sits under a different `invoiceAccount.code`); None = the first matching kind
+    (single-household back-compat)."""
     for r in await fetch_infolviv_readings(client=client, use_cache=use_cache):
-        if r.kind == kind and r.counter_id is not None:
-            return r
+        if r.kind != kind or r.counter_id is None:
+            continue
+        if account_code and r.account_code != account_code:
+            continue
+        return r
     return None
 
 
@@ -210,6 +221,7 @@ async def submit_infolviv_reading(
     kind: str,
     value: Decimal,
     *,
+    account_code: str | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> int:
     """File a new reading on infolviv for our meter `kind`; return the counter id filed.
@@ -239,7 +251,9 @@ async def submit_infolviv_reading(
             headers={"Accept": "application/json"},
         )
     try:
-        meter = await reading_for_kind(kind, client=client, use_cache=False)
+        meter = await reading_for_kind(
+            kind, account_code=account_code, client=client, use_cache=False
+        )
         if meter is None or meter.counter_id is None:
             raise InfolvivSubmitDisabled(f"не знайшов лічильник «{kind}» на порталі")
         # A meter only goes up: block a value below the current filed one before the POST

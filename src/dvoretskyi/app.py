@@ -62,8 +62,13 @@ async def lifespan(app: FastAPI):
         text: str,
         pay_link: str | None = None,
         pay_label: str | None = None,
+        approve_reading_id: int | None = None,
     ) -> None:
-        markup = keyboards.pay_keyboard(pay_link, label=pay_label) if pay_link else None
+        markup = None
+        if pay_link:
+            markup = keyboards.pay_keyboard(pay_link, label=pay_label)
+        elif approve_reading_id is not None:
+            markup = keyboards.meter_approve_keyboard(approve_reading_id)
         await bot.send_message(chat_id, text, reply_markup=markup)
 
     schedule_jobs(scheduler, _send)

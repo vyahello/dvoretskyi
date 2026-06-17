@@ -147,7 +147,7 @@ The mono webhook must be reachable over public HTTPS at
 
 ## Test, lint, types
 ```bash
-pytest -q                       # 172 tests, in-memory SQLite, no network, no API key
+pytest -q                       # 174 tests, in-memory SQLite, no network, no API key
 ruff check src tests            # lint (E,W,F,I,UP,B)
 ruff format src tests           # format (black-compatible; the project standard)
 mypy                            # type-check src/ (config in pyproject)
@@ -194,7 +194,16 @@ shared across properties (ЛЕЗ, Газ доставлення) so the user pic
 would map to providers in two different households (identical descriptions), it drops the
 colliding learned pattern and learns nothing → every such tx keeps prompting instead of
 mis-routing. **Photos are primary-only:** `_meter_providers` filters to the primary
-household (the secondary meter is static, filed without a photo — Phase D).
+household (the secondary meter is static, filed without a photo).
+**Secondary static meter (Phase D):** a provider with `static_reading` set is unoccupied
+→ its month-end meter nudge stages a `validated` `MeterReading` with that fixed value and
+sends the «📤 Подати на портал» approve tap (the `Notifier`/`_send` gained
+`approve_reading_id`; engine stays aiogram-free) instead of «кинь фото». Filing routes by
+household: `infolviv.reading_for_kind(kind, account_code=…)` and
+`submit_infolviv_reading(kind, value, account_code=…)` take the household's
+`infolviv_account_code` (two properties share one login → the account disambiguates the
+counter); `_file_reading` looks it up from the reading's provider→household. `None` account
+= first matching counter (single-household back-compat). Kill-switch unchanged.
 Migration `0004` adds it all (batch + `naming_convention` to drop the old `name` unique on
 SQLite). Tests/fixtures use fake names («Житло 1/2»), never real addresses.
 

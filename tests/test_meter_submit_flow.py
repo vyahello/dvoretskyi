@@ -73,7 +73,7 @@ async def test_file_reading_surfaces_portal_rejection(
 ):
     from dvoretskyi.agent.infolviv import InfolvivSubmitError
 
-    async def fake_submit(kind, value):
+    async def fake_submit(kind, value, **kw):
         raise InfolvivSubmitError("показник менший за поточний на порталі (106.4)")
 
     monkeypatch.setattr(bot_app, "submit_infolviv_reading", fake_submit)
@@ -99,7 +99,7 @@ async def test_file_reading_surfaces_portal_rejection(
 async def test_file_reading_enabled_marks_submitted(
     engine, providers, session, monkeypatch
 ):
-    async def fake_submit(kind, value):
+    async def fake_submit(kind, value, **kw):
         assert kind == "water"
         return 222
 

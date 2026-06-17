@@ -92,6 +92,36 @@ async def test_parses_water_and_gas_readings(monkeypatch):
     assert calls == ["POST /auth", "GET /counters"]
 
 
+async def test_reading_for_kind_filters_by_account_code(monkeypatch):
+    # Two gas counters (two properties under one login) → account_code disambiguates.
+    from dvoretskyi.agent.infolviv import reading_for_kind
+
+    two_gas = _COUNTERS + [
+        {
+            "id": 333,
+            "counterNumber": "10000003",
+            "invoiceAccount": {"code": "ACC-GAS-3"},
+            "service": {"name": "Розподіл газу"},
+            "serviceProvider": {"name": "Газорозподіл (тест)"},
+            "counterType": {"id": 1, "name": "Газовий"},
+            "factorEditing": {"isEnabled": True, "startDay": 4, "endDay": 10},
+            "factors": [{"invoicePeriod": "2026-05-01T00:00:00Z", "endFactor": 5000.0}],
+        }
+    ]
+    resp = httpx.Response(200, json=two_gas)
+
+    async with _client(monkeypatch, counters_resp=resp) as c:
+        # No account_code → first matching kind (back-compat).
+        first = await reading_for_kind("gas", client=c, use_cache=False)
+        assert first is not None and first.counter_id == 222
+    async with _client(monkeypatch, counters_resp=httpx.Response(200, json=two_gas)) as c:
+        # Explicit account_code → that specific counter.
+        scoped = await reading_for_kind(
+            "gas", account_code="ACC-GAS-3", client=c, use_cache=False
+        )
+        assert scoped is not None and scoped.counter_id == 333
+
+
 async def test_no_credentials_returns_empty(monkeypatch):
     st = get_settings()
     monkeypatch.setattr(st, "infolv_login", "")

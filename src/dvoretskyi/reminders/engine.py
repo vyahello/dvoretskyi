@@ -16,6 +16,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING, Protocol
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -46,7 +47,9 @@ NUDGE_WINDOW_DAYS = 3  # start nudging this many days before due_day
 
 class Notifier(Protocol):
     """Sends a nudge to the user. `pay_link`/`pay_label`, if given, render a tappable
-    button by the bot layer (the engine stays aiogram-free, passing only strings)."""
+    button by the bot layer (the engine stays aiogram-free, passing only strings).
+    `approve_reading_id`, if given, renders the meter «📤 Подати на портал» approve tap
+    (used for the secondary property's static reading)."""
 
     async def __call__(
         self,
@@ -54,6 +57,7 @@ class Notifier(Protocol):
         text: str,
         pay_link: str | None = None,
         pay_label: str | None = None,
+        approve_reading_id: int | None = None,
     ) -> None: ...
 
 
@@ -216,21 +220,32 @@ class PendingMeterNudge:
     provider_name: str
     days_left: int  # whole days until the last day of the month (0 = today is last)
     category: str
+    # Set for an unoccupied property whose meter is a fixed value: instead of «кинь фото»
+    # the nudge offers a one-tap file of this exact reading. reading_id is filled in by
+    # run_meter_nudges once the stored row exists.
+    static_value: str | None = None
+    reading_id: int | None = None
+
+    def _when(self) -> str:
+        if self.days_left == 0:
+            return "Сьогодні останній день місяця"
+        if self.days_left == 1:
+            return "Завтра кінець місяця"
+        return f"До кінця місяця лишилось {self.days_left} дн."
 
     def message(self) -> str:
+        if self.static_value is not None:
+            return (
+                f"{self._when()} — показник для «{self.provider_name}» фіксований: "
+                f"{self.static_value}. Подати на портал?"
+            )
         if self.category == Category.gas.value:
             what = "показники газу"
         elif self.category == Category.water.value:
             what = "показники води"
         else:
             what = "показники лічильника"
-        if self.days_left == 0:
-            when = "Сьогодні останній день місяця"
-        elif self.days_left == 1:
-            when = "Завтра кінець місяця"
-        else:
-            when = f"До кінця місяця лишилось {self.days_left} дн."
-        return f"{when} — час подати {what}. Кинь фото лічильника, зчитаю сам."
+        return f"{self._when()} — час подати {what}. Кинь фото лічильника, зчитаю сам."
 
 
 async def _reading_done_this_cycle(
@@ -301,6 +316,9 @@ async def compute_pending_meter_nudges(
                 provider_name=prov.name,
                 days_left=days_left,
                 category=prov.category.value,
+                static_value=(
+                    str(prov.static_reading) if prov.static_reading is not None else None
+                ),
             )
         )
     return pending
@@ -315,6 +333,21 @@ async def run_meter_nudges(
     async with session_scope() as session:
         pending = await compute_pending_meter_nudges(session, now)
         for item in pending:
+            # A static-meter property files a fixed value with no photo: stage a
+            # `validated` reading now so the «📤 Подати на портал» tap can file it (and
+            # so `_reading_done_this_cycle` stops the daily re-nudge until it's filed).
+            if item.static_value is not None:
+                reading = MeterReading(
+                    provider_id=item.provider_id,
+                    cycle=cycle,
+                    value=Decimal(item.static_value),
+                    status=MeterStatus.validated,
+                    created_at=now,
+                )
+                session.add(reading)
+                await session.flush()
+                item.reading_id = reading.id
+
             existing = (
                 await session.execute(
                     select(NudgeLog).where(
@@ -337,7 +370,11 @@ async def run_meter_nudges(
                 existing.nudged_at = now
 
     for item in pending:
-        await send(get_settings().telegram_allowed_user_id, item.message())
+        await send(
+            get_settings().telegram_allowed_user_id,
+            item.message(),
+            approve_reading_id=item.reading_id,
+        )
     return pending
 
 

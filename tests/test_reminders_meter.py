@@ -104,7 +104,7 @@ async def test_suppressed_when_snoozed(session, providers):
 async def test_run_meter_nudges_sends_and_logs(session, providers):
     sent: list[tuple[int, str]] = []
 
-    async def send(chat_id: int, text: str) -> None:
+    async def send(chat_id: int, text: str, **kw) -> None:
         sent.append((chat_id, text))
 
     pending = await run_meter_nudges(send, now=_at(2026, 6, 28))
@@ -114,3 +114,38 @@ async def test_run_meter_nudges_sends_and_logs(session, providers):
     # A NudgeLog(kind=meter) was recorded → a second run the same day is suppressed.
     again = await run_meter_nudges(send, now=_at(2026, 6, 28))
     assert all(p.provider_name != "Газ (постачання)" for p in again)
+
+
+async def test_static_meter_nudge_offers_one_tap_file(session, households, providers):
+    """The unoccupied property's gas meter is a fixed value: the nudge stages a validated
+    reading and offers the «📤 Подати» approve tap instead of asking for a photo."""
+    from dvoretskyi.db.models import Category, PayChannel, Provider
+
+    sec_gas = Provider(
+        name="Газ (доставлення)",
+        category=Category.gas,
+        pay_channel=PayChannel.mono_communal,
+        household_id=households["secondary"].id,
+        meter_window=3,
+        meter_decimals=2,
+        static_reading=Decimal("7952.81"),
+    )
+    session.add(sec_gas)
+    await session.commit()
+
+    sent: list[tuple[str, int | None]] = []
+
+    async def send(chat_id, text, approve_reading_id=None, **kw):
+        sent.append((text, approve_reading_id))
+
+    pending = await run_meter_nudges(send, now=_at(2026, 6, 28))
+    static = next(p for p in pending if p.provider_id == sec_gas.id)
+    assert "7952.81" in (static.static_value or "")
+    assert static.reading_id is not None
+    # The message names the fixed value and does NOT ask for a photo.
+    assert "7952.81" in static.message() and "фото" not in static.message()
+    # A validated reading was staged for the cycle, ready for the approve tap.
+    staged = await session.get(MeterReading, static.reading_id)
+    assert staged.value == Decimal("7952.81") and staged.status is MeterStatus.validated
+    # The nudge carried the approve_reading_id so the bot renders the file tap.
+    assert any(rid == static.reading_id for _, rid in sent)

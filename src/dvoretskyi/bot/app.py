@@ -640,9 +640,15 @@ async def _file_reading(rid: int) -> tuple[str, InlineKeyboardMarkup | None]:
         # Name the meter in every reply — «Подав: 107.695» alone left the user guessing
         # whether it was gas or water (a photo turn can file either).
         meter = provider.name if provider else "показник"
+        # Route to the right counter by household (two properties share one infolviv
+        # login → the account code disambiguates; None = first matching kind).
+        account = None
+        if provider is not None and provider.household_id is not None:
+            hh = await session.get(Household, provider.household_id)
+            account = hh.infolviv_account_code if hh else None
         value = reading.value
         try:
-            await submit_infolviv_reading(kind, value)
+            await submit_infolviv_reading(kind, value, account_code=account)
         except InfolvivSubmitDisabled:
             # Live POST not enabled → hand back the value for manual filing.
             reading.status = MeterStatus.validated
