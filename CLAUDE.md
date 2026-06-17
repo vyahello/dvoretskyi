@@ -21,10 +21,14 @@ Auth Claude Code via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
   `dispatcher` (handle_message: deterministic tool routing; takes a short `history` of
   recent turns → `context["recent_dialogue"]` so the model resolves short replies like
   «давай»/«а за травень?» against its own last line). **Tool replies must surface data:**
-  tools that compute numbers return a `message` the dispatcher appends — `get_stats` now
-  renders an **itemised** summary (`_stats_summary`: «📊 <період у словах> — разом X ₴»
-  + a bullet per provider with its share; amounts space-grouped via `_fmt_uah`) and the
-  two **gas providers stay split** (постачання vs доставлення — no merged «Газ» block).
+  tools that compute numbers return a `message` the dispatcher appends — `get_stats`
+  renders a **modern data table** PNG (`_render_table`: header band with period + grand
+  total, zebra rows, a mini share-bar per row, right-aligned СУМА/ЧАСТКА columns; amounts
+  space-grouped via `_fmt_uah`). The `message` is then **just a one-line caption**
+  (`_stats_caption`: «📊 <період у словах> — разом X ₴») — the per-provider breakdown lives
+  in the table, never duplicated in text. `_stats_summary` (itemised bullets) survives only
+  as the chartless fallback (no matplotlib). The two **gas providers stay split**
+  (постачання vs доставлення — no merged «Газ» block).
   It also answers seasons «зима/літо» as 3-month ranges via `_period_bounds`/`_period_label`,
   so a conversational stats ask never dead-ends on a «зараз гляну» preamble.
   `delete_meter_reading` removes a wrongly-entered reading. **L2 meters:** `vision`

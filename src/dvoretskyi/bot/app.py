@@ -161,9 +161,9 @@ def _format_unpaid(result: dict) -> str:
 
 
 def _format_stats(result: dict) -> str:
-    """Render get_stats output. The tool already builds an itemised, human-readable
-    summary (period in words, per-provider lines with shares) → use it; only fall back
-    to a terse line if a hand-built dict (e.g. a unit test) carries no `message`."""
+    """Render get_stats output. The breakdown now lives in the rendered table image, so
+    the tool's `message` is just a one-line caption (period + grand total) — use it; only
+    fall back to a terse line if a hand-built dict (e.g. a unit test) carries no `message`."""
     msg = result.get("message")
     if msg:
         return msg

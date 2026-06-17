@@ -265,13 +265,19 @@ def _fmt_uah(amount: Decimal) -> str:
     return f"{sign}{whole:,}".replace(",", " ") + f".{frac:02d}"
 
 
-def _stats_summary(label: str, total: Decimal, items: list[dict], breakdown: str) -> str:
-    """A readable, itemised summary — header + one bullet per group with its share.
+def _stats_caption(label: str, total: Decimal) -> str:
+    """The one-line caption that rides with the table image — period + grand total.
 
-    Beats the old one-liner: «найбільше з'їв X» told you the top line and hid the rest.
+    The per-provider breakdown now lives in the rendered table, so we deliberately do
+    NOT repeat it here: the caption gives context, the image carries the data.
     """
-    head = f"📊 {label} — разом {_fmt_uah(total)} ₴"
-    lines = [head, ""]
+    return f"📊 {label} — разом {_fmt_uah(total)} ₴"
+
+
+def _stats_summary(label: str, total: Decimal, items: list[dict], breakdown: str) -> str:
+    """Text-only fallback for when no table image is rendered (matplotlib missing /
+    chartless test dict). Then the breakdown has nowhere else to go, so it's itemised."""
+    lines = [_stats_caption(label, total), ""]
     for it in items:
         amt = Decimal(it["total"])
         share = it.get("share") or 0.0
@@ -322,12 +328,27 @@ async def get_stats(
     period_key = period or clock.current_cycle()
     label = _period_label(period_key)
 
-    chart_path = _render_chart(buckets, label) if buckets else None
+    # The renderer wants human row labels (by-month buckets are cycles → words).
+    rows: list[tuple[str, Decimal, float]] = [
+        (
+            clock.format_cycle(str(it["label"]))
+            if breakdown == "month"
+            else str(it["label"]),
+            Decimal(str(it["total"])),
+            float(it.get("share") or 0.0),  # type: ignore[arg-type]
+        )
+        for it in items
+    ]
+    chart_path = _render_table(rows, label, total) if rows else None
 
     if not items:
         # Empty period (e.g. a month with no payments) must still answer — never hang.
         message = f"За {label} платежів не бачу — порожньо."
+    elif chart_path:
+        # Table image carries the breakdown → caption is just the period + total.
+        message = _stats_caption(label, total)
     else:
+        # No image (matplotlib missing) → the text must carry the full breakdown.
         message = _stats_summary(label, total, items, breakdown)
 
     return {
@@ -355,55 +376,134 @@ _CHART_PALETTE = (
 )
 
 
-def _render_chart(buckets: dict[str, Decimal], title: str) -> str:
+# Modern-table palette (one accent per row; a flat, calm UI look — not 90s bar-chart).
+_INK = "#1f2933"  # primary text
+_MUTED = "#7b8794"  # secondary text / column headers
+_STRIPE = "#f4f6f8"  # zebra row background
+_TRACK = "#e4e7eb"  # empty share-bar track
+
+
+def _render_table(
+    rows: list[tuple[str, Decimal, float]], title: str, total: Decimal
+) -> str:
+    """Render the breakdown as a clean, modern data table (PNG).
+
+    rows: (label, amount, share) sorted biggest-first. Columns: service · mini share-bar
+    · amount · share%. Zebra striping, a header band with the grand total, no axes — it
+    reads like a card in a finance app, not a matplotlib bar chart.
+    """
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.patches import FancyBboxPatch, Rectangle
 
-    # Biggest on top → reads like a ranking. Horizontal bars fit Ukrainian labels.
-    items = sorted(buckets.items(), key=lambda kv: kv[1])
-    labels = [k for k, _ in items]
-    values = [float(v) for _, v in items]
-    colors = [_CHART_PALETTE[i % len(_CHART_PALETTE)] for i in range(len(labels))]
-    total = sum(values)
+    n = len(rows)
+    # Vertical layout in row-units (top → bottom): title band, column header, then rows.
+    title_h, header_h, row_h, pad = 1.5, 0.8, 1.0, 0.4
+    units = title_h + header_h + n * row_h + pad
+    fig, ax = plt.subplots(figsize=(8.6, 0.52 * units + 0.4))
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, units)
+    ax.axis("off")
 
-    fig, ax = plt.subplots(figsize=(8.5, 0.85 * len(labels) + 1.8))
-    bars = ax.barh(labels, values, color=colors, edgecolor="white", height=0.66)
-    ax.set_title(
-        f"Комуналка — {title}  ·  {total:,.0f} ₴".replace(",", " "),
-        fontsize=16,
+    # Column anchors (x in 0..1).
+    x_name = 0.045
+    x_bar0, x_bar1 = 0.45, 0.70
+    x_amount = 0.875  # right-aligned
+    x_share = 0.965  # right-aligned
+
+    top = units - pad
+    # --- title band: «Комуналка · <період>» left, grand total right ---
+    ax.text(x_name, top - 0.55, "Комуналка", fontsize=20, fontweight="bold", color=_INK)
+    ax.text(x_name, top - 1.12, title, fontsize=13, color=_MUTED)
+    ax.text(
+        x_share,
+        top - 0.62,
+        f"{_fmt_uah(total)} ₴",
+        fontsize=20,
         fontweight="bold",
-        pad=14,
+        color=_INK,
+        ha="right",
     )
+    ax.text(x_share, top - 1.16, "разом", fontsize=12, color=_MUTED, ha="right")
 
-    # Big, bold value + share label. Long bars: label INSIDE (white, right-aligned) so
-    # it never clips the frame; short bars: OUTSIDE (dark, left-aligned).
-    xmax = max(values) if values else 1.0
-    for bar, val in zip(bars, values, strict=False):
-        share = f"   {val / total:.0%}" if total else ""
-        text = f"{val:,.0f} ₴{share}".replace(",", " ")
-        inside = bar.get_width() > xmax * 0.55
+    # --- column header ---
+    hy = top - title_h - header_h / 2
+    ax.text(x_name, hy, "ПОСЛУГА", fontsize=10.5, color=_MUTED, va="center")
+    ax.text(x_amount, hy, "СУМА", fontsize=10.5, color=_MUTED, va="center", ha="right")
+    ax.text(x_share, hy, "ЧАСТКА", fontsize=10.5, color=_MUTED, va="center", ha="right")
+
+    # --- data rows ---
+    max_share = max((s for _, _, s in rows), default=0.0) or 1.0
+    body_top = top - title_h - header_h
+    for i, (label, amount, share) in enumerate(rows):
+        ry = body_top - i * row_h  # row top edge
+        cy = ry - row_h / 2  # row centre
+        if i % 2 == 0:
+            ax.add_patch(
+                Rectangle(
+                    (0.02, ry - row_h),
+                    0.96,
+                    row_h,
+                    facecolor=_STRIPE,
+                    edgecolor="none",
+                    zorder=0,
+                )
+            )
+        accent = _CHART_PALETTE[i % len(_CHART_PALETTE)]
+        ax.text(x_name, cy, label, fontsize=13.5, color=_INK, va="center", zorder=2)
+        # share mini-bar: full track + accent fill scaled to the biggest share.
+        bar_h = row_h * 0.26
+        ax.add_patch(
+            FancyBboxPatch(
+                (x_bar0, cy - bar_h / 2),
+                x_bar1 - x_bar0,
+                bar_h,
+                boxstyle="round,pad=0,rounding_size=0.07",
+                facecolor=_TRACK,
+                edgecolor="none",
+                mutation_aspect=0.4,
+                zorder=1,
+            )
+        )
+        fill_w = (x_bar1 - x_bar0) * (share / max_share)
+        if fill_w > 0.004:
+            ax.add_patch(
+                FancyBboxPatch(
+                    (x_bar0, cy - bar_h / 2),
+                    fill_w,
+                    bar_h,
+                    boxstyle="round,pad=0,rounding_size=0.07",
+                    facecolor=accent,
+                    edgecolor="none",
+                    mutation_aspect=0.4,
+                    zorder=2,
+                )
+            )
         ax.text(
-            bar.get_width() - (xmax * 0.012 if inside else -xmax * 0.012),
-            bar.get_y() + bar.get_height() / 2,
-            text,
-            va="center",
-            ha="right" if inside else "left",
-            fontsize=14,
+            x_amount,
+            cy,
+            f"{_fmt_uah(amount)}",
+            fontsize=13.5,
             fontweight="bold",
-            color="white" if inside else "#264653",
+            color=_INK,
+            va="center",
+            ha="right",
+            zorder=2,
+        )
+        ax.text(
+            x_share,
+            cy,
+            f"{share:.0%}",
+            fontsize=12.5,
+            color=_MUTED,
+            va="center",
+            ha="right",
+            zorder=2,
         )
 
-    ax.set_xlim(0, xmax * 1.30)  # headroom for the outside labels
-    for side in ("top", "right", "bottom"):
-        ax.spines[side].set_visible(False)
-    # Big group labels on the left; bars are self-labelled so no x-axis.
-    ax.tick_params(left=False, bottom=False, labelbottom=False, labelsize=14)
-    for lbl in ax.get_yticklabels():
-        lbl.set_fontweight("bold")
-    fig.tight_layout()
-
+    fig.subplots_adjust(left=0.01, right=0.99, top=0.99, bottom=0.01)
     tmp = tempfile.NamedTemporaryFile(
         prefix="dvoretskyi_stats_", suffix=".png", delete=False
     )
