@@ -193,16 +193,20 @@ shared across properties (ЛЕЗ, Газ доставлення); the tap thread
 `categorize_payment(…, household=…)`. **Confirmations name the household** when the
 provider name is shared (`_household_suffix` in `bot/app.py` — «✅ Електроенергія (ЛЕЗ) ·
 <житло> — … записав») so it's clear where it landed; «запам'ятав» is shown only when a
-pattern was actually learned. **Matcher** (`mono/matcher.py`): a **shared-name** provider
-(`_ambiguous_provider_ids`) auto-matches **only via an account-number pattern** — its
-**особовий рахунок** (the longest ≥6-digit run, `account_token`) uniquely identifies the
-property, so `learn_pattern` learns that digit run for shared providers (one tap per
-address → auto-routes thereafter); a generic letter token shared by both properties is
-ignored by `match`. A bare **category keyword** (`UTILITY_KEYWORDS`: «газ»/«вода») is never
-learned for non-shared providers either (it'd hijack siblings — «газ» ⊂ «Газ (доставлення)»).
-A digit that already routes elsewhere (a shared EDRPOU, not a personal account) is dropped
-→ both keep prompting. Net: one tap per address, then automatic; truly identical
-descriptions keep prompting. **Photos are primary-only:** `_meter_providers` filters to the primary
+pattern was actually learned. **Shared-utility routing — home is the default**
+(`mono/matcher.py`, because monobank's webhook carries **nothing** that distinguishes the
+two properties: only `description`=«Електроенергія», `mcc`, a per-tx `receiptId` — no
+`comment`/counterparty/IBAN, verified live). A **shared-name** provider
+(`_ambiguous_provider_ids`): the **primary/home** one learns its **letter** token →
+bare «Електроенергія» auto-routes home; the **secondary** one is reachable only by its
+**особовий рахунок** (`account_token`, longest ≥6-digit run) — and a digit pattern beats a
+letter token in `match` (`_more_specific`). Since real flat payments carry no account
+number, they too land on home and the user re-points them with **one tap**: the LOGGED
+confirmation carries «↪ Це <інше житло>» (`ch:<payment_id>` → `on_correct_household` →
+`_other_household_provider` re-points to the same-named provider in the other household).
+A bare **category keyword** (`UTILITY_KEYWORDS`) is never learned (it'd hijack siblings —
+«газ» ⊂ «Газ (доставлення)»); a digit already routing elsewhere (shared EDRPOU) is dropped.
+**Photos are primary-only:** `_meter_providers` filters to the primary
 household (the secondary meter is static, filed without a photo).
 **Secondary static meter (Phase D):** a provider with `static_reading` set is unoccupied
 → its month-end meter nudge stages a `validated` `MeterReading` with that fixed value and

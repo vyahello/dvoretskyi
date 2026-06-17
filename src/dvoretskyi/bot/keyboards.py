@@ -81,6 +81,16 @@ def categorize_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def correct_household_keyboard(payment_id: int, label: str) -> InlineKeyboardMarkup:
+    """Single «↪ Це <інше житло>» tap to move an auto-logged shared payment to the other
+    property (the default is home; this re-points the rare secondary one)."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=label, callback_data=f"ch:{payment_id}")]
+        ]
+    )
+
+
 def snooze_keyboard(provider_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[

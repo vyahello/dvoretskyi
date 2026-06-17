@@ -513,6 +513,31 @@ async def on_categorize(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("ch:"))
+async def on_correct_household(callback: CallbackQuery) -> None:
+    """«↪ Це <інше житло>» — move an auto-logged shared payment to the other property."""
+    if not callback.data:
+        await callback.answer()
+        return
+    _, pid = callback.data.split(":", 1)
+    async with session_scope() as session:
+        payment = await session.get(Payment, int(pid))
+        if payment is None or payment.provider_id is None:
+            await callback.answer("Не знайшов платіж.")
+            return
+        cur = await session.get(Provider, payment.provider_id)
+        alt = await _other_household_provider(session, cur)
+        if alt is None:
+            await callback.answer("Нема куди переносити.")
+            return
+        payment.provider_id = alt.id
+        alt_hh = await session.get(Household, alt.household_id)
+        suffix = f" · {alt_hh.name}" if alt_hh and alt_hh.name else ""
+        text = f"✅ {alt.name}{suffix} — {payment.amount_uah} ₴ (перенесено)."
+    await _edit(callback, text)
+    await callback.answer("Перенесено ✓")
+
+
 @router.callback_query(F.data.startswith("s:"))
 async def on_snooze(callback: CallbackQuery) -> None:
     if not callback.data:
@@ -575,6 +600,27 @@ def _caption_provider(
                 if prov.category.value == cat:
                     return prov
     return None
+
+
+async def _other_household_provider(
+    session, provider: Provider | None
+) -> Provider | None:
+    """The same-named provider in the OTHER household (ЛЕЗ, Газ доставлення) — the target
+    of the «↪ Це <інше житло>» correction. None for a provider unique to one property."""
+    if provider is None or provider.household_id is None:
+        return None
+    rows = (
+        (
+            await session.execute(
+                select(Provider).where(
+                    Provider.name == provider.name, Provider.id != provider.id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return next((r for r in rows if r.household_id != provider.household_id), None)
 
 
 async def _household_suffix(session, provider: Provider | None) -> str:
@@ -1020,6 +1066,7 @@ def make_notifier(bot: Bot) -> Callable[[Notice], Awaitable[None]]:
 
     async def notify(notice: Notice) -> None:
         if notice.action is Action.LOGGED:
+            markup = None
             async with session_scope() as session:
                 prov = (
                     await session.get(Provider, notice.provider_id)
@@ -1027,9 +1074,23 @@ def make_notifier(bot: Bot) -> Callable[[Notice], Awaitable[None]]:
                     else None
                 )
                 suffix = await _household_suffix(session, prov)
+                # Shared utility auto-logged to the default home → offer one tap to
+                # move it to the other property (the rare secondary payment).
+                alt = await _other_household_provider(session, prov)
+                if alt is not None and notice.payment_id is not None:
+                    alt_hh = await session.get(Household, alt.household_id)
+                    label = (
+                        f"↪ Це {alt_hh.name}"
+                        if alt_hh and alt_hh.name
+                        else "↪ Інше житло"
+                    )
+                    markup = keyboards.correct_household_keyboard(
+                        notice.payment_id, label
+                    )
             await bot.send_message(
                 chat_id,
                 f"✅ {notice.provider_name}{suffix} — {notice.amount_uah} ₴, записав.",
+                reply_markup=markup,
             )
         elif notice.action is Action.UNCATEGORIZED and notice.payment_id is not None:
             async with session_scope() as session:

@@ -12,6 +12,7 @@ import re
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from dvoretskyi import households
 from dvoretskyi.config import get_settings
 from dvoretskyi.db.models import PatternSource, Provider, ProviderPattern
 
@@ -48,9 +49,10 @@ AGGREGATOR_TOKENS: frozenset[str] = frozenset(
 
 
 async def _ambiguous_provider_ids(session: AsyncSession) -> set[int]:
-    """Providers whose NAME is shared across households (ЛЕЗ, Газ доставлення). Their
-    descriptions are identical between properties, so no token distinguishes them — they
-    must never auto-match; the user picks the household on the categorize prompt."""
+    """Providers whose NAME is shared across households (ЛЕЗ, Газ доставлення). monobank
+    sends identical descriptions for both properties, so a generic token can't tell them
+    apart — they auto-route to the DEFAULT (primary/home) and the user re-points the rare
+    secondary one with a tap; only an account-number digit can route to a specific one."""
     provs = (await session.execute(select(Provider))).scalars().all()
     counts: dict[str, int] = {}
     for p in provs:
@@ -58,17 +60,33 @@ async def _ambiguous_provider_ids(session: AsyncSession) -> set[int]:
     return {p.id for p in provs if counts[p.name] > 1}
 
 
+async def _provider_household(session: AsyncSession) -> dict[int, int | None]:
+    return {
+        p.id: p.household_id for p in (await session.execute(select(Provider))).scalars()
+    }
+
+
+def _more_specific(new: str, cur: str) -> bool:
+    """Is `new` a better match than `cur`? An account-number (digit) pattern beats any
+    letter token (it pins the exact property); otherwise the longer pattern wins."""
+    if new.isdigit() != cur.isdigit():
+        return new.isdigit()
+    return len(new) > len(cur)
+
+
 async def match(session: AsyncSession, description: str) -> Provider | None:
     """Return the provider whose pattern is a case-insensitive substring of `description`.
 
-    Longer patterns win (more specific), so a learned full-name pattern beats a
-    short seed token if both happen to match. A **shared-name** provider (same utility in
-    both households) auto-matches ONLY via an account-number (digit) pattern — its
-    особовий рахунок uniquely identifies the property; a generic letter token shared by
-    both properties is ignored, so such a tx falls through to the household prompt.
+    Longer patterns win (more specific). A **shared-name** provider (same utility in both
+    households) auto-matches via a letter token only to the **primary/home** default; the
+    secondary property routes only via an account-number (digit) pattern — so a bare
+    «Електроенергія» lands on home (the user re-points the rare flat payment with a tap).
     """
     desc = (description or "").casefold()
     ambiguous = await _ambiguous_provider_ids(session)
+    hh_of = await _provider_household(session)
+    prim = await households.primary(session)
+    primary_id = prim.id if prim else None
     rows = (
         (await session.execute(select(ProviderPattern).order_by(ProviderPattern.id)))
         .scalars()
@@ -76,16 +94,23 @@ async def match(session: AsyncSession, description: str) -> Provider | None:
     )
 
     best: ProviderPattern | None = None
+    best_pat = ""
     for row in rows:
         pat = (row.pattern or "").casefold().strip()
         if not pat or pat not in desc:
             continue
-        # Shared-name provider: only an account-number (all-digit) pattern is specific
-        # enough to route to one property; skip generic letter tokens.
-        if row.provider_id in ambiguous and not pat.isdigit():
+        # Shared-name provider via a generic letter token → only the default home; the
+        # other property needs an account-number (all-digit) pattern to be reached.
+        if (
+            row.provider_id in ambiguous
+            and not pat.isdigit()
+            and hh_of.get(row.provider_id) != primary_id
+        ):
             continue
-        if best is None or len(pat) > len(best.pattern):
-            best = row
+        # An account-number (digit) pattern always wins over a letter token — it pins the
+        # exact property; otherwise the longer (more specific) letter pattern wins.
+        if best is None or _more_specific(pat, best_pat):
+            best, best_pat = row, pat
     if best is None:
         return None
     return await session.get(Provider, best.provider_id)
@@ -128,33 +153,42 @@ async def learn_pattern(
     new pattern, or None if nothing usable / already present.
     """
     if provider_id in await _ambiguous_provider_ids(session):
-        # Shared utility (ЛЕЗ, Газ доставлення): the letter token is identical between
-        # properties, so the only thing that distinguishes them is the особовий рахунок.
-        # Learn that digit run so the next payment carrying it auto-routes to this very
-        # property. No account in the description → nothing distinctive → learn nothing
-        # (this tx still prompts, no silent mis-routing).
-        token = account_token(raw_description)
-        if not token:
-            return None
-        # Guard: if that exact number already routes to a DIFFERENT provider, it's a
-        # shared code (e.g. the payee's EDRPOU), not a personal account → drop it and
-        # learn nothing, so both properties keep prompting rather than collapsing.
-        clash = (
-            (
-                await session.execute(
-                    select(ProviderPattern).where(ProviderPattern.pattern == token)
-                )
-            )
-            .scalars()
-            .all()
+        prov = await session.get(Provider, provider_id)
+        prim = await households.primary(session)
+        is_primary = (
+            prim is not None and prov is not None and prov.household_id == prim.id
         )
-        bad = [c for c in clash if c.provider_id != provider_id]
-        if bad:
-            for c in bad:
-                if c.source == PatternSource.learned:
-                    await session.delete(c)
-            await session.flush()
-            return None
+        if is_primary:
+            # Home is the DEFAULT for a shared utility: learn its letter token so every
+            # such payment auto-routes home (the user re-points the rare flat one by tap).
+            token = stable_token(raw_description)
+            if not token or token in AGGREGATOR_TOKENS or token in UTILITY_KEYWORDS:
+                return None
+        else:
+            # The non-default (secondary) property can only be reached automatically by
+            # its own особовий рахунок (a digit run) — a generic letter token would just
+            # collide with home. No account in the description → learn nothing.
+            token = account_token(raw_description)
+            if not token:
+                return None
+            # Guard: if that number already routes elsewhere, it's a shared code (EDRPOU),
+            # not a personal account → drop it and learn nothing.
+            clash = (
+                (
+                    await session.execute(
+                        select(ProviderPattern).where(ProviderPattern.pattern == token)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            bad = [c for c in clash if c.provider_id != provider_id]
+            if bad:
+                for c in bad:
+                    if c.source == PatternSource.learned:
+                        await session.delete(c)
+                await session.flush()
+                return None
     else:
         token = stable_token(raw_description)
         if not token or token in AGGREGATOR_TOKENS or token in UTILITY_KEYWORDS:
