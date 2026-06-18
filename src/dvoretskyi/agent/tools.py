@@ -1226,11 +1226,20 @@ def _mobile_balance_message() -> str:
     )
 
 
-async def get_provider_balance(session: AsyncSession, provider_name: str) -> dict:
+async def get_provider_balance(
+    session: AsyncSession, provider_name: str, aspect: str | None = None
+) -> dict:
     """Provider balance / top-up link. Gigabit+ → scraped balance + «треба платити?».
-    Mobile → just a top-up link (no balance API). Others → not configured."""
+    Mobile → just a top-up link (no balance API). Others → not configured.
+
+    `aspect` lets the model answer POINTEDLY instead of dumping everything: "fee" →
+    just the monthly subscription, "login" → just the login/contract, "balance"|"pay" →
+    balance & whether to top up, None/"all" → the full picture. The owner asked one
+    thing; reply to that one thing.
+    """
     prov = await _provider_by_name(session, provider_name)
     name = prov.name.casefold()
+    aspect = (aspect or "all").casefold()
 
     from dvoretskyi.agent.balance import (
         fetch_gigabit_balance,
@@ -1252,11 +1261,36 @@ async def get_provider_balance(session: AsyncSession, provider_name: str) -> dic
 
     settings = get_settings()
     # The login (contract number) lives in env — the user's own data, returned only to
-    # the allowlisted owner. Known even when the cabinet is down, so we can always answer
-    # «який мій логін на інтернет?». A trailing note carries it on every Gigabit+ reply.
+    # the allowlisted owner. Known even when the cabinet is down, so «який мій логін?» is
+    # always answerable without a live fetch.
     login = settings.gigabit_login or None
     login_note = f" Логін (договір): {login}." if login else ""
+
+    # Login-only ask → answer straight from env, no cabinet round-trip needed.
+    if aspect == "login":
+        msg = f"Логін (договір): {login}." if login else "Логін Gigabit+ не налаштований."
+        return {"ok": bool(login), "provider": prov.name, "login": login, "message": msg}
+
     bal = await fetch_gigabit_balance()
+    # Fee falls back to the configured value, so «яка абонплата?» works even if the
+    # cabinet is momentarily down.
+    fee = bal.monthly_fee or settings.gigabit_monthly_fee
+
+    # Fee-only ask → just the subscription, pointedly.
+    if aspect == "fee":
+        return {
+            "ok": True,
+            "provider": prov.name,
+            "monthly_fee": str(fee),
+            "message": random.choice(
+                [
+                    f"Місячна абонплата — {fee} ₴.",
+                    f"Тариф {fee} ₴ на місяць.",
+                    f"Інтернет коштує {fee} ₴ щомісяця.",
+                ]
+            ),
+        }
+
     if not bal.ok or bal.balance is None:
         # Balance unavailable, but the login is from env — still answer it if asked.
         return {
@@ -1266,9 +1300,10 @@ async def get_provider_balance(session: AsyncSession, provider_name: str) -> dic
             "message": f"Не зміг дістати баланс Gigabit+ — {bal.note}.{login_note}",
         }
 
-    # Fee straight from the cabinet tariff; config value is only a fallback.
-    fee = bal.monthly_fee or settings.gigabit_monthly_fee
     fee_label = f"{fee:.2f}".rstrip("0").rstrip(".")
+    # Balance/pay or full ask. "balance"/"pay" stays focused (no login/fee tail); the
+    # default "all" carries the fee in-line and the login note.
+    full = aspect not in ("balance", "pay")
     if bal.balance < fee:
         return {
             "ok": True,
@@ -1279,7 +1314,8 @@ async def get_provider_balance(session: AsyncSession, provider_name: str) -> dic
             "need_to_pay": True,
             "pay_link": gigabit_pay_link(fee),  # rendered as a button, not raw URL
             "pay_label": f"💳 Поповнити {fee_label} ₴",
-            "message": _balance_low_message(str(bal.balance), str(fee)) + login_note,
+            "message": _balance_low_message(str(bal.balance), str(fee))
+            + (login_note if full else ""),
         }
     return {
         "ok": True,
@@ -1288,8 +1324,10 @@ async def get_provider_balance(session: AsyncSession, provider_name: str) -> dic
         "monthly_fee": str(fee),
         "login": login,
         "need_to_pay": False,
-        "message": _balance_ok_message(str(bal.balance), bal.last_topup, str(fee))
-        + login_note,
+        "message": _balance_ok_message(
+            str(bal.balance), bal.last_topup, str(fee) if full else None
+        )
+        + (login_note if full else ""),
     }
 
 

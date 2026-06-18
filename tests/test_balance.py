@@ -212,6 +212,30 @@ async def test_balance_reply_carries_the_internet_login(
     assert down["login"] == "0000TEST" and "0000TEST" in down["message"]
 
 
+async def test_balance_aspect_gives_pointed_answers(
+    session, providers, _patch_fetch, monkeypatch
+):
+    """A pointed question gets a pointed answer — not the whole balance dump."""
+    from dvoretskyi.agent import tools
+    from dvoretskyi.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "gigabit_login", "0000TEST")
+    _patch_fetch(
+        Balance(Decimal("400.00"), "2026-06-14", ok=True, monthly_fee=Decimal("275.00"))
+    )
+
+    # aspect="fee" → only the subscription, no balance / login / last top-up noise.
+    fee = await tools.get_provider_balance(session, "Інтернет (Gigabit+)", aspect="fee")
+    assert "275" in fee["message"]
+    assert "400" not in fee["message"] and "0000TEST" not in fee["message"]
+
+    # aspect="login" → only the login, answered without a cabinet round-trip.
+    login = await tools.get_provider_balance(
+        session, "Інтернет (Gigabit+)", aspect="login"
+    )
+    assert "0000TEST" in login["message"] and "400" not in login["message"]
+
+
 async def test_balance_unsupported_provider_raises(session, providers):
     from dvoretskyi.agent import tools
 
