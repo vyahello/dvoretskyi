@@ -180,7 +180,8 @@ def test_progress_lines_read_naturally_in_ukrainian():
     gas = dispatcher._progress_line(
         "get_meter_history", {"provider_name": "Газ (постачання)"}
     )
-    assert "показники газу" in gas
+    # Genitive «газу» (not the broken «газ») — whichever phrasing the pool picks.
+    assert "газу" in gas
     bal = dispatcher._progress_line(
         "get_provider_balance", {"provider_name": "Інтернет (Gigabit+)"}
     ).casefold()

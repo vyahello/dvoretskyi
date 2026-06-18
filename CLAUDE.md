@@ -238,6 +238,11 @@ SQLite). Tests/fixtures use fake names («Житло 1/2»), never real addresse
   the `message`. Never let the model fabricate amounts/balances/"paid"/meter values.
 - Photo/meter taps call tools directly (deterministic), never through the LLM —
   `submit_meter_reading` needs an `image_path` the model never has.
-- Still stubbed (raise `NotImplementedError`): `get_provider_balance` (no source —
-  spec §9) and `WebFormChannel` live submit (provider auth not reverse-engineered).
+- `get_provider_balance` is **live** for Інтернет (Gigabit+) and Мобільний: `agent/balance.py`
+  scrapes the Gigabit+ cabinet (CSRF login → user-state JSON) for balance, **last top-up**,
+  the **monthly fee** (`tarif_plan.month_fee` — not hardcoded), and the reply also carries
+  the **login/contract number** (`gigabit_login` from env, the owner's own data) so «нагадай
+  мій логін / яка абонплата» are answered from the tool, never from the model's memory; login
+  survives even when the cabinet is down. Other providers still raise `NotImplementedError`.
+- Still stubbed: `WebFormChannel` live submit (provider auth not reverse-engineered);
   `AnthropicAPIProvider` is a drop-in swap, not yet implemented.

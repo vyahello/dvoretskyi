@@ -192,6 +192,26 @@ async def test_balance_scrape_failure_is_graceful(session, providers, _patch_fet
     assert res["ok"] is False and "не зміг" in res["message"].lower()
 
 
+async def test_balance_reply_carries_the_internet_login(
+    session, providers, _patch_fetch, monkeypatch
+):
+    """«нагадай мій логін на інтернет» → the login (env, the owner's own data) rides on
+    the Gigabit+ balance reply, even when the cabinet is down."""
+    from dvoretskyi.agent import tools
+    from dvoretskyi.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "gigabit_login", "0000TEST")
+
+    _patch_fetch(Balance(Decimal("400.00"), "2026-06-14", ok=True))
+    ok = await tools.get_provider_balance(session, "Інтернет (Gigabit+)")
+    assert ok["login"] == "0000TEST" and "0000TEST" in ok["message"]
+
+    # Cabinet down → balance lost, but the login still reaches the user.
+    _patch_fetch(Balance(None, None, ok=False, note="кабінет недоступний"))
+    down = await tools.get_provider_balance(session, "Інтернет (Gigabit+)")
+    assert down["login"] == "0000TEST" and "0000TEST" in down["message"]
+
+
 async def test_balance_unsupported_provider_raises(session, providers):
     from dvoretskyi.agent import tools
 
@@ -204,9 +224,10 @@ def test_balance_messages_vary_but_keep_numbers():
     facts (balance / fee / last top-up) stay put."""
     from dvoretskyi.agent import tools
 
-    ok = {tools._balance_ok_message("400.00", "2026-06-14") for _ in range(40)}
+    ok = {tools._balance_ok_message("400.00", "2026-06-14", "200.00") for _ in range(40)}
     assert len(ok) > 1  # more than one phrasing surfaces
-    assert all("400.00" in m and "2026-06-14" in m for m in ok)
+    # Balance, last top-up AND the monthly fee all stay put across phrasings.
+    assert all("400.00" in m and "2026-06-14" in m and "200.00" in m for m in ok)
 
     low = {tools._balance_low_message("120.00", "200.00") for _ in range(40)}
     assert len(low) > 1

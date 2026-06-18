@@ -1170,16 +1170,19 @@ async def get_meter_history(
 
 # Varied phrasings so a repeated «Баланс інтернету» tap never reads like a canned
 # autoreply. The numbers (balance/fee/last top-up) stay factual; only the wording rolls.
-def _balance_ok_message(balance: str, last_topup: str | None) -> str:
+def _balance_ok_message(
+    balance: str, last_topup: str | None, fee: str | None = None
+) -> str:
+    fee_note = f" (місячна абонплата {fee} ₴)" if fee else ""
     head = random.choice(
         [
-            f"Платити не треба — баланс {balance} ₴ спокійно перекриває абонплату",
-            f"Усе гаразд: {balance} ₴ на рахунку, цього стане надовго",
-            f"Інтернет проплачений наперед — {balance} ₴, можна про нього не думати",
-            f"Баланс {balance} ₴ — більш ніж досить, не чіпаємо",
-            f"З інтернетом тиша: {balance} ₴ у запасі, без приводу для хвилювань",
-            f"Хвилюватися нема за що — {balance} ₴ на рахунку, з запасом",
-            f"Інтернет у повному порядку: {balance} ₴, абонплата перекрита",
+            f"Платити не треба — баланс {balance} ₴ перекриває абонплату{fee_note}",
+            f"Усе гаразд: {balance} ₴ на рахунку{fee_note}, цього стане надовго",
+            f"Інтернет проплачений наперед — {balance} ₴{fee_note}, можна не думати",
+            f"Баланс {balance} ₴ — більш ніж досить{fee_note}, не чіпаємо",
+            f"З інтернетом тиша: {balance} ₴ у запасі{fee_note}, без приводу хвилюватись",
+            f"Хвилюватися нема за що — {balance} ₴ на рахунку{fee_note}, з запасом",
+            f"Інтернет у повному порядку: {balance} ₴{fee_note}, абонплата перекрита",
         ]
     )
     if not last_topup:
@@ -1248,12 +1251,19 @@ async def get_provider_balance(session: AsyncSession, provider_name: str) -> dic
         raise NotImplementedError(f"Balance source not configured for {prov.name}.")
 
     settings = get_settings()
+    # The login (contract number) lives in env — the user's own data, returned only to
+    # the allowlisted owner. Known even when the cabinet is down, so we can always answer
+    # «який мій логін на інтернет?». A trailing note carries it on every Gigabit+ reply.
+    login = settings.gigabit_login or None
+    login_note = f" Логін (договір): {login}." if login else ""
     bal = await fetch_gigabit_balance()
     if not bal.ok or bal.balance is None:
+        # Balance unavailable, but the login is from env — still answer it if asked.
         return {
             "ok": False,
             "provider": prov.name,
-            "message": f"Не зміг дізнатися баланс Gigabit+ — {bal.note}.",
+            "login": login,
+            "message": f"Не зміг дістати баланс Gigabit+ — {bal.note}.{login_note}",
         }
 
     # Fee straight from the cabinet tariff; config value is only a fallback.
@@ -1265,18 +1275,21 @@ async def get_provider_balance(session: AsyncSession, provider_name: str) -> dic
             "provider": prov.name,
             "balance": str(bal.balance),
             "monthly_fee": str(fee),
+            "login": login,
             "need_to_pay": True,
             "pay_link": gigabit_pay_link(fee),  # rendered as a button, not raw URL
             "pay_label": f"💳 Поповнити {fee_label} ₴",
-            "message": _balance_low_message(str(bal.balance), str(fee)),
+            "message": _balance_low_message(str(bal.balance), str(fee)) + login_note,
         }
     return {
         "ok": True,
         "provider": prov.name,
         "balance": str(bal.balance),
         "monthly_fee": str(fee),
+        "login": login,
         "need_to_pay": False,
-        "message": _balance_ok_message(str(bal.balance), bal.last_topup),
+        "message": _balance_ok_message(str(bal.balance), bal.last_topup, str(fee))
+        + login_note,
     }
 
 
