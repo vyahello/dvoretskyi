@@ -117,8 +117,18 @@ zero / spike vs history → `needs_confirm`) → store `MeterReading` → submit
   bot's photo flow now routes everything through the infolviv date-gate above.
 - Only **gas** and **water** have meters (set `Provider.meter_window`). Electricity /
   internet / housing have none. OCR failure → `value=None` → ask to retype (never guess).
-- Temp photos live in a private dir and are deleted right after processing (image bytes
-  never logged).
+- The **temp download** of a photo is deleted right after OCR, but a **compressed copy
+  is archived** (`agent/photo_store.py`: downscale to `METER_PHOTO_MAX_LONG_SIDE`,
+  re-encode JPEG `METER_PHOTO_QUALITY`, into the private `METER_PHOTO_DIR` / default
+  `~/.dvoretskyi/meter_photos`, 0o700) and its path stored in `MeterReading.photo_ref`,
+  so the user can pull a meter's photo back later. The archive copy follows the reading:
+  superseded/deleted readings have their photo removed (`photo_store.remove`, guarded to
+  the archive dir); **submitted** readings keep theirs (permanent record). Image bytes are
+  never logged. `get_meter_photo(provider_name?, cycle?)` locates the freshest archived
+  photo (filtered by meter/cycle) and returns its path + a caption naming the **household**
+  («📸 Газ (постачання) · <житло> — 1888.14 (червень 2026)»); the bot sends the file
+  (`_respond_to_text` → `answer_photo` when `tool_result.photo_path` is set), so
+  «витягни фото газу» replies with the image, not text.
 
 ## Voice (L2.5)
 Send the bot a **voice note** → `F.voice` handler downloads the OGG to the private media
@@ -167,7 +177,9 @@ lazily so the suite never loads it) and pass `now` explicitly to reminder/window
 **Meters:** `CLAUDE_VISION_TIMEOUT_SECONDS` (vision is slower than text),
 `SUBMISSION_CHANNELS=gas:manual,water:manual`, `SMS_GATEWAY_URL` (empty → deep link only),
 `OCR_MAX_LONG_SIDE`, `DELTA_SPIKE_K`, `DELTA_ABS_CAP`, `METER_WINDOW_DAYS`,
-`METER_SUBMIT_FROM_DAY` (28), `METER_EARLY_SUBMIT_ATTEMPTS` (3).
+`METER_SUBMIT_FROM_DAY` (28), `METER_EARLY_SUBMIT_ATTEMPTS` (3),
+`METER_PHOTO_DIR` (empty → `~/.dvoretskyi/meter_photos`), `METER_PHOTO_MAX_LONG_SIDE`
+(1280), `METER_PHOTO_QUALITY` (70).
 **Voice:** `STT_PROVIDER` (whisper|none), `WHISPER_MODEL` (small default; base to save
 RAM), `WHISPER_COMPUTE_TYPE` (int8), `WHISPER_LANGUAGE` (uk), `STT_TIMEOUT_SECONDS`.
 

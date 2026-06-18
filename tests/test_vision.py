@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from sqlalchemy import select
 
+from dvoretskyi import clock
 from dvoretskyi.agent import tools
 from dvoretskyi.agent.vision import _extract_json_object, _parse_meter_read
 from dvoretskyi.db.models import MeterReading, MeterStatus
@@ -79,11 +80,24 @@ async def test_value_rounded_half_up_to_provider_precision(session, providers):
     assert res["value"] == "4827.06"
 
 
-async def test_delta_validation_runs_on_decimals(session, providers):
-    # Two close water readings → small positive 3rd-decimal consumption → validated.
-    await tools.submit_meter_reading(
-        session, "Холодна вода", "/p.png", vision=FakeVisionProvider(Decimal("103.999"))
+async def _seed_prior(session, provider, value: str, cycle: str = "2026-05") -> None:
+    """A filed reading from a PRIOR month — the real validation baseline (consumption is
+    always measured against an earlier cycle, never a same-month re-shoot)."""
+    session.add(
+        MeterReading(
+            provider_id=provider.id,
+            cycle=cycle,
+            value=Decimal(value),
+            status=MeterStatus.submitted,
+            created_at=clock.now(),
+        )
     )
+    await session.commit()
+
+
+async def test_delta_validation_runs_on_decimals(session, providers):
+    # Prior-month baseline, then this month's reading → small positive consumption.
+    await _seed_prior(session, providers["Холодна вода"], "103.999")
     res = await tools.submit_meter_reading(
         session, "Холодна вода", "/p.png", vision=FakeVisionProvider(Decimal("104.250"))
     )
@@ -94,10 +108,8 @@ async def test_delta_validation_runs_on_decimals(session, providers):
 async def test_pipeline_flagged_reading_is_needs_confirm_not_submitted(
     session, providers
 ):
-    # baseline, then a backwards reading → needs_confirm (never submitted)
-    await tools.submit_meter_reading(
-        session, "Газ (постачання)", "/p.png", vision=FakeVisionProvider(Decimal("1000"))
-    )
+    # prior-month baseline, then a backwards reading → needs_confirm (never submitted)
+    await _seed_prior(session, providers["Газ (постачання)"], "1000")
     res = await tools.submit_meter_reading(
         session, "Газ (постачання)", "/p.png", vision=FakeVisionProvider(Decimal("500"))
     )

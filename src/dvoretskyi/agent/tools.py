@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from dvoretskyi import clock, households
-from dvoretskyi.agent import meters
+from dvoretskyi.agent import meters, photo_store
 from dvoretskyi.agent.submission import channel_for
 from dvoretskyi.agent.vision import MeterRead, VisionProvider, get_vision_provider
 from dvoretskyi.config import get_settings
@@ -649,22 +649,25 @@ async def snooze_reminder(
 # --- meters (L2, Phase 2) --------------------------------------------------
 
 
-async def _history_values(session: AsyncSession, provider_id: int) -> list[Decimal]:
-    """Validated/submitted readings for a provider, most-recent first."""
+async def _history_values(
+    session: AsyncSession, provider_id: int, exclude_cycle: str | None = None
+) -> list[Decimal]:
+    """Validated/submitted readings for a provider, most-recent first.
+
+    `exclude_cycle` drops readings of that month so a SECOND photo of the same meter in
+    the same month is validated against the PREVIOUS month's reading — not against the
+    earlier same-month photo (which would otherwise read as «0 спожито» or a bogus delta).
+    Meters are cumulative: a month's use is always vs an earlier *different* cycle.
+    """
+    stmt = select(MeterReading).where(
+        MeterReading.provider_id == provider_id,
+        MeterReading.value.is_not(None),
+        MeterReading.status.in_((MeterStatus.validated, MeterStatus.submitted)),
+    )
+    if exclude_cycle is not None:
+        stmt = stmt.where(MeterReading.cycle != exclude_cycle)
     rows = (
-        (
-            await session.execute(
-                select(MeterReading)
-                .where(
-                    MeterReading.provider_id == provider_id,
-                    MeterReading.value.is_not(None),
-                    MeterReading.status.in_(
-                        (MeterStatus.validated, MeterStatus.submitted)
-                    ),
-                )
-                .order_by(MeterReading.created_at.desc())
-            )
-        )
+        (await session.execute(stmt.order_by(MeterReading.created_at.desc())))
         .scalars()
         .all()
     )
@@ -694,6 +697,7 @@ async def _supersede_pending(
         .all()
     )
     for r in rows:
+        photo_store.remove(r.photo_ref)  # drop the superseded draft's archived photo
         await session.delete(r)
     if rows:
         await session.flush()
@@ -806,7 +810,8 @@ async def submit_meter_reading(
     quantum = Decimal(1).scaleb(-prov.meter_decimals)
     value = read.value.quantize(quantum, rounding=ROUND_HALF_UP)
 
-    history = await _history_values(session, prov.id)
+    # Compare against earlier MONTHS only — a re-shoot of this month isn't "consumption".
+    history = await _history_values(session, prov.id, exclude_cycle=reading.cycle)
     verdict = meters.validate(
         value,
         history,
@@ -817,6 +822,11 @@ async def submit_meter_reading(
     reading.consumption_delta = verdict.consumption
     reading.status = verdict.status
     await session.flush()
+    # Keep a compressed copy so the user can pull this meter's photo back later. The
+    # temp download is deleted by the caller; this archive copy persists in photo_ref.
+    archived = photo_store.archive(image_path, reading.id)
+    if archived:
+        reading.photo_ref = archived
     # A fresh reading for this meter supersedes any earlier un-filed draft of it.
     await _supersede_pending(session, prov.id, reading.id)
 
@@ -999,6 +1009,7 @@ async def delete_meter_reading(
         )
         value = str(reading.value) if reading.value is not None else "—"
         name = owner.name if owner else "лічильник"
+        photo_store.remove(reading.photo_ref)  # drop its archived photo too
         await session.delete(reading)
         await session.flush()
         return {
@@ -1059,6 +1070,7 @@ async def execute_meter_delete(session: AsyncSession, scope: str) -> dict:
     provider_id, cycle = _decode_scope(scope)
     targets = await _deletable_readings(session, provider_id, cycle)
     for reading in targets:
+        photo_store.remove(reading.photo_ref)  # drop archived photos too
         await session.delete(reading)
     await session.flush()
     if not targets:
@@ -1162,6 +1174,65 @@ async def get_meter_history(
         "provider": prov.name,
         "readings": readings,
         "message": _meter_history_message(prov.name, readings, portal),
+    }
+
+
+async def _household_name(session: AsyncSession, provider: Provider) -> str | None:
+    if provider.household_id is None:
+        return None
+    hh = await session.get(Household, provider.household_id)
+    return hh.name if hh else None
+
+
+async def get_meter_photo(
+    session: AsyncSession,
+    provider_name: str | None = None,
+    cycle: str | None = None,
+) -> dict:
+    """Pull back the saved photo of a meter («витягни фото газу»).
+
+    Returns the archived photo path + a caption naming the meter, household and value.
+    Provider/cycle narrow it; otherwise the freshest archived photo wins. The bot sends
+    the file — this tool only locates it. No photo on disk → ok=False with a hint.
+    """
+    stmt = select(MeterReading).where(MeterReading.photo_ref.is_not(None))
+    if provider_name:
+        prov = await _provider_by_name(session, provider_name)
+        stmt = stmt.where(MeterReading.provider_id == prov.id)
+    if cycle:
+        stmt = stmt.where(MeterReading.cycle == _normalize_cycle(cycle))
+    rows = (
+        (await session.execute(stmt.order_by(MeterReading.created_at.desc())))
+        .scalars()
+        .all()
+    )
+    # The newest reading whose archived file still exists on disk.
+    reading = next((r for r in rows if photo_store.exists(r.photo_ref)), None)
+    if reading is None:
+        scope = f" {provider_name}" if provider_name else ""
+        return {
+            "ok": False,
+            "message": f"Фото лічильника{scope} не збереглося — скинь нове, відкладу.",
+        }
+    owner = (
+        await session.get(Provider, reading.provider_id)
+        if reading.provider_id is not None
+        else None
+    )
+    name = owner.name if owner else "Лічильник"
+    hh = await _household_name(session, owner) if owner else None
+    suffix = f" · {hh}" if hh else ""
+    period = clock.format_cycle(reading.cycle) if reading.cycle else ""
+    value = f" — {reading.value}" if reading.value is not None else ""
+    when = f" ({period})" if period else ""
+    caption = f"📸 {name}{suffix}{value}{when}"
+    return {
+        "ok": True,
+        "provider": name,
+        "household": hh,
+        "photo_path": reading.photo_ref,
+        "caption": caption,
+        "message": caption,
     }
 
 
@@ -1345,6 +1416,6 @@ TOOLS: dict[str, Tool] = {
     "confirm_meter_reading": confirm_meter_reading,
     "delete_meter_reading": delete_meter_reading,
     "get_meter_history": get_meter_history,
-    # Stub until a balance source exists (spec §9):
+    "get_meter_photo": get_meter_photo,
     "get_provider_balance": get_provider_balance,
 }

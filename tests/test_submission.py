@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from dvoretskyi import clock
 from dvoretskyi.agent import tools
 from dvoretskyi.agent.submission import ManualAssistChannel, SmsChannel, channel_for
 from dvoretskyi.db.models import (
@@ -57,17 +58,19 @@ async def test_sms_channel_dry_run_formats_body_without_posting():
 
 
 async def test_confirm_then_mark_submitted_flow(session, providers):
-    # A flagged reading: baseline 1000, then 500 (backwards) → needs_confirm.
-    await tools.submit_meter_reading(
-        session, "Газ (постачання)", "/p.png", vision=FakeVisionProvider(Decimal("1000"))
+    # A prior-month baseline (1000), then this month a backwards reading (900) →
+    # needs_confirm. Baseline is a PRIOR cycle: consumption is never vs a same-month shot.
+    session.add(
+        MeterReading(
+            provider_id=providers["Газ (постачання)"].id,
+            cycle="2026-05",
+            value=Decimal("1000"),
+            status=MeterStatus.submitted,
+            created_at=clock.now(),
+        )
     )
-    flagged = await tools.submit_meter_reading(
-        session, "Газ (постачання)", "/p.png", vision=FakeVisionProvider(Decimal("1500"))
-    )
-    # (1500 is a normal +500 jump under the abs cap → validated, not flagged)
-    assert flagged["status"] == MeterStatus.validated.value
+    await session.commit()
 
-    # Force a genuine needs_confirm via a backwards reading.
     flagged = await tools.submit_meter_reading(
         session, "Газ (постачання)", "/p.png", vision=FakeVisionProvider(Decimal("900"))
     )

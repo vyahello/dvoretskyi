@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from dvoretskyi import clock
+from dvoretskyi.agent import tools
 from dvoretskyi.bot import app as bot_app
 from dvoretskyi.config import get_settings
 from dvoretskyi.db.models import MeterReading, MeterStatus
@@ -41,6 +42,115 @@ def test_gated_reply_before_window_offers_early():
     text, kb = bot_app._gated_meter_reply(_validated(cons=None), now=_at(10))
     assert "Подам у вікні" in text and "тисни нижче" in text
     assert _first_cb(kb) == "se:7:1"  # «подай раніше», attempt 1
+
+
+# --- several photos of the same meter in the same month -----------------------
+
+
+async def test_second_same_month_photo_supersedes_and_compares_to_prior_month(
+    engine, providers, session
+):
+    """Two photos of the same meter in one month: the newest replaces the previous draft
+    (one row kept), and its consumption is measured vs the PRIOR month — not the earlier
+    same-month photo (so a re-shoot never shows a bogus «0 спожито»)."""
+    from sqlalchemy import select
+
+    from dvoretskyi.agent.vision import MeterRead
+
+    gas = providers["Газ (постачання)"]
+    # A filed reading from last month is the real baseline (1880).
+    session.add(
+        MeterReading(
+            provider_id=gas.id,
+            cycle="2026-05",
+            value=Decimal("1880.00"),
+            status=MeterStatus.submitted,
+            created_at=_at(29, month=5),
+        )
+    )
+    await session.commit()
+
+    def _read(v: str) -> MeterRead:
+        return MeterRead(value=Decimal(v), raw=v, note="", kind="gas")
+
+    # First June photo, then a corrected re-shoot of the SAME month.
+    first = await tools.submit_meter_reading(
+        session,
+        "Газ (постачання)",
+        "/tmp/x1.jpg",
+        read=_read("1888.00"),
+        auto_submit=False,
+    )
+    assert first["ok"] and first["consumption"] == "8.000"  # 1888 - 1880 (prior month)
+    second = await tools.submit_meter_reading(
+        session,
+        "Газ (постачання)",
+        "/tmp/x2.jpg",
+        read=_read("1888.50"),
+        auto_submit=False,
+    )
+    # Compared to May (1880), NOT to the first June photo (1888) → not «0 спожито».
+    assert second["ok"] and second["consumption"] == "8.500"
+
+    # Only ONE June draft survives (superseded), plus the permanent May record.
+    rows = (
+        (
+            await session.execute(
+                select(MeterReading).where(MeterReading.provider_id == gas.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    june = [r for r in rows if r.cycle == "2026-06"]
+    assert len(june) == 1 and june[0].value == Decimal("1888.50")
+
+
+# --- get_meter_photo: pull a saved photo back, captioned with the household ---
+
+
+async def test_get_meter_photo_returns_path_and_household_caption(
+    engine, providers, session, tmp_path
+):
+    gas = providers["Газ (постачання)"]  # primary household ("Житло 1")
+    photo = tmp_path / "saved.jpg"
+    photo.write_bytes(b"not-a-real-jpeg-but-a-file")
+    session.add(
+        MeterReading(
+            provider_id=gas.id,
+            cycle="2026-06",
+            value=Decimal("1888.14"),
+            status=MeterStatus.validated,
+            created_at=clock.now(),
+            photo_ref=str(photo),
+        )
+    )
+    await session.commit()
+
+    res = await tools.get_meter_photo(session, provider_name="Газ (постачання)")
+    assert res["ok"] is True
+    assert res["photo_path"] == str(photo)
+    assert res["household"] == "Житло 1"
+    # Caption names the meter, the property and the value.
+    assert "Газ (постачання)" in res["caption"] and "Житло 1" in res["caption"]
+    assert "1888.14" in res["caption"]
+
+
+async def test_get_meter_photo_missing_file_is_graceful(engine, providers, session):
+    gas = providers["Газ (постачання)"]
+    session.add(
+        MeterReading(
+            provider_id=gas.id,
+            cycle="2026-06",
+            value=Decimal("10"),
+            status=MeterStatus.validated,
+            created_at=clock.now(),
+            photo_ref="/tmp/gone_forever.jpg",  # ref present, file absent
+        )
+    )
+    await session.commit()
+    res = await tools.get_meter_photo(session, provider_name="Газ (постачання)")
+    assert res["ok"] is False and "не збереглося" in res["message"]
 
 
 # --- _file_reading: enabled → submitted; disabled → manual fallback ----------

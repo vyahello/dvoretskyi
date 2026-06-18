@@ -419,6 +419,9 @@ async def _drafts_block() -> str | None:
         if not rows:
             return None
         provs = {p.id: p for p in (await session.execute(select(Provider))).scalars()}
+        hh_names = {
+            h.id: h.name for h in (await session.execute(select(Household))).scalars()
+        }
     # Defensive de-dup: freshest per meter (supersede already keeps it to one).
     freshest: dict[int, MeterReading] = {}
     for r in rows:
@@ -430,10 +433,17 @@ async def _drafts_block() -> str | None:
         label = (
             _KIND_LABEL.get(prov.category.value, prov.name) if prov else "🔢 Лічильник"
         )
+        # Name the property, like the portal block — so a draft never reads ambiguously.
+        hh = (
+            hh_names.get(prov.household_id)
+            if prov and prov.household_id is not None
+            else None
+        )
+        suffix = f" · {hh}" if hh else ""
         state = (
             "чекає підтвердження" if r.status is MeterStatus.needs_confirm else "записав"
         )
-        lines.append(f"{html.escape(label)} — {r.value} ({state})")
+        lines.append(f"{html.escape(label + suffix)} — {r.value} ({state})")
     return "\n".join(lines)
 
 
@@ -529,6 +539,13 @@ async def _respond_to_text(message: Message, user_text: str) -> None:
     _DIALOGUE.append({"role": "assistant", "text": reply.text or ""})
     markup = None
     tr = reply.tool_result or {}
+    # A retrieved meter photo: send the image itself with its caption, not a text line.
+    photo_path = tr.get("photo_path")
+    if photo_path and os.path.exists(photo_path):
+        await message.answer_photo(
+            FSInputFile(photo_path), caption=tr.get("caption") or reply.text
+        )
+        return
     if tr.get("pay_link"):
         markup = keyboards.pay_keyboard(tr["pay_link"], label=tr.get("pay_label"))
     elif tr.get("confirm_delete"):

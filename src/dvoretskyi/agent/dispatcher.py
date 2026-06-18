@@ -99,6 +99,12 @@ def _progress_line(tool: str, args: dict) -> str:
         return random.choice(
             ["Підіймаю показники…", "Дивлюся показники…", "Гортаю журнал лічильників…"]
         )
+    if tool == "get_meter_photo":
+        if topic:
+            return random.choice(
+                [f"Шукаю фото лічильника {topic}…", f"Дістаю знімок {topic}…"]
+            )
+        return random.choice(["Шукаю збережене фото лічильника…", "Дістаю знімок…"])
     if tool == "get_unpaid":
         return random.choice(
             [
