@@ -177,6 +177,8 @@ async def test_get_meter_photo_returns_path_and_household_caption(
     # Caption names the meter, the property and the value.
     assert "Газ (постачання)" in res["caption"] and "Житло 1" in res["caption"]
     assert "1888.14" in res["caption"]
+    # HTML caption wraps the value in <code> so Telegram won't auto-link the digit run.
+    assert "<code>1888.140</code>" in res["caption_html"]
 
 
 async def test_get_meter_photo_missing_file_is_graceful(engine, providers, session):

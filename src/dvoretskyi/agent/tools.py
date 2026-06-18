@@ -7,6 +7,7 @@ Amounts are Decimal internally and stringified at the dict boundary.
 
 from __future__ import annotations
 
+import html
 import logging
 import random
 import tempfile
@@ -1226,12 +1227,21 @@ async def get_meter_photo(
     value = f" — {reading.value}" if reading.value is not None else ""
     when = f" ({period})" if period else ""
     caption = f"📸 {name}{suffix}{value}{when}"
+    # HTML variant: the value rides in <code> so Telegram doesn't auto-link the digit run
+    # «151/54 — 1888.140» as a phone number (same trick as the portal block's «рахунок»).
+    val_html = (
+        f" — <code>{html.escape(str(reading.value))}</code>"
+        if reading.value is not None
+        else ""
+    )
+    caption_html = f"📸 {html.escape(name + suffix)}{val_html}{html.escape(when)}"
     return {
         "ok": True,
         "provider": name,
         "household": hh,
         "photo_path": reading.photo_ref,
         "caption": caption,
+        "caption_html": caption_html,
         "message": caption,
     }
 

@@ -554,8 +554,11 @@ async def _respond_to_text(message: Message, user_text: str) -> None:
     # A retrieved meter photo: send the image itself with its caption, not a text line.
     photo_path = tr.get("photo_path")
     if photo_path and os.path.exists(photo_path):
+        # HTML caption (value in <code>) so Telegram doesn't auto-link the digit run.
         await message.answer_photo(
-            FSInputFile(photo_path), caption=tr.get("caption") or reply.text
+            FSInputFile(photo_path),
+            caption=tr.get("caption_html") or tr.get("caption") or reply.text,
+            parse_mode="HTML",
         )
         return
     if tr.get("pay_link"):
