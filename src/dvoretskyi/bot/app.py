@@ -223,7 +223,7 @@ async def cmd_stats(message: Message) -> None:
 
 @router.callback_query(F.data.startswith("st:"))
 async def on_stats_scope(callback: CallbackQuery) -> None:
-    """«📊 <житло>» → that property's breakdown; «🏘 Порівняти житла» → split."""
+    """«📊 <житло>» → that property's breakdown; «🏘 Розподіл по житлах» → split."""
     if not callback.data:
         await callback.answer()
         return
@@ -318,16 +318,33 @@ def _submission_window_label(now: datetime | None = None) -> str:
     return f"{start}–{last_day} число місяця"
 
 
-def _format_infolviv_readings(readings: list[InfolvivReading]) -> str:
+async def _account_household_names() -> dict[str, str]:
+    """{infolviv account code → household name} so a portal reading can name its property.
+    The two gas counters share a login and differ only by account code; this lets «Мої
+    показники» say which address each «🔥 Газ» belongs to (addresses come from env→DB)."""
+    async with session_scope() as session:
+        rows = (await session.execute(select(Household))).scalars().all()
+    return {h.infolviv_account_code: h.name for h in rows if h.infolviv_account_code}
+
+
+def _format_infolviv_readings(
+    readings: list[InfolvivReading], account_names: dict[str, str] | None = None
+) -> str:
     """Render the readings filed on the infolviv portal — the authoritative record.
 
     Returns HTML (sent with parse_mode="HTML"): the «рахунок» is wrapped in a <code>
-    span so Telegram doesn't auto-link the long digit run as a phone number.
+    span so Telegram doesn't auto-link the long digit run as a phone number. When the
+    account code maps to a household (gas counters share a login), the property name is
+    appended so two «🔥 Газ» blocks are told apart by address.
     """
+    account_names = account_names or {}
     window = _submission_window_label()
     blocks: list[str] = []
     for r in readings:
         label = html.escape(_KIND_LABEL.get(r.kind, f"🔢 {r.service or 'Лічильник'}"))
+        hh_name = account_names.get(r.account_code)
+        if hh_name:
+            label = f"{label} · {html.escape(hh_name)}"
         num = f" (№<code>{html.escape(r.account_code)}</code>)" if r.account_code else ""
         lines = [f"{label}{num}"]
         if r.value is not None:
@@ -408,7 +425,8 @@ async def menu_meters(message: Message) -> None:
         readings = []
     if readings:
         # Portal record (authoritative) + any photo drafts I'm still holding.
-        blocks = [_format_infolviv_readings(readings)]
+        account_names = await _account_household_names()
+        blocks = [_format_infolviv_readings(readings, account_names)]
         drafts = await _drafts_block()
         if drafts:
             blocks.append(drafts)

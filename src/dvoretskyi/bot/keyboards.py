@@ -91,7 +91,7 @@ def stats_scope_keyboard(
         for slug, name in households
     ]
     rows.append(
-        [InlineKeyboardButton(text="🏘 Порівняти житла", callback_data="st:split")]
+        [InlineKeyboardButton(text="🏘 Розподіл по житлах", callback_data="st:split")]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
