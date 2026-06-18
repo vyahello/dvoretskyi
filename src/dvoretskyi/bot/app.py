@@ -391,14 +391,24 @@ async def _local_journal() -> str:
     return _format_meters_overview(overview)
 
 
-async def _drafts_block() -> str | None:
-    """Photo readings I've stored but NOT yet filed on the portal — at most one per meter.
+async def _drafts_block(portal: list[InfolvivReading] | None = None) -> str | None:
+    """Photo readings still in my pocket that the portal does NOT yet reflect.
 
-    The portal view shows only what's already filed; this surfaces the ones still in my
-    pocket so «Мої показники» reflects everything. A fresh photo supersedes the previous
-    draft of the same meter (see `_supersede_pending`), so there's never a confusing pile
-    of duplicates — just the freshest reading per meter, ready for the date gate.
+    The portal block is authoritative; a local draft is only worth surfacing when it's
+    genuinely ahead of it — i.e. the portal has no filed reading for that meter's month
+    (or newer). A draft whose value/month is already on the portal is just noise («нам
+    треба знати лише дані»), so it's dropped. A fresh photo supersedes the previous draft
+    of the same meter (`_supersede_pending`), so at most one per meter survives anyway.
     """
+    account_names, primary_name = await _household_naming()
+    # Latest filed period per (kind, household) — what the portal already shows.
+    filed: dict[tuple[str, str | None], str] = {}
+    for pr in portal or []:
+        if pr.period:
+            key = (pr.kind, account_names.get(pr.account_code) or primary_name)
+            if pr.period > filed.get(key, ""):
+                filed[key] = pr.period
+
     async with session_scope() as session:
         rows = (
             (
@@ -430,21 +440,23 @@ async def _drafts_block() -> str | None:
     lines = ["📝 Збережено з фото (ще не подано на портал):"]
     for pid, r in freshest.items():
         prov = provs.get(pid)
-        label = (
-            _KIND_LABEL.get(prov.category.value, prov.name) if prov else "🔢 Лічильник"
-        )
         # Name the property, like the portal block — so a draft never reads ambiguously.
         hh = (
             hh_names.get(prov.household_id)
             if prov and prov.household_id is not None
             else None
         )
+        kind = prov.category.value if prov else ""
+        # Already on the portal for this month (or newer)? → redundant, skip it.
+        if r.cycle <= filed.get((kind, hh), ""):
+            continue
+        label = _KIND_LABEL.get(kind, prov.name if prov else "🔢 Лічильник")
         suffix = f" · {hh}" if hh else ""
         state = (
             "чекає підтвердження" if r.status is MeterStatus.needs_confirm else "записав"
         )
         lines.append(f"{html.escape(label + suffix)} — {r.value} ({state})")
-    return "\n".join(lines)
+    return "\n".join(lines) if len(lines) > 1 else None
 
 
 @router.message(F.text == keyboards.MENU_METERS)
@@ -458,7 +470,7 @@ async def menu_meters(message: Message) -> None:
         # Portal record (authoritative) + any photo drafts I'm still holding.
         account_names, primary_name = await _household_naming()
         blocks = [_format_infolviv_readings(readings, account_names, primary_name)]
-        drafts = await _drafts_block()
+        drafts = await _drafts_block(readings)
         if drafts:
             blocks.append(drafts)
         await message.answer("\n\n".join(blocks), parse_mode="HTML")

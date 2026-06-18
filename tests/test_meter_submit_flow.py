@@ -106,6 +106,49 @@ async def test_second_same_month_photo_supersedes_and_compares_to_prior_month(
     assert len(june) == 1 and june[0].value == Decimal("1888.50")
 
 
+async def test_drafts_hidden_when_portal_already_reflects_them(
+    engine, providers, session
+):
+    """A draft whose month is already filed on the portal is redundant → not shown.
+    Only a draft genuinely ahead of the portal survives in «Мої показники»."""
+    from dvoretskyi.agent.infolviv import InfolvivReading
+
+    gas = providers["Газ (постачання)"]  # primary household
+    session.add(
+        MeterReading(
+            provider_id=gas.id,
+            cycle="2026-06",
+            value=Decimal("1888.14"),
+            status=MeterStatus.validated,
+            created_at=clock.now(),
+        )
+    )
+    await session.commit()
+
+    def _portal(period: str) -> list[InfolvivReading]:
+        return [
+            InfolvivReading(
+                kind="gas",
+                account_code="ACC-A",  # unmapped → primary household fallback
+                counter_number="",
+                provider="",
+                service="",
+                period=period,
+                value=Decimal("1888.14"),
+                difference=None,
+                window_start_day=None,
+                window_end_day=None,
+                window_open=True,
+            )
+        ]
+
+    # Portal already shows June for that meter → the June draft is noise → hidden.
+    assert await bot_app._drafts_block(_portal("2026-06")) is None
+    # Portal only up to May → the June draft is worth surfacing.
+    block = await bot_app._drafts_block(_portal("2026-05"))
+    assert block and "1888.14" in block
+
+
 # --- get_meter_photo: pull a saved photo back, captioned with the household ---
 
 
