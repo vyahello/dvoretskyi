@@ -172,20 +172,29 @@ async def test_progress_line_sent_and_preamble_dropped(session, providers, monke
 
 
 def test_progress_lines_read_naturally_in_ukrainian():
-    # «показники води», never the broken «лічильник воду».
-    water = dispatcher._progress_line(
-        "get_meter_history", {"provider_name": "Холодна вода"}
-    )
-    assert "води" in water and "воду" not in water
-    gas = dispatcher._progress_line(
-        "get_meter_history", {"provider_name": "Газ (постачання)"}
-    )
-    # Genitive «газу» (not the broken «газ») — whichever phrasing the pool picks.
-    assert "газу" in gas
-    bal = dispatcher._progress_line(
-        "get_provider_balance", {"provider_name": "Інтернет (Gigabit+)"}
-    ).casefold()
-    assert "інтернет" in bal or "gigabit" in bal
+    # The pools are randomized — sample enough times to cover every variant, so a
+    # future addition that breaks the topic wording can't slip through on a lucky draw.
+    waters = {
+        dispatcher._progress_line("get_meter_history", {"provider_name": "Холодна вода"})
+        for _ in range(60)
+    }
+    # «показники/журнал води», never the broken «лічильник воду».
+    assert all("води" in w and "воду" not in w for w in waters)
+    gases = {
+        dispatcher._progress_line(
+            "get_meter_history", {"provider_name": "Газ (постачання)"}
+        )
+        for _ in range(60)
+    }
+    # Genitive «газу» (not the broken «газ») in every phrasing.
+    assert all("газу" in g for g in gases)
+    bals = {
+        dispatcher._progress_line(
+            "get_provider_balance", {"provider_name": "Інтернет (Gigabit+)"}
+        ).casefold()
+        for _ in range(60)
+    }
+    assert all("інтернет" in b or "gigabit" in b for b in bals)
 
 
 async def test_progress_not_sent_for_a_plain_chat_reply(session, providers):
