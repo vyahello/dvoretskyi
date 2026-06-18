@@ -60,8 +60,10 @@ class Settings(BaseSettings):
     # Meter-photo archive: keep ONE compressed JPEG per reading so the user can pull it
     # back later. Empty dir → ~/.dvoretskyi/meter_photos (private, 0o700).
     meter_photo_dir: str = ""
-    meter_photo_max_long_side: int = 1280  # archive copies are downscaled to this
-    meter_photo_quality: int = 70  # JPEG quality for the archived copy
+    # The archive is for VIEWING later (OCR already ran), so squeeze hard: ~1000px long
+    # side at JPEG q55 keeps the dial legible while cutting a phone photo to tens of KB.
+    meter_photo_max_long_side: int = 1000  # archive copies are downscaled to this
+    meter_photo_quality: int = 55  # JPEG quality for the archived copy
     delta_spike_k: int = 3  # flag consumption > k × median(history)
     delta_abs_cap: Decimal = Decimal("1000")  # …but never flag below this absolute jump
     # Meter-reading nudge lead time: how many days before month end to start nudging

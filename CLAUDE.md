@@ -183,7 +183,7 @@ lazily so the suite never loads it) and pass `now` explicitly to reminder/window
 `OCR_MAX_LONG_SIDE`, `DELTA_SPIKE_K`, `DELTA_ABS_CAP`, `METER_WINDOW_DAYS`,
 `METER_SUBMIT_FROM_DAY` (28), `METER_EARLY_SUBMIT_ATTEMPTS` (3),
 `METER_PHOTO_DIR` (empty → `~/.dvoretskyi/meter_photos`), `METER_PHOTO_MAX_LONG_SIDE`
-(1280), `METER_PHOTO_QUALITY` (70).
+(1000), `METER_PHOTO_QUALITY` (55).
 **Voice:** `STT_PROVIDER` (whisper|none), `WHISPER_MODEL` (small default; base to save
 RAM), `WHISPER_COMPUTE_TYPE` (int8), `WHISPER_LANGUAGE` (uk), `STT_TIMEOUT_SECONDS`.
 

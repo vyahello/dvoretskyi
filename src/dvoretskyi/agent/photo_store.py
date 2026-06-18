@@ -48,7 +48,13 @@ def archive(src_path: str, reading_id: int) -> str | None:
         with Image.open(src_path) as img:
             rgb = img.convert("RGB")
             rgb.thumbnail((st.meter_photo_max_long_side, st.meter_photo_max_long_side))
-            rgb.save(dest, format="JPEG", quality=st.meter_photo_quality, optimize=True)
+            rgb.save(
+                dest,
+                format="JPEG",
+                quality=st.meter_photo_quality,
+                optimize=True,
+                progressive=True,
+            )
         return str(dest)
     except Exception as exc:  # noqa: BLE001 — never block the reading on an archive miss
         log.warning("meter photo archive failed (%s)", exc)  # bytes/path-only, no PII
