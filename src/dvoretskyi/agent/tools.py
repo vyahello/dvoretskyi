@@ -307,12 +307,16 @@ async def get_stats(
     period: str | None = None,
     breakdown: str = "provider",
     household: str | None = None,
+    provider: str | None = None,
 ) -> dict:
     """Total spend + breakdown by provider, month, or household, with a PNG chart.
 
     `household` (slug or address fragment) filters to one property; breakdown="household"
-    splits the total across properties. No household + provider/month breakdown =
-    combined across both (the default, unchanged)."""
+    splits the total across properties. `provider` (a name or category keyword like
+    «газ»/«вода»/«інтернет») narrows to the matching provider(s) — «газ» catches both
+    постачання + доставлення — and combines with `household` so «скільки за газ на
+    Зеленій 151» answers only that property's gas. No household + provider/month
+    breakdown = combined across both (the default, unchanged)."""
     start, end = _period_bounds(period)
 
     # provider → (name, household_id); household id → display name (env-seeded).
@@ -323,14 +327,29 @@ async def get_stats(
 
     want = await households.resolve(session, household) if household else None
 
+    # Category/name filter: case-insensitive substring so «газ» → both gas providers,
+    # «Газ (постачання)» → just one. None ⇒ no provider filter (all providers).
+    prov_filter = (provider or "").strip()
+    matched_pids: list[int] | None = None
+    if prov_filter:
+        needle = prov_filter.casefold()
+        matched_pids = [p.id for p in provs if needle in p.name.casefold()]
+
+    # Allowed provider ids = household filter ∩ provider filter (whichever are set).
+    allowed: set[int] | None = None
+    if want is not None:
+        allowed = {p.id for p in provs if p.household_id == want.id}
+    if matched_pids is not None:
+        allowed = set(matched_pids) if allowed is None else allowed & set(matched_pids)
+
     conds: list[ColumnElement[bool]] = [Payment.provider_id.is_not(None)]
     if start is not None:
         conds.append(Payment.paid_at >= start)
     if end is not None:
         conds.append(Payment.paid_at < end)
-    if want is not None:
-        ids = [p.id for p in provs if p.household_id == want.id]
-        conds.append(Payment.provider_id.in_(ids or [-1]))  # [-1] → matches nothing
+    if allowed is not None:
+        # empty set → [-1] matches nothing (filter named a provider/household with no tx)
+        conds.append(Payment.provider_id.in_(list(allowed) or [-1]))
 
     payments = (await session.execute(select(Payment).where(*conds))).scalars().all()
 
@@ -362,9 +381,19 @@ async def get_stats(
     ]
 
     period_key = period or clock.current_cycle()
-    label = _period_label(period_key)
-    if want is not None:  # name the property in the title/caption when filtered
-        label = f"{want.name} · {label}"
+    # Title: «<провайдер> · <житло> · <період>» — name whatever scopes are set.
+    prov_scope: str | None = None
+    if prov_filter:
+        matched_names = [prov_name[i] for i in (matched_pids or [])]
+        prov_scope = (
+            matched_names[0]
+            if len(matched_names) == 1
+            else prov_filter[:1].upper() + prov_filter[1:]
+        )
+    scope_parts = [
+        part for part in (prov_scope, want.name if want is not None else None) if part
+    ]
+    label = " · ".join([*scope_parts, _period_label(period_key)])
 
     # The renderer wants human row labels (by-month buckets are cycles → words).
     rows: list[tuple[str, Decimal, float]] = [
@@ -393,6 +422,7 @@ async def get_stats(
         "period": period_key,
         "breakdown": breakdown,
         "household": want.slug if want is not None else None,
+        "provider": prov_scope,
         "total": str(total),
         "items": items,
         "chart_path": chart_path,

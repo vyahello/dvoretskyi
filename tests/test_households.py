@@ -89,6 +89,72 @@ async def test_stats_filter_one_household(session, households, providers):
         os.unlink(res["chart_path"])
 
 
+async def test_stats_filter_by_provider_category(session, households, providers):
+    """«скільки за газ» → both gas providers, water/internet excluded."""
+    gas_delivery = Provider(
+        name="Газ (доставлення)",
+        category=Category.gas,
+        pay_channel=PayChannel.mono_communal,
+        household_id=households["primary"].id,
+    )
+    session.add(gas_delivery)
+    await session.flush()
+    now = clock.now()
+    session.add_all(
+        [
+            _pay(providers["Газ (постачання)"].id, "300.00", now),
+            _pay(gas_delivery.id, "50.00", now),
+            _pay(providers["Холодна вода"].id, "180.00", now),
+        ]
+    )
+    await session.commit()
+
+    res = await tools.get_stats(session, period="all", provider="газ")
+    assert res["total"] == "350.00"  # both gas providers; water excluded
+    assert {i["label"] for i in res["items"]} == {
+        "Газ (постачання)",
+        "Газ (доставлення)",
+    }
+    assert "Газ" in res["message"]  # scope named in the caption
+    if res["chart_path"]:
+        import os
+
+        os.unlink(res["chart_path"])
+
+
+async def test_stats_filter_by_provider_and_household(session, households, providers):
+    """The reported bug: «сума за газ на Зеленій 151» → that household's gas only,
+    not the whole-household total and not the other property's gas."""
+    sec_gas = Provider(
+        name="Газ (постачання)",  # same name, secondary household
+        category=Category.gas,
+        pay_channel=PayChannel.mono_communal,
+        household_id=households["secondary"].id,
+    )
+    session.add(sec_gas)
+    await session.flush()
+    now = clock.now()
+    session.add_all(
+        [
+            _pay(providers["Газ (постачання)"].id, "300.00", now),  # primary gas
+            _pay(sec_gas.id, "120.00", now),  # secondary gas
+            _pay(providers["Холодна вода"].id, "180.00", now),  # primary water
+        ]
+    )
+    await session.commit()
+
+    res = await tools.get_stats(
+        session, period="all", provider="газ", household="secondary"
+    )
+    assert res["total"] == "120.00"  # only secondary gas
+    assert res["household"] == "secondary"
+    assert "Газ" in res["message"] and "Житло 2" in res["message"]
+    if res["chart_path"]:
+        import os
+
+        os.unlink(res["chart_path"])
+
+
 async def test_primary_returns_the_primary_household(session, households):
     prim = await hh.primary(session)
     assert prim is not None and prim.slug == "primary"

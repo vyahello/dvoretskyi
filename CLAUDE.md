@@ -199,11 +199,16 @@ env (`HOUSEHOLD_*`, VPS only), seeded into the DB by `dvoretskyi seed-providers`
 seeds households first, then per-household providers; `SECONDARY_PROVIDERS` in `cli.py`).
 `households.resolve(text)` maps a slug or address fragment → `Household`;
 `_provider_by_name(name, household?)` disambiguates a shared name (defaults to primary).
-**Stats are combined or split:** `get_stats(…, household?, breakdown="household")` — no
-`household` = combined across both (default, unchanged); `household=<slug/address frag>`
-filters to one property (title names it); `breakdown="household"` splits the total by
-property. The LLM passes the user's wording as `household`; `resolve` matches it to the
-env name. **Payment routing:** the categorize prompt's buttons carry the
+**Stats are combined or split:** `get_stats(…, household?, breakdown="household",
+provider?)` — no `household` = combined across both (default, unchanged);
+`household=<slug/address frag>` filters to one property (title names it);
+`breakdown="household"` splits the total by property. The LLM passes the user's wording as
+`household`; `resolve` matches it to the env name. **`provider` narrows to one service:**
+a name or category keyword (case-insensitive substring), so «скільки за газ» → `provider=
+"газ"` catches **both** gas providers (постачання + доставлення), «вода»/«інтернет»
+likewise; it **intersects** with `household` (allowed pids = household pids ∩ matched
+pids), so «сума за газ на Зеленій 151» answers only that property's gas — not the
+whole-household total. The title becomes «<провайдер> · <житло> · <період>». **Payment routing:** the categorize prompt's buttons carry the
 household-specific `provider_id`; `categorize_keyboard` suffixes « · <житло>» on names
 shared across properties (ЛЕЗ, Газ доставлення); the tap threads the exact household into
 `categorize_payment(…, household=…)`. **Every confirmation names the household**
