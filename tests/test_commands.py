@@ -8,13 +8,21 @@ from dvoretskyi.bot import app as bot_app
 from dvoretskyi.bot.app import (
     _format_stats,
     _format_unpaid,
+    _household_suffix,
+    _payee_hint,
     cmd_help,
     cmd_start,
     cmd_stats,
     cmd_unpaid,
     on_text,
 )
-from dvoretskyi.db.models import Payment, PaymentSource
+from dvoretskyi.db.models import (
+    Category,
+    PayChannel,
+    Payment,
+    PaymentSource,
+    Provider,
+)
 
 
 class FakeMessage:
@@ -299,3 +307,36 @@ async def test_on_text_passes_a_progress_callback(engine, monkeypatch):
     # the progress line lands first, the answer second
     assert msg.answers[0] == "Гляну, що ще відкрито…"
     assert "Відкрите: вода." in msg.answers[-1]
+
+
+def test_payee_hint_strips_phone_and_collapses_lines():
+    # monobank's mobile top-up description is «Lifecell\n+380…» — the prompt should name
+    # the carrier, never the bare phone number.
+    assert _payee_hint("Lifecell\n+380931403184") == "Lifecell"
+    assert _payee_hint("  Київстар   +380501234567 ") == "Київстар"
+    # Short numbers (amounts/dates) survive — only ≥6-digit runs are noise.
+    assert _payee_hint("ОСББ Зоря, кв 12") == "ОСББ Зоря, кв 12"
+    assert _payee_hint("") == ""
+    assert _payee_hint(None) == ""
+
+
+async def test_household_suffix_omitted_for_mobile(session, households):
+    # A phone top-up isn't tied to a property → no « · <житло>» suffix; a real utility
+    # still gets one.
+    mobile = Provider(
+        name="Мобільний",
+        category=Category.mobile,
+        pay_channel=PayChannel.mono_card,
+        household_id=households["primary"].id,
+    )
+    water = Provider(
+        name="Холодна вода",
+        category=Category.water,
+        pay_channel=PayChannel.mono_communal,
+        household_id=households["primary"].id,
+    )
+    session.add_all([mobile, water])
+    await session.commit()
+
+    assert await _household_suffix(session, mobile) == ""
+    assert await _household_suffix(session, water) == " · Житло 1"

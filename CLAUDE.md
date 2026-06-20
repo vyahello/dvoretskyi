@@ -214,7 +214,12 @@ shared across properties (ЛЕЗ, Газ доставлення); the tap thread
 `categorize_payment(…, household=…)`. **Every confirmation names the household**
 (`_household_suffix` in `bot/app.py` — «✅ <провайдер> · <житло> — … записав») so it's
 always clear where it landed; «запам'ятав» is shown only when a pattern was actually
-learned. Secondary (Шашкевича) seeds **ЛЕЗ + Газ (постачання) + Газ (доставлення)**
+learned. **Мобільний is exempt** from the suffix (`Category.mobile`): a phone top-up isn't
+tied to a property, so «✅ Мобільний — 600 ₴…» drops the « · <житло>». An **unknown** tx
+prompt names the payee, not the bare number: `_payee_hint` collapses monobank's
+newline-joined fields and strips ≥6-digit runs (phone / особовий рахунок), so a Lifecell
+top-up («Lifecell\n+380…») reads «Прилетіло 600 ₴ від «Lifecell», а такого в мене нема. Це
+що?» (the matcher still learns the `stable_token` «lifecell», never the phone). Secondary (Шашкевича) seeds **ЛЕЗ + Газ (постачання) + Газ (доставлення)**
 (`SECONDARY_PROVIDERS`); the static gas meter sits on its Газ (доставлення). **Shared-utility routing — home is the default**
 (`mono/matcher.py`, because monobank's webhook carries **nothing** that distinguishes the
 two properties: only `description`=«Електроенергія», `mcc`, a per-tx `receiptId` — no

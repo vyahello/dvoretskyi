@@ -11,6 +11,7 @@ import html
 import logging
 import os
 import random
+import re
 import tempfile
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -62,6 +63,7 @@ from dvoretskyi.agent.vision import get_vision_provider
 from dvoretskyi.bot import keyboards
 from dvoretskyi.config import get_settings
 from dvoretskyi.db.models import (
+    Category,
     Household,
     MeterReading,
     MeterStatus,
@@ -744,11 +746,28 @@ async def _other_household_provider(
 
 async def _household_suffix(session, provider: Provider | None) -> str:
     """« · <житло>» on every confirmation so it's always clear WHICH property it was filed
-    under (the user pays for two homes and wants no ambiguity)."""
+    under (the user pays for two homes and wants no ambiguity). **Mobile is exempt**: a
+    phone top-up isn't tied to a property, so naming a household there is just noise."""
     if provider is None or provider.household_id is None:
+        return ""
+    if provider.category is Category.mobile:
         return ""
     hh = await session.get(Household, provider.household_id)
     return f" · {hh.name}" if hh and hh.name else ""
+
+
+# Phone numbers / особові рахунки — long digit runs that aren't a payee name.
+_PAYEE_NOISE = re.compile(r"\+?\d{6,}")
+
+
+def _payee_hint(raw: str | None) -> str:
+    """A short, human payee label for an «unknown payment» prompt: collapse monobank's
+    newline-joined fields onto one line and drop long digit runs (phone numbers, account
+    codes) so the user sees «Lifecell», not «Lifecell +380…». '' when nothing readable."""
+    if not raw:
+        return ""
+    cleaned = " ".join(_PAYEE_NOISE.sub(" ", raw).split())
+    return cleaned.strip(" -·,")
 
 
 async def _meter_providers(session) -> list[Provider]:
@@ -1222,9 +1241,11 @@ def make_notifier(bot: Bot) -> Callable[[Notice], Awaitable[None]]:
                     for h in (await session.execute(select(Household))).scalars()
                 }
             kb = keyboards.categorize_keyboard(notice.payment_id, providers, hh_names)
+            hint = _payee_hint(notice.raw_description)
+            lead = f" від «{hint}»" if hint else ""
             await bot.send_message(
                 chat_id,
-                f"Прилетіло {notice.amount_uah} ₴, а такого в мене нема. Це що?",
+                f"Прилетіло {notice.amount_uah} ₴{lead}, а такого в мене нема. Це що?",
                 reply_markup=kb,
             )
 
