@@ -14,7 +14,7 @@ minimum necessary enthusiasm.
 ![sqlalchemy](https://img.shields.io/badge/SQLAlchemy-2.0-D71F00?logo=sqlalchemy&logoColor=white)
 ![claude](https://img.shields.io/badge/Claude%20Code-CLI-D97757?logo=anthropic&logoColor=white)
 
-![tests](https://img.shields.io/badge/tests-74%20passing-2ea44f)
+![tests](https://img.shields.io/badge/tests-191%20passing-2ea44f)
 ![lint](https://img.shields.io/badge/ruff-clean-261230?logo=ruff&logoColor=white)
 ![types](https://img.shields.io/badge/mypy-strict-2a6db2)
 ![butler](https://img.shields.io/badge/enthusiasm-minimal-1f4d3f)
@@ -29,19 +29,25 @@ need one). Free-text chat goes to an LLM that returns a structured
 never gets to invent your balance.
 
 **Scope:** money + stats + reminders + conversational agent over internal data
-(Phase 1), plus **meter readings** — photo → OCR → delta-validate → submit (Phase 2).
-No provider balance scraping, no payment initiation (Phase 3). See [`docs/`](docs/)
-for the full spec and [`CLAUDE.md`](CLAUDE.md) for operational detail.
+(Phase 1), plus **meter readings** — photo → OCR → delta-validate → file to the
+[infolviv](https://infolviv.com.ua) portal (Phase 2), **voice notes** (local Whisper),
+and **two properties** (a lived-in home + an unoccupied flat) tracked separately or
+together. Live **balance scraping** for the internet & mobile cabinets; still **no
+payment initiation** (Phase 3). See [`docs/`](docs/) for the full spec and
+[`CLAUDE.md`](CLAUDE.md) for operational detail.
 
 ## A day with the butler
 > **You:** що треба заплатити?
 > **🎩:** Відкрите: вода (≈180 ₴) і ДАХ (суму поки не знаю). Решта оплачена.
 >
 > _\[you snap a photo of the gas meter\]_
-> **🎩:** ✅ Газ — 4827.05. Лишилось передати — SMS на 4647 з текстом «… 4827.05».
+> **🎩:** 💨 Газ (постачання): записав 4827.05 (намотало +42). Подати на портал? _\[📤 Подати\]_
 >
-> **You:** скільки вийшло за травень?
-> **🎩:** За травень — 3 920 ₴. Найбільше з'їв газ. Показати графіком?
+> **You:** скільки за газ на другому житлі?
+> **🎩:** _\[a spend table\]_ 📊 Газ · Житло 2 · травень — разом 1 240 ₴
+>
+> **You:** _\[voice\]_ скільки вийшло за травень?
+> **🎩:** Зазираю в платежі… За травень — 3 920 ₴. Найбільше з'їв газ. _\[chart\]_
 
 ## Stack
 | Area | Tech |
@@ -54,6 +60,7 @@ for the full spec and [`CLAUDE.md`](CLAUDE.md) for operational detail.
 | Config | pydantic-settings |
 | Images | Pillow |
 | LLM + vision OCR | headless Claude Code CLI (`claude -p`) |
+| Voice STT | faster-whisper (CTranslate2, in-process — no daemon) |
 | Tooling | pytest · Ruff (lint + format) · mypy |
 
 ## Quick start
@@ -101,20 +108,39 @@ right after) and handled exactly like a typed message. Meter values stay photo-o
   categorize (and learns the pattern); non-utility → silently ignored.
 - **Agent tools:** `get_unpaid`, `get_stats` (+PNG chart), `log_payment_manual`,
   `categorize_payment`, `snooze_reminder`, `submit_meter_reading`,
-  `confirm_meter_reading`, `get_meter_history`, `get_provider_balance`.
-- **Provider balance (Gigabit+):** `get_provider_balance` logs into the ISP cabinet
-  (`cabinet.gigabit.te.ua`, JSON API) and reads the current balance + last top-up date.
-  Below the monthly fee → "треба поповнити" with a tappable **«💳 Поповнити N ₴»**
+  `confirm_meter_reading`, `delete_meter_reading`, `get_meter_history`,
+  `get_meter_photo`, `get_provider_balance`. The LLM only picks `{tool, args}` and writes
+  the reply copy; the work is deterministic Python — it never invents an amount or value.
+- **Provider balance (Gigabit+ & mobile):** `get_provider_balance` logs into the ISP
+  cabinet (`cabinet.gigabit.te.ua`, JSON API) and reads the current balance, last top-up,
+  **monthly fee** (from the tariff plan, not hardcoded), and the **contract/login** — so
+  «нагадай мій логін / яка абонплата» are answered from the cabinet, never the model's
+  memory. Below the monthly fee → "треба поповнити" with a tappable **«💳 Поповнити N ₴»**
   button (a Portmone deep link with the contract + amount pre-filled, built from env —
   no card data ever touches the bot); above → "не треба, останнє поповнення …". Cached
   ~1h. Credentials live only in the VPS `.env`.
 - **Meters (gas & water):** send a **photo** → OCR (`claude -p --allowed-tools "Read"`)
-  → **delta validation** against history (backwards / zero / spike → asks you to
-  confirm or re-photo before anything is submitted) → stored. Default submission is
-  **`ManualAssistChannel`**: the bot hands back the validated value + how/where to
-  submit (gas→SMS 4647/gas.ua, water→ВК) and the **«Відправив ✓»** tap marks it sent.
-  **No auto-submission** unless a channel is enabled in `SUBMISSION_CHANNELS`. OCR
-  failure → it asks you to retype, never guesses.
+  → **delta validation** against history (backwards / zero / spike → asks you to confirm
+  or re-photo before anything is filed) → **stored, never filed on the spot**. Filing is
+  **date-gated**: inside the **28→month-end** window the reply offers a one-tap approve
+  («📤 Подати») that files the value to the [infolviv](https://infolviv.com.ua) portal
+  (`setMultipleFactors`); before the window it offers «подай раніше» — it resists twice
+  and files on the third insistence. A fresh photo of a meter **supersedes** that meter's
+  earlier unfiled draft, so the journal never piles up duplicates. The **«Мої показники»**
+  button merges the authoritative portal record with any unfiled photo drafts that are
+  ahead of it. `INFOLV_SUBMIT_ENABLED` is a **kill-switch** — off ⇒ the bot falls back to
+  handing you the value + a **«Відправив ✓»** tap. Each photo is **archived** (downscaled
+  JPEG in a private dir) so «витягни фото газу» pulls it back; OCR failure → it asks you
+  to retype, never guesses.
+- **Two properties (home + flat):** providers, payments and meters belong to a
+  **household**. monobank's webhook can't tell the two apart, so shared utilities
+  (Електроенергія, Газ доставлення) **default to home** and you re-point the rare flat
+  payment with a **one-tap «↪ Це <житло>»**; every confirmation names the property it
+  landed under. Stats are **combined by default**, or scoped — «скільки за газ на
+  <адресі>» filters to one property's gas, «статистика по житлах» splits the total. The
+  flat is unoccupied, so its gas meter is a **static** value the month-end nudge offers to
+  file with a tap (no photo). **Addresses, account codes and the static value live only in
+  the VPS `.env`** — code and tests use neutral slugs (`primary`/`secondary`, «Житло 1/2»).
 - **Voice notes:** send a **voice message** → it's transcribed **locally** and handled
   exactly like a typed message. Whisper here is **not a server** — `faster-whisper` is a
   Python library that runs **in the bot's own process** (CTranslate2, a C++ inference
@@ -162,7 +188,7 @@ right after) and handled exactly like a typed message. Meter values stay photo-o
 
 ## Test & static analysis
 ```bash
-pytest -q              # 178 tests, in-memory SQLite, no network, no API key needed
+pytest -q              # 191 tests, in-memory SQLite, no network, no API key needed
 ruff check src tests   # lint (E,W,F,I,UP,B)
 ruff format src tests  # format (black-compatible; project standard)
 mypy                   # type-check src/
@@ -177,11 +203,12 @@ to the reminder / window logic.
 src/dvoretskyi/  config·clock·app(FastAPI lifespan)·cli
   db/   models (SQLAlchemy 2.0) + async session
   mono/ schemas · matcher · webhook · client
-  agent/ persona · provider (LLMProvider) · tools · dispatcher
-         vision (VisionProvider OCR) · meters (delta validation) · submission (channels)
-  bot/  aiogram bot + allowlist + keyboards + photo & voice handlers
-         agent/transcription (local Whisper STT for voice notes)
-  reminders/ APScheduler engine (payment + meter nudges)
+  agent/ persona · provider (LLMProvider) · tools · dispatcher · balance (cabinet scrape)
+         vision (VisionProvider OCR) · meters (delta validation) · infolviv (portal filing)
+         submission (legacy channels) · photo_store (archive) · transcription (Whisper STT)
+  households (slug helpers — addresses stay in env, never code)
+  bot/  aiogram bot + allowlist + keyboards + photo & voice handlers + webhook notifier
+  reminders/ APScheduler engine (payment + meter + balance nudges)
 tests/  conftest + matcher/webhook/tools/dispatcher/reminders + vision/meters/submission/photo
 alembic/  migrations (0001 schema · 0002 meter_readings · 0003 meter_decimals · 0004 households)
 ```
