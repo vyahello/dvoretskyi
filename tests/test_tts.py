@@ -12,21 +12,43 @@ from dvoretskyi.config import get_settings
 # --- voiceify: screen text → clean spoken Ukrainian -------------------------
 
 
-def test_voiceify_strips_emoji_and_speaks_symbols():
-    # A typical confirmation: emoji + ₴ → no emoji, «гривень» spoken.
-    assert voiceify("✅ Світло — 420 ₴, закрито. 🎩") == "Світло — 420 гривень, закрито."
+def test_voiceify_strips_emoji_and_speaks_money():
+    # A typical confirmation: emoji gone, dash → pause, «420 ₴» → spoken hryvnias.
+    assert voiceify("✅ Світло — 420 ₴, закрито. 🎩") == "Світло, 420 гривень, закрито."
+
+
+def test_voiceify_money_kopiyky_and_plural():
+    assert voiceify("510.00 ₴") == "510 гривень"  # whole → drop the .00
+    assert voiceify("510.10 ₴") == "510 гривень 10 копійок"  # with kopiykas
+    # thousands de-grouped, and 2391 ends in 1 → «гривня», 39 → «копійок»
+    assert voiceify("разом 2 391.39 ₴") == "разом 2391 гривня 39 копійок"
+    assert voiceify("1 ₴") == "1 гривня"
+    assert voiceify("0.50 ₴") == "50 копійок"
+
+
+def test_voiceify_dates_and_ordinals():
+    assert voiceify("подав 2026-06-06") == "подав шостого червня 2026"
+    assert voiceify("за 2026-06") == "за червень 2026"
+    assert voiceify("до 20-го") == "до двадцятого"
+
+
+def test_voiceify_decimals_read_as_koma():
+    assert voiceify("показник 1888.14") == "показник 1888 кома 14"
 
 
 def test_voiceify_folds_lines_into_sentences():
     # A multi-line emoji-bulleted self-description voices as flowing sentences, no markup.
     out = voiceify("💸 Гроші — записую\n🔢 Показники — читаю з фото")
-    assert out == "Гроші — записую. Показники — читаю з фото"
+    assert out == "Гроші, записую. Показники, читаю з фото"
     assert "💸" not in out and "•" not in out
 
 
-def test_voiceify_drops_arrows_and_markup():
+def test_voiceify_drops_arrows_quotes_and_markup():
     assert voiceify("↪ Це інше житло") == "Це інше житло"
     assert voiceify("**гроші** і `код`") == "гроші і код"
+    # quotes/brackets are dropped, not read aloud as «лапки»/«дужки»
+    assert voiceify("«Lifecell»") == "Lifecell"
+    assert voiceify("Газ (постачання)") == "Газ постачання"
 
 
 def test_voiceify_empty():

@@ -167,7 +167,11 @@ any buttons (pay link / delete-confirm) ride on the voice message, and a chart/p
 still attached as an image. Piper is an **external binary** (like `claude_bin` — no pip
 dep): text → WAV, then ffmpeg → OGG/Opus (mono 48 kHz). The OGG is sent then deleted
 (transient; bytes never logged). Replies are written for the screen, so `tts.voiceify`
-strips emoji/markup and speaks symbols (₴ → «гривень»), folding lines into sentences.
+normalizes them to natural spoken Ukrainian first: drops emoji/quotes/brackets/markup;
+money → declined «510 гривень [10 копійок]» (with `_ua_plural` + de-grouped thousands;
+.00 dropped); ISO dates → «шостого червня 2026» (genitive-ordinal day via `_day_ord_gen`,
++ «2026-06» → «червень 2026»); «20-го» → «двадцятого»; decimals → «1888 кома 14»; dashes →
+pauses; lines folded into sentences. (Numerals stay as digits — espeak-ng voices them.)
 **Graceful fallback to text** on any miss, in two places: (1) `synthesize` returns None —
 synth disabled, no voice model (`PIPER_VOICE` empty), reply over `TTS_MAX_CHARS`, or a
 synth error; (2) the voice **send** is refused — `_try_voice` catches it and returns False

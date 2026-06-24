@@ -26,7 +26,7 @@ from dvoretskyi.config import Settings, get_settings
 log = logging.getLogger(__name__)
 
 # Emoji / pictographs / arrows / symbols that a voice would read as "галочка", "стрілка",
-# … — strip them. ₴ and the like are handled by _REPLACEMENTS below (read as words).
+# … — strip them. ₴/numbers/dates are handled by the spoken-form passes below.
 _EMOJI_RE = re.compile(
     "[\U0001f000-\U0001faff"  # pictographs, transport, supplemental, flags (1F1E6–1F1FF)
     "←-⇿"  # arrows (e.g. ↪ «Це інше житло»)
@@ -35,35 +35,169 @@ _EMOJI_RE = re.compile(
     "⬀-⯿"  # extra arrows/stars
     "️‍]"  # variation selector + zero-width joiner
 )
+# Quotes/brackets a voice reads aloud («відкрити лапки», «дужки») — drop them.
+_STRIP_RE = re.compile('[«»„“”"‟‘’‚‛‹›`´()\\[\\]{}]')
 # Markdown-ish punctuation the persona avoids but might still slip in.
-_MARKUP_RE = re.compile(r"[*_`#>|]")
+_MARKUP_RE = re.compile(r"[*_#>|]")
 
-# Symbols a screen reply uses freely → spoken words.
-_REPLACEMENTS: tuple[tuple[str, str], ...] = (
-    ("₴", " гривень"),
-    ("грн", " гривень"),
-    ("%", " відсотків"),
-    ("№", " номер "),
-    ("≈", " приблизно "),
-    ("&", " і "),
+_MONTHS_GEN: dict[int, str] = {
+    1: "січня",
+    2: "лютого",
+    3: "березня",
+    4: "квітня",
+    5: "травня",
+    6: "червня",
+    7: "липня",
+    8: "серпня",
+    9: "вересня",
+    10: "жовтня",
+    11: "листопада",
+    12: "грудня",
+}
+_MONTHS_NOM: dict[int, str] = {
+    1: "січень",
+    2: "лютий",
+    3: "березень",
+    4: "квітень",
+    5: "травень",
+    6: "червень",
+    7: "липень",
+    8: "серпень",
+    9: "вересень",
+    10: "жовтень",
+    11: "листопад",
+    12: "грудень",
+}
+# Day-of-month as a genitive ordinal («шостого»), so a date reads like a person says it.
+_DAY_ORD_1_20: dict[int, str] = {
+    1: "першого",
+    2: "другого",
+    3: "третього",
+    4: "четвертого",
+    5: "п'ятого",
+    6: "шостого",
+    7: "сьомого",
+    8: "восьмого",
+    9: "дев'ятого",
+    10: "десятого",
+    11: "одинадцятого",
+    12: "дванадцятого",
+    13: "тринадцятого",
+    14: "чотирнадцятого",
+    15: "п'ятнадцятого",
+    16: "шістнадцятого",
+    17: "сімнадцятого",
+    18: "вісімнадцятого",
+    19: "дев'ятнадцятого",
+    20: "двадцятого",
+}
+
+
+def _day_ord_gen(d: int) -> str:
+    if d in _DAY_ORD_1_20:
+        return _DAY_ORD_1_20[d]
+    if 21 <= d <= 29:
+        return "двадцять " + _DAY_ORD_1_20[d - 20]
+    if d == 30:
+        return "тридцятого"
+    if d == 31:
+        return "тридцять першого"
+    return str(d)
+
+
+def _ua_plural(n: int, one: str, few: str, many: str) -> str:
+    """Ukrainian plural agreement: 1 гривня / 2-4 гривні / 5+ гривень (with the 11-14
+    exception). The numeral stays as digits — espeak-ng voices them in Ukrainian."""
+    n = abs(n)
+    if 11 <= n % 100 <= 14:
+        return many
+    r = n % 10
+    if r == 1:
+        return one
+    if 2 <= r <= 4:
+        return few
+    return many
+
+
+def _money_words(whole: str, frac: str | None) -> str:
+    """'510','00' → '510 гривень'; '510','10' → '510 гривень 10 копійок'. Digits are kept
+    (espeak reads them); we attach the correctly-declined currency word and drop a .00."""
+    hr = int(whole)
+    kop = int(frac.ljust(2, "0")[:2]) if frac else 0
+    parts: list[str] = []
+    if hr or not kop:
+        parts.append(f"{hr} {_ua_plural(hr, 'гривня', 'гривні', 'гривень')}")
+    if kop:
+        parts.append(f"{kop} {_ua_plural(kop, 'копійка', 'копійки', 'копійок')}")
+    return " ".join(parts)
+
+
+_GROUP_RE = re.compile(r"(?<=\d)[   ](?=\d{3}\b)")  # "2 391" → "2391"
+_DATE_DMY_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")  # 2026-06-06
+_DATE_MY_RE = re.compile(r"\b(\d{4})-(\d{2})\b")  # 2026-06
+_ORD_GO_RE = re.compile(r"\b(\d{1,2})-го\b")  # «до 20-го» → «до двадцятого»
+_MONEY_RE = re.compile(
+    r"(\d+)(?:[.,](\d{1,2}))?\s*(?:₴|грн\.?|гривень|гривні|гривня)", re.IGNORECASE
 )
+_DROP_ZEROS_RE = re.compile(r"(\d)[.,]0{1,2}(?!\d)")  # "510.00" → "510"
+_RANGE_RE = re.compile(r"(\d)\s*[–—]\s*(\d)")  # "28–30" → "28 до 30"
+_SP_DASH_RE = re.compile(r"\s[-–—]+\s")  # « Світло — 420 » → « Світло, 420 »
+_DECIMAL_RE = re.compile(r"(\d+)[.,](\d+)")  # "1888.14" → "1888 кома 14"
+_PERCENT_RE = re.compile(r"(\d+)\s*%")
+
+
+def _date_dmy(m: re.Match[str]) -> str:
+    y, mo, d = int(m[1]), int(m[2]), int(m[3])
+    if not (1 <= mo <= 12 and 1 <= d <= 31):
+        return m.group(0)
+    return f"{_day_ord_gen(d)} {_MONTHS_GEN[mo]} {y}"
+
+
+def _date_my(m: re.Match[str]) -> str:
+    y, mo = int(m[1]), int(m[2])
+    return f"{_MONTHS_NOM[mo]} {y}" if 1 <= mo <= 12 else m.group(0)
 
 
 def voiceify(text: str) -> str:
-    """Turn a screen-oriented reply into clean spoken Ukrainian: drop emoji and markup,
-    expand symbols (₴ → «гривень»), and fold newlines/bullets into sentences so the voice
-    pauses naturally. Returns '' for empty input."""
+    """Turn a screen-oriented reply into natural spoken Ukrainian, so the butler sounds
+    like a person, not a screen-reader. Drops emoji/quotes/brackets/markup; reads money as
+    «510 гривень [10 копійок]» (declined), dates as «шостого червня 2026», «20-го» as
+    «двадцятого», decimals as «1888 кома 14»; turns dashes into pauses and folds
+    newlines/bullets into sentences. Returns '' for empty input."""
     if not text:
         return ""
     out = _EMOJI_RE.sub("", text)
-    for sym, word in _REPLACEMENTS:
-        out = out.replace(sym, word)
+    out = _STRIP_RE.sub(" ", out)
     out = _MARKUP_RE.sub(" ", out)
-    # Each line becomes a sentence so the synth breathes between them.
+    # Fold each line into a sentence so the voice breathes between them.
     lines = [ln.strip(" -–—·•\t") for ln in out.splitlines()]
     out = ". ".join(ln for ln in lines if ln)
-    out = re.sub(r"\s+", " ", out)
-    out = re.sub(r"\.\s*\.", ".", out)  # collapse periods doubled by the join
+    # Numbers & dates → spoken forms (order matters: ungroup → dates → money → decimals).
+    out = _GROUP_RE.sub("", out)
+    out = _DATE_DMY_RE.sub(_date_dmy, out)
+    out = _DATE_MY_RE.sub(_date_my, out)
+    out = _ORD_GO_RE.sub(lambda m: _day_ord_gen(int(m[1])), out)
+    out = _MONEY_RE.sub(lambda m: _money_words(m[1], m[2]), out)
+    out = _DROP_ZEROS_RE.sub(r"\1", out)
+    out = _RANGE_RE.sub(r"\1 до \2", out)
+    out = _SP_DASH_RE.sub(", ", out)
+    out = _DECIMAL_RE.sub(r"\1 кома \2", out)
+    out = _PERCENT_RE.sub(
+        lambda m: f"{m[1]} {_ua_plural(int(m[1]), 'відсоток', 'відсотки', 'відсотків')}",
+        out,
+    )
+    for sym, word in (
+        ("₴", " гривень"),
+        ("№", " номер "),
+        ("≈", " приблизно "),
+        ("&", " і "),
+    ):
+        out = out.replace(sym, word)
+    # Tidy spacing/punctuation left by the substitutions.
+    out = re.sub(r"\s+", " ", out).strip()
+    out = re.sub(r"\s+([,.])", r"\1", out)
+    out = re.sub(r"([,.])(?:\s*\1)+", r"\1", out)
+    out = re.sub(r",\s*\.", ".", out)
     return out.strip()
 
 
