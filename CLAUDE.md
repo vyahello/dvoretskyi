@@ -17,7 +17,9 @@ Auth Claude Code via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
 - `mono/` — `schemas` (StatementItem), `matcher` (match/candidate/learn), `webhook`
   (`process_statement_item` is bot-agnostic + the FastAPI router), `client` (register).
 - `agent/` — `persona` (BUTLER_SYSTEM_PROMPT), `provider` (LLMProvider ABC +
-  ClaudeCodeProvider + AnthropicAPIProvider stub), `tools` (TOOLS registry),
+  ClaudeCodeProvider — invokes `claude -p` with `--model CLAUDE_MODEL` so the decision
+  turn runs on a fast model, not the CLI's heavy default — + AnthropicAPIProvider stub),
+  `tools` (TOOLS registry),
   `dispatcher` (handle_message: deterministic tool routing; takes a short `history` of
   recent turns → `context["recent_dialogue"]` so the model resolves short replies like
   «давай»/«а за травень?» against its own last line). **Tool replies must surface data:**
@@ -175,7 +177,9 @@ lazily so the suite never loads it) and pass `now` explicitly to reminder/window
 
 ## Env vars (see `.env.example`)
 `MONO_TOKEN`, `MONO_WEBHOOK_SECRET`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID`,
-`DATABASE_URL`, `REDIS_URL`, `CLAUDE_BIN`, `LLM_PROVIDER` (claude_code|anthropic_api),
+`DATABASE_URL`, `REDIS_URL`, `CLAUDE_BIN`, `CLAUDE_MODEL` (pins the decision turn's
+model — default `claude-sonnet-4-6`; fast yet keeps the persona witty; empty → CLI
+default), `LLM_PROVIDER` (claude_code|anthropic_api),
 `UTILITY_MCCS`, `TZ`, `PUBLIC_BASE_URL`. **infolviv:** `INFOLV_LOGIN`, `INFOLV_PWD`,
 `INFOLV_SUBMIT_ENABLED` (default false — live POST stays off until the body is verified).
 **Meters:** `CLAUDE_VISION_TIMEOUT_SECONDS` (vision is slower than text),

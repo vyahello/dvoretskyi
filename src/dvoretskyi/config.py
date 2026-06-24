@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     llm_provider: str = "claude_code"
     claude_bin: str = "claude"
     claude_timeout_seconds: int = 60
+    # Model for the agent's text decision (pick a tool + write one short Ukrainian line).
+    # Sonnet is the sweet spot: much faster than Opus on this tiny task while keeping the
+    # persona's wit and natural Ukrainian. Empty → the CLI's own default (no --model).
+    # Pin a snapshot here (e.g. claude-sonnet-4-6) or use the alias "sonnet".
+    claude_model: str = "claude-sonnet-4-6"
     # Vision OCR (reading a meter image) is markedly slower than a text turn — the CLI
     # has to open the image and the model reasons over it. Give it a wider budget.
     claude_vision_timeout_seconds: int = 150

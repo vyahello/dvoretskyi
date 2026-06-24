@@ -34,6 +34,49 @@ async def test_decide_retries_after_a_transient_failure(monkeypatch):
     assert results == []  # both attempts were consumed (it retried)
 
 
+class _FakeProc:
+    """Minimal stand-in for an asyncio subprocess that returns a valid decision blob."""
+
+    returncode = 0
+
+    async def communicate(self, _stdin: bytes) -> tuple[bytes, bytes]:
+        return (b'{"result": "{\\"tool\\": null, \\"message\\": \\"ok\\"}"}', b"")
+
+
+async def test_invoke_pins_a_fast_model(monkeypatch):
+    """The decision turn passes --model so every reply runs on a fast model, not the
+    CLI's heavy default — the core latency win."""
+    captured: dict = {}
+
+    async def fake_exec(*args, **_kwargs):
+        captured["argv"] = args
+        return _FakeProc()
+
+    monkeypatch.setattr(provider_mod.asyncio, "create_subprocess_exec", fake_exec)
+    p = ClaudeCodeProvider()
+    p.model = "claude-sonnet-4-6"
+    out = await p._invoke("prompt")
+    assert out == '{"tool": null, "message": "ok"}'  # unwrapped from `.result`
+    argv = captured["argv"]
+    assert "--model" in argv
+    assert argv[argv.index("--model") + 1] == "claude-sonnet-4-6"
+
+
+async def test_invoke_omits_model_when_unset(monkeypatch):
+    """Empty claude_model → no --model flag, falling back to the CLI default."""
+    captured: dict = {}
+
+    async def fake_exec(*args, **_kwargs):
+        captured["argv"] = args
+        return _FakeProc()
+
+    monkeypatch.setattr(provider_mod.asyncio, "create_subprocess_exec", fake_exec)
+    p = ClaudeCodeProvider()
+    p.model = ""
+    await p._invoke("prompt")
+    assert "--model" not in captured["argv"]
+
+
 async def test_decide_falls_back_after_two_failures(monkeypatch):
     p = ClaudeCodeProvider()
 

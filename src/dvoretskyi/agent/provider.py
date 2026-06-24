@@ -68,6 +68,7 @@ class ClaudeCodeProvider(LLMProvider):
         settings = get_settings()
         self.bin = settings.claude_bin
         self.timeout = settings.claude_timeout_seconds
+        self.model = settings.claude_model
 
     def _build_user_prompt(self, user_text: str, context: dict) -> str:
         # Pull dialogue out of the context blob so it reads as a transcript, not buried
@@ -94,16 +95,13 @@ class ClaudeCodeProvider(LLMProvider):
 
     async def _invoke(self, prompt: str) -> str | None:
         """Run claude once; return the model's text (.result) or None on failure."""
-        args = [
-            self.bin,
-            "-p",
-            "--output-format",
-            "json",
-            "--allowed-tools",
-            "",
-            "--append-system-prompt",
-            BUTLER_SYSTEM_PROMPT,
-        ]
+        args = [self.bin, "-p", "--output-format", "json", "--allowed-tools", ""]
+        if self.model:
+            # Pin a fast model for the decision turn. Picking one tool and writing a
+            # single Ukrainian line doesn't need a heavyweight default — Sonnet shaves
+            # seconds off every reply. Empty `claude_model` → omit, use the CLI default.
+            args += ["--model", self.model]
+        args += ["--append-system-prompt", BUTLER_SYSTEM_PROMPT]
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,
