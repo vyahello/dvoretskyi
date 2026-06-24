@@ -91,6 +91,20 @@ class Settings(BaseSettings):
     whisper_language: str = "uk"  # transcription language hint (empty → autodetect)
     stt_timeout_seconds: int = 60  # cap a slow transcription so the bot never hangs
 
+    # --- text-to-speech (voice replies to voice asks, L2.6) ---
+    # Mirror of STT: local Piper by default → synthesized audio never leaves the box (the
+    # OGG is sent then deleted, like a meter photo). Piper is an EXTERNAL BINARY (like
+    # claude_bin) — no extra pip dependency. "none" disables voice replies (text only).
+    # Empty `piper_voice` → no synth (voice asks still get a text reply), so deploying
+    # before the voice model is installed is safe.
+    tts_provider: str = "piper"  # piper | none
+    piper_bin: str = "piper"  # path/name of the piper executable
+    piper_voice: str = ""  # path to the .onnx voice model (.json config sits beside it)
+    # speaking-rate override (e.g. "1.1" = slower); empty → the voice's own default.
+    piper_length_scale: str = ""
+    tts_timeout_seconds: int = 30  # cap a slow synth so the bot never hangs
+    tts_max_chars: int = 600  # don't voice a very long reply — fall back to text instead
+
     # --- pay links per provider (iOS apps / Portmone; no personal data) ---
     # Utilities paid in mono «Комунальні» → open the monobank app; ДАХ → the ДАХ app.
     monobank_pay_url: str = "https://apps.apple.com/app/id1287005205"

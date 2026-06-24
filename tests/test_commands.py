@@ -32,12 +32,16 @@ class FakeMessage:
         self.text = text
         self.answers: list[str] = []
         self.photos: list[tuple[object, str | None]] = []
+        self.voices: list[tuple[object, object]] = []
 
     async def answer(self, text: str, **kw) -> None:
         self.answers.append(text)
 
     async def answer_photo(self, photo, caption: str | None = None, **kw) -> None:
         self.photos.append((photo, caption))
+
+    async def answer_voice(self, voice, reply_markup=None, **kw) -> None:
+        self.voices.append((voice, reply_markup))
 
 
 def _payment(provider_id, amount, tx):
@@ -307,6 +311,56 @@ async def test_on_text_passes_a_progress_callback(engine, monkeypatch):
     # the progress line lands first, the answer second
     assert msg.answers[0] == "Гляну, що ще відкрито…"
     assert "Відкрите: вода." in msg.answers[-1]
+
+
+async def test_voice_ask_gets_a_voice_reply(engine, monkeypatch, tmp_path):
+    # A voice question is answered with a synthesized voice note (no text bubble), and the
+    # transient OGG is cleaned up after sending.
+    from dvoretskyi.agent.dispatcher import Reply
+
+    async def fake_handle(user_text, session, llm, *, history=None, on_progress=None):
+        return Reply(text="Світло закрив — 420 ₴. 🎩")
+
+    monkeypatch.setattr(bot_app.agent_dispatcher, "handle_message", fake_handle)
+
+    ogg = tmp_path / "reply.ogg"
+    ogg.write_bytes(b"OggS-fake-audio")
+
+    class FakeTTS:
+        async def synthesize(self, text: str) -> str:
+            return str(ogg)
+
+    monkeypatch.setattr(bot_app, "get_tts_provider", lambda: FakeTTS())
+
+    msg = FakeMessage()
+    await bot_app._respond_to_text(msg, "що там зі світлом?", voice_reply=True)
+
+    assert len(msg.voices) == 1  # spoken reply sent
+    assert not msg.answers  # no duplicate text bubble
+    assert not ogg.exists()  # transient audio removed after sending
+
+
+async def test_voice_synth_failure_falls_back_to_text(engine, monkeypatch):
+    # If synth yields nothing (disabled / no model / error), the voice asker still gets
+    # the answer as text — never dead air.
+    from dvoretskyi.agent.dispatcher import Reply
+
+    async def fake_handle(user_text, session, llm, *, history=None, on_progress=None):
+        return Reply(text="Усе закрито.")
+
+    monkeypatch.setattr(bot_app.agent_dispatcher, "handle_message", fake_handle)
+
+    class FakeTTS:
+        async def synthesize(self, text: str) -> None:
+            return None
+
+    monkeypatch.setattr(bot_app, "get_tts_provider", lambda: FakeTTS())
+
+    msg = FakeMessage()
+    await bot_app._respond_to_text(msg, "усе оплачено?", voice_reply=True)
+
+    assert not msg.voices
+    assert msg.answers == ["Усе закрито."]
 
 
 def test_payee_hint_strips_phone_and_collapses_lines():

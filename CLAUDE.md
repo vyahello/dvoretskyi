@@ -41,6 +41,10 @@ Auth Claude Code via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
   `WhisperTranscriptionProvider` — local faster-whisper, model cached on the class &
   loaded lazily, runs off-loop via `asyncio.to_thread` with a timeout; `Null…` when
   `STT_PROVIDER=none`). Contract on any failure: empty string → bot asks to retype.
+  **L2.6 voice-out:** `tts` (TTSProvider ABC + `PiperTTSProvider` default — local Piper
+  external binary → WAV → ffmpeg → OGG/Opus — + `Null…` when `TTS_PROVIDER=none`; plus
+  `voiceify`: screen text → clean spoken Ukrainian). Contract on any failure: None → the
+  bot replies in text.
 - `bot/` — aiogram 3 bot, allowlist middleware, slash commands (`/start /unpaid
   /stats /help` — deterministic, registered before the free-text catch-all and
   mirrored via `set_my_commands`), text + callback handlers, **photo handler**
@@ -152,6 +156,21 @@ deleted right after (transient; bytes never logged). Empty/failed transcript →
 напиши текстом». **Meter values stay photo-only** — STT misreads digits, so a voice turn
 can ask or act but never files a reading; destructive actions (delete) keep their confirm-tap.
 
+**Voice in → voice out (L2.6):** a voice ask is **answered by voice**. `on_voice` calls
+`_respond_to_text(…, voice_reply=True)`; after the agent produces its reply the bot
+synthesizes it locally (`agent/tts.py`: `TTSProvider` ABC + `PiperTTSProvider` default +
+`Null…` when `TTS_PROVIDER=none`) and sends it as a Telegram **voice note**
+(`answer_voice`); any buttons (pay link / delete-confirm) ride on the voice message, and a
+chart/photo is still attached as an image. Piper is an **external binary** (like
+`claude_bin` — no pip dep): text → WAV, then ffmpeg → OGG/Opus (mono 48 kHz). The OGG is
+sent then deleted (transient; bytes never logged). Replies are written for the screen, so
+`tts.voiceify` strips emoji/markup and speaks symbols (₴ → «гривень»), folding lines into
+sentences. **Graceful fallback to text** on any miss — synth disabled, no voice model
+(`PIPER_VOICE` empty), reply over `TTS_MAX_CHARS`, or a synth error → `synthesize` returns
+None and the bot just sends text, so a voice asker is never left empty-handed (and
+deploying before the voice model is installed is safe). Typed asks are unaffected
+(`voice_reply` defaults False).
+
 ## Run
 ```bash
 dvoretskyi register-mono-webhook --dry-run   # inspect the request (token masked)
@@ -188,8 +207,12 @@ default), `LLM_PROVIDER` (claude_code|anthropic_api),
 `METER_SUBMIT_FROM_DAY` (28), `METER_EARLY_SUBMIT_ATTEMPTS` (3),
 `METER_PHOTO_DIR` (empty → `~/.dvoretskyi/meter_photos`), `METER_PHOTO_MAX_LONG_SIDE`
 (1000), `METER_PHOTO_QUALITY` (55).
-**Voice:** `STT_PROVIDER` (whisper|none), `WHISPER_MODEL` (small default; base to save
+**Voice in:** `STT_PROVIDER` (whisper|none), `WHISPER_MODEL` (small default; base to save
 RAM), `WHISPER_COMPUTE_TYPE` (int8), `WHISPER_LANGUAGE` (uk), `STT_TIMEOUT_SECONDS`.
+**Voice out:** `TTS_PROVIDER` (piper|none), `PIPER_BIN` (piper executable), `PIPER_VOICE`
+(path to the .onnx voice model; **empty → no synth, text reply** — so deploy is safe
+before it's installed), `PIPER_LENGTH_SCALE` (speaking rate; empty → voice default),
+`TTS_TIMEOUT_SECONDS` (30), `TTS_MAX_CHARS` (600 — longer replies go out as text).
 
 ## Households (two properties, Phase A+)
 Two properties: **primary** (home; all 7 providers, photo meters) and **secondary**

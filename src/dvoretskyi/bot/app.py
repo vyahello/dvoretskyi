@@ -59,6 +59,7 @@ from dvoretskyi.agent.tools import (
     submit_meter_reading,
 )
 from dvoretskyi.agent.transcription import get_transcription_provider
+from dvoretskyi.agent.tts import get_tts_provider
 from dvoretskyi.agent.vision import get_vision_provider
 from dvoretskyi.bot import keyboards
 from dvoretskyi.config import get_settings
@@ -523,11 +524,18 @@ async def _thinking(message: Message) -> AsyncIterator[None]:
 _DIALOGUE: deque[dict[str, str]] = deque(maxlen=6)
 
 
-async def _respond_to_text(message: Message, user_text: str) -> None:
+async def _respond_to_text(
+    message: Message, user_text: str, *, voice_reply: bool = False
+) -> None:
     """Run one free-text turn through the agent and render the reply (buttons + chart).
     Shared by the text and voice handlers. Before the tool runs the agent sends a short,
     natural «I'm on it» line («зазираю в кабінет інтернету…») — for both typed and voiced
-    asks — so the bot feels like a real assistant rather than echoing the request back."""
+    asks — so the bot feels like a real assistant rather than echoing the request back.
+
+    `voice_reply` (set by the voice handler) makes the bot answer in a **voice note**: the
+    reply is synthesized locally (Piper) and sent as audio, with any image (chart/photo)
+    still attached. Synth failures fall back to a text reply, so a voice asker is never
+    left empty-handed."""
 
     async def _say_progress(line: str) -> None:
         await message.answer(line)
@@ -551,25 +559,45 @@ async def _respond_to_text(message: Message, user_text: str) -> None:
     # Record the turn so the next message has this exchange as context.
     _DIALOGUE.append({"role": "user", "text": user_text})
     _DIALOGUE.append({"role": "assistant", "text": reply.text or ""})
-    markup = None
-    tr = reply.tool_result or {}
-    # A retrieved meter photo: send the image itself with its caption, not a text line.
-    photo_path = tr.get("photo_path")
-    if photo_path and os.path.exists(photo_path):
-        # HTML caption (value in <code>) so Telegram doesn't auto-link the digit run.
-        await message.answer_photo(
-            FSInputFile(photo_path),
-            caption=tr.get("caption_html") or tr.get("caption") or reply.text,
-            parse_mode="HTML",
-        )
-        return
-    if tr.get("pay_link"):
-        markup = keyboards.pay_keyboard(tr["pay_link"], label=tr.get("pay_label"))
-    elif tr.get("confirm_delete"):
-        markup = keyboards.meter_delete_confirm_keyboard(tr["confirm_scope"])
-    await message.answer(reply.text or "…", reply_markup=markup)
-    if reply.chart_path:
-        await message.answer_photo(FSInputFile(reply.chart_path))
+
+    # Voice in → voice out: synthesize the spoken reply locally. None (synth disabled, no
+    # model, too long, or an error) → just send text, so the user always gets an answer.
+    voice_ogg: str | None = None
+    if voice_reply:
+        try:
+            voice_ogg = await get_tts_provider().synthesize(reply.text or "")
+        except Exception:
+            log.exception("tts synth raised; replying in text")
+
+    try:
+        markup = None
+        tr = reply.tool_result or {}
+        # A retrieved meter photo: send the image with its caption, not a text line.
+        photo_path = tr.get("photo_path")
+        if photo_path and os.path.exists(photo_path):
+            # HTML caption (value in <code>) so Telegram doesn't auto-link the digit run.
+            await message.answer_photo(
+                FSInputFile(photo_path),
+                caption=tr.get("caption_html") or tr.get("caption") or reply.text,
+                parse_mode="HTML",
+            )
+            if voice_ogg:
+                await message.answer_voice(FSInputFile(voice_ogg))
+            return
+        if tr.get("pay_link"):
+            markup = keyboards.pay_keyboard(tr["pay_link"], label=tr.get("pay_label"))
+        elif tr.get("confirm_delete"):
+            markup = keyboards.meter_delete_confirm_keyboard(tr["confirm_scope"])
+        if voice_ogg:
+            # The voice note is the reply; any buttons ride along on it.
+            await message.answer_voice(FSInputFile(voice_ogg), reply_markup=markup)
+        else:
+            await message.answer(reply.text or "…", reply_markup=markup)
+        if reply.chart_path:
+            await message.answer_photo(FSInputFile(reply.chart_path))
+    finally:
+        if voice_ogg and os.path.exists(voice_ogg):
+            os.unlink(voice_ogg)  # transient — never linger on disk
 
 
 @router.message(F.text)
@@ -944,10 +972,12 @@ async def on_photo(message: Message) -> None:
 
 @router.message(F.voice)
 async def on_voice(message: Message) -> None:
-    """Voice note → transcribe locally → echo what I heard → run it as a normal text turn.
+    """Voice note → transcribe locally → run it as a normal agent turn → answer by voice.
     The audio file is deleted right after; bytes are never logged. Meter *values* still
     come only from photos (STT misreads digits), so a voice turn can ask or act but never
-    files a reading — and destructive actions keep their existing confirm-tap."""
+    files a reading — and destructive actions keep their existing confirm-tap. The reply
+    is spoken back (local Piper TTS); if synth is disabled/unavailable it falls back to
+    text, so a voice asker is never left without an answer."""
     if get_settings().stt_provider.casefold() == "none":
         await message.answer("Голосові я поки не слухаю — напиши, будь ласка, текстом.")
         return
@@ -968,8 +998,9 @@ async def on_voice(message: Message) -> None:
         return
 
     # No verbatim echo — `_respond_to_text` sends a natural «I'm on it» line once the
-    # agent knows what to do (same as for typed asks).
-    await _respond_to_text(message, transcript)
+    # agent knows what to do (same as for typed asks). Voice in → voice out: the answer
+    # comes back as a spoken note (with a text fallback if synth is off/unavailable).
+    await _respond_to_text(message, transcript, voice_reply=True)
 
 
 @router.callback_query(F.data.startswith("m:"))

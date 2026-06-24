@@ -32,8 +32,9 @@ async def test_voice_routes_transcript_without_echoing_it(engine, monkeypatch):
 
     captured: dict = {}
 
-    async def fake_respond(message, text):
+    async def fake_respond(message, text, **kwargs):
         captured["text"] = text
+        captured["voice_reply"] = kwargs.get("voice_reply")
         await message.answer("(відповідь агента)")
 
     monkeypatch.setattr(bot_app, "_respond_to_text", fake_respond)
@@ -44,6 +45,8 @@ async def test_voice_routes_transcript_without_echoing_it(engine, monkeypatch):
     assert stt.calls, "transcription should have run once"
     # The transcript is routed to the agent (which sends its own «I'm on it» line)…
     assert captured["text"] == "що треба заплатити?"
+    # …a voice ask is answered by voice…
+    assert captured["voice_reply"] is True
     # …and the bot never echoes the user's words back verbatim.
     assert all("🎙 Почув" not in text for text, _ in msg.answers)
 
@@ -53,7 +56,7 @@ async def test_voice_unintelligible_asks_to_retry(engine, monkeypatch):
 
     routed: list[str] = []
 
-    async def fake_respond(message, text, on_progress=None):
+    async def fake_respond(message, text, **kwargs):
         routed.append(text)
 
     monkeypatch.setattr(bot_app, "_respond_to_text", fake_respond)

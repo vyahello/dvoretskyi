@@ -30,7 +30,8 @@ never gets to invent your balance.
 
 **Scope:** money + stats + reminders + conversational agent over internal data
 (Phase 1), plus **meter readings** — photo → OCR → delta-validate → file to the
-[infolviv](https://infolviv.com.ua) portal (Phase 2), **voice notes** (local Whisper),
+[infolviv](https://infolviv.com.ua) portal (Phase 2), **voice notes** (local Whisper in,
+local Piper out — a voice ask gets a spoken reply),
 and **two properties** (a lived-in home + an unoccupied flat) tracked separately or
 together. Live **balance scraping** for the internet & mobile cabinets; still **no
 payment initiation** (Phase 3). See [`docs/`](docs/) for the full spec and
@@ -47,7 +48,7 @@ payment initiation** (Phase 3). See [`docs/`](docs/) for the full spec and
 > **🎩:** _\[a spend table\]_ 📊 Газ · Житло 2 · травень — разом 1 240 ₴
 >
 > **You:** _\[voice\]_ скільки вийшло за травень?
-> **🎩:** Зазираю в платежі… За травень — 3 920 ₴. Найбільше з'їв газ. _\[chart\]_
+> **🎩:** _\[voice reply\]_ За травень — 3 920 ₴. Найбільше з'їв газ. _\[chart\]_
 
 ## Stack
 | Area | Tech |
@@ -61,6 +62,7 @@ payment initiation** (Phase 3). See [`docs/`](docs/) for the full spec and
 | Images | Pillow |
 | LLM + vision OCR | headless Claude Code CLI (`claude -p`) |
 | Voice STT | faster-whisper (CTranslate2, in-process — no daemon) |
+| Voice TTS | Piper (local binary → ffmpeg OGG/Opus) — replies to voice asks |
 | Tooling | pytest · Ruff (lint + format) · mypy |
 
 ## Quick start
@@ -153,6 +155,14 @@ right after) and handled exactly like a typed message. Meter values stay photo-o
   показники газу…») and the answer then carries just the data. Meter *values* stay
   photo-only (speech misreads digits); destructive actions keep their confirm-tap.
   Kill-switch: `STT_PROVIDER=none`.
+- **Voice replies:** a voice ask is **answered by voice**. The agent's reply is
+  synthesized on-box by **Piper** (a local neural-TTS binary, like the `claude` CLI — no
+  pip dep, audio never leaves the server), re-encoded to OGG/Opus with ffmpeg, and sent as
+  a Telegram voice note (buttons ride on it; a chart/photo is still attached). Screen text
+  is cleaned for speech first (`voiceify`: emoji/markup dropped, «₴» → «гривень»). It
+  **falls back to text** whenever synth can't run — disabled, no voice model installed
+  (`PIPER_VOICE` empty), reply too long, or any error — so a voice asker is never left
+  empty-handed. Kill-switch: `TTS_PROVIDER=none`.
 
   ```
   voice note (OGG/Opus)
@@ -175,6 +185,13 @@ right after) and handled exactly like a typed message. Meter values stay photo-o
         │   Python runs the tool deterministically (TOOLS registry)
         ▼
   reply text = just the data  (+ pay button / delete-confirm tap / PNG chart)
+        │
+        ▼   (voice ask only)
+  get_tts_provider().synthesize(reply)   ── Piper → ffmpeg → OGG/Opus
+        │   • voiceify: emoji/markup out, «₴» → «гривень»
+        │   • no model / too long / error → None → send text instead
+        ▼
+  answer_voice(ogg)  ──► spoken reply (deleted after send)
   ```
 - **Reminders:** daily jobs nudge for (1) **payments** inside the due-day window
   (escalating near the deadline), (2) **meters** inside the submission window (the last
@@ -188,15 +205,16 @@ right after) and handled exactly like a typed message. Meter values stay photo-o
 
 ## Test & static analysis
 ```bash
-pytest -q              # 191 tests, in-memory SQLite, no network, no API key needed
+pytest -q              # 204 tests, in-memory SQLite, no network, no API key needed
 ruff check src tests   # lint (E,W,F,I,UP,B)
 ruff format src tests  # format (black-compatible; project standard)
 mypy                   # type-check src/
 ```
 All four are green on a clean tree. Tests use a fake `LLMProvider`, a fake
-`VisionProvider` and a fake `TranscriptionProvider` (no real `claude`/Whisper calls;
-faster-whisper is imported lazily so the suite never loads it) and pass time explicitly
-to the reminder / window logic.
+`VisionProvider`, a fake `TranscriptionProvider` and a fake `TTSProvider` (no real
+`claude`/Whisper/Piper calls; faster-whisper is imported lazily so the suite never loads
+it, and TTS never shells out to the binary) and pass time explicitly to the reminder /
+window logic.
 
 ## Repo map
 ```
@@ -206,6 +224,7 @@ src/dvoretskyi/  config·clock·app(FastAPI lifespan)·cli
   agent/ persona · provider (LLMProvider) · tools · dispatcher · balance (cabinet scrape)
          vision (VisionProvider OCR) · meters (delta validation) · infolviv (portal filing)
          submission (legacy channels) · photo_store (archive) · transcription (Whisper STT)
+         tts (Piper TTS — voice replies)
   households (slug helpers — addresses stay in env, never code)
   bot/  aiogram bot + allowlist + keyboards + photo & voice handlers + webhook notifier
   reminders/ APScheduler engine (payment + meter + balance nudges)
