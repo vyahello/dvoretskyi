@@ -18,6 +18,17 @@ async def test_no_tool_passes_message_through(session, providers):
     assert reply.tool is None
 
 
+async def test_context_carries_due_days_and_autopay(session, providers):
+    # The agent must be able to answer «коли платимо» — so each provider's due_day and
+    # the mobile autopay day are in the context (it had neither before, hence the bot
+    # wrongly claimed it «не зберігає дат»).
+    ctx = await dispatcher.build_context(session)
+    by_name = {p["name"]: p for p in ctx["providers"]}
+    assert by_name["Холодна вода"]["due_day"] == 20
+    assert by_name["Газ (постачання)"]["due_day"] == 15
+    assert "autopay_day" in ctx
+
+
 async def test_routes_to_get_unpaid_and_keeps_persona_text(session, providers):
     persona_line = "Відкрите: газ і вода. Решта спить."
     llm = FakeLLMProvider([Decision(tool="get_unpaid", args={}, message=persona_line)])

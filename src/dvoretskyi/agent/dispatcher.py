@@ -20,6 +20,7 @@ from dvoretskyi import clock
 from dvoretskyi.agent import tools as tools_mod
 from dvoretskyi.agent.provider import Decision, LLMProvider
 from dvoretskyi.agent.tools import ToolError
+from dvoretskyi.config import get_settings
 from dvoretskyi.db.models import MeterReading, MeterStatus, Payment, Provider
 
 log = logging.getLogger(__name__)
@@ -174,10 +175,16 @@ async def build_context(session: AsyncSession) -> dict:
         for p in recent_rows
     ]
 
+    # `due_day` = day of the month each provider is due (None = no scheduled payment,
+    # e.g. mobile autopay or the unoccupied flat). Carried so the agent can answer
+    # «коли платимо» from real data instead of claiming it has none.
     providers = [
-        {"name": name, "category": prov.category.value}
+        {
+            "name": prov.name,
+            "category": prov.category.value,
+            "due_day": prov.due_day,
+        }
         for prov in (await session.execute(select(Provider))).scalars()
-        for name in (prov.name,)
     ]
 
     meter_rows = (
@@ -211,6 +218,7 @@ async def build_context(session: AsyncSession) -> dict:
         "unpaid": unpaid,
         "recent_payments": recent,
         "providers": providers,
+        "autopay_day": get_settings().mobile_autopay_day,
         "meters": meters,
     }
 

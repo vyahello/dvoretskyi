@@ -22,7 +22,10 @@ Auth Claude Code via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
   `tools` (TOOLS registry),
   `dispatcher` (handle_message: deterministic tool routing; takes a short `history` of
   recent turns → `context["recent_dialogue"]` so the model resolves short replies like
-  «давай»/«а за травень?» against its own last line). **Tool replies must surface data:**
+  «давай»/«а за травень?» against its own last line). `build_context` carries each
+  provider's **`due_day`** (day of month due; null = no scheduled payment) + the
+  **`autopay_day`**, so «коли треба платити» is answered from real data (the model used to
+  wrongly say it «не зберігає дат» — it had no such field in context). **Tool replies must surface data:**
   tools that compute numbers return a `message` the dispatcher appends — `get_stats`
   renders a **modern data table** PNG (`_render_table`: header band with period + grand
   total, zebra rows, a mini share-bar per row, right-aligned СУМА/ЧАСТКА columns; amounts
