@@ -363,6 +363,39 @@ async def test_voice_synth_failure_falls_back_to_text(engine, monkeypatch):
     assert msg.answers == ["Усе закрито."]
 
 
+async def test_voice_send_refused_falls_back_to_text(engine, monkeypatch, tmp_path):
+    # Telegram can refuse a voice note (e.g. VOICE_MESSAGES_FORBIDDEN — the recipient's
+    # privacy setting). The send error must fall back to text, never leave the user empty.
+    from dvoretskyi.agent.dispatcher import Reply
+
+    async def fake_handle(user_text, session, llm, *, history=None, on_progress=None):
+        return Reply(text="Усе закрито.")
+
+    monkeypatch.setattr(bot_app.agent_dispatcher, "handle_message", fake_handle)
+
+    ogg = tmp_path / "reply.ogg"
+    ogg.write_bytes(b"OggS-fake-audio")
+
+    class FakeTTS:
+        async def synthesize(self, text: str) -> str:
+            return str(ogg)
+
+    monkeypatch.setattr(bot_app, "get_tts_provider", lambda: FakeTTS())
+
+    class RefusingMessage(FakeMessage):
+        async def answer_voice(self, voice, reply_markup=None, **kw) -> None:
+            raise RuntimeError(
+                "Telegram server says - Bad Request: VOICE_MESSAGES_FORBIDDEN"
+            )
+
+    msg = RefusingMessage()
+    await bot_app._respond_to_text(msg, "усе оплачено?", voice_reply=True)
+
+    assert msg.answers == ["Усе закрито."]  # fell back to text
+    assert not msg.voices  # the refused voice note was not recorded
+    assert not ogg.exists()  # transient audio still cleaned up
+
+
 def test_payee_hint_strips_phone_and_collapses_lines():
     # monobank's mobile top-up description is «Lifecell\n+380…» — the prompt should name
     # the carrier, never the bare phone number.

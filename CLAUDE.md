@@ -157,19 +157,23 @@ deleted right after (transient; bytes never logged). Empty/failed transcript →
 can ask or act but never files a reading; destructive actions (delete) keep their confirm-tap.
 
 **Voice in → voice out (L2.6):** a voice ask is **answered by voice**. `on_voice` calls
-`_respond_to_text(…, voice_reply=True)`; after the agent produces its reply the bot
-synthesizes it locally (`agent/tts.py`: `TTSProvider` ABC + `PiperTTSProvider` default +
-`Null…` when `TTS_PROVIDER=none`) and sends it as a Telegram **voice note**
-(`answer_voice`); any buttons (pay link / delete-confirm) ride on the voice message, and a
-chart/photo is still attached as an image. Piper is an **external binary** (like
-`claude_bin` — no pip dep): text → WAV, then ffmpeg → OGG/Opus (mono 48 kHz). The OGG is
-sent then deleted (transient; bytes never logged). Replies are written for the screen, so
-`tts.voiceify` strips emoji/markup and speaks symbols (₴ → «гривень»), folding lines into
-sentences. **Graceful fallback to text** on any miss — synth disabled, no voice model
-(`PIPER_VOICE` empty), reply over `TTS_MAX_CHARS`, or a synth error → `synthesize` returns
-None and the bot just sends text, so a voice asker is never left empty-handed (and
-deploying before the voice model is installed is safe). Typed asks are unaffected
-(`voice_reply` defaults False).
+`_respond_to_text(…, voice_reply=True)`; the chat header shows **«записує аудіо…»**
+(`_thinking(action="record_voice")`, not «друкує…») while the agent works and the reply is
+synthesized locally (`agent/tts.py`: `TTSProvider` ABC + `PiperTTSProvider` default +
+`Null…` when `TTS_PROVIDER=none`) and sent as a Telegram **voice note** (`answer_voice`);
+any buttons (pay link / delete-confirm) ride on the voice message, and a chart/photo is
+still attached as an image. Piper is an **external binary** (like `claude_bin` — no pip
+dep): text → WAV, then ffmpeg → OGG/Opus (mono 48 kHz). The OGG is sent then deleted
+(transient; bytes never logged). Replies are written for the screen, so `tts.voiceify`
+strips emoji/markup and speaks symbols (₴ → «гривень»), folding lines into sentences.
+**Graceful fallback to text** on any miss, in two places: (1) `synthesize` returns None —
+synth disabled, no voice model (`PIPER_VOICE` empty), reply over `TTS_MAX_CHARS`, or a
+synth error; (2) the voice **send** is refused — `_try_voice` catches it and returns False
+(most often `VOICE_MESSAGES_FORBIDDEN`, the recipient's Telegram privacy setting forbidding
+voice notes from bots) → the bot sends text instead. So a voice asker is never left
+empty-handed (and deploying before the voice model is installed is safe). `_try_voice` is
+**stateless** — the moment the recipient allows voice notes the next turn delivers one, no
+restart. Typed asks are unaffected (`voice_reply` defaults False).
 
 ## Run
 ```bash

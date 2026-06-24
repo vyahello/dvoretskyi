@@ -506,22 +506,42 @@ async def menu_hello(message: Message) -> None:
 
 
 @asynccontextmanager
-async def _thinking(message: Message) -> AsyncIterator[None]:
-    """Show Telegram's animated «друкує…» while we work, so a slow LLM/vision turn never
-    looks frozen. No-ops if the bot/chat isn't a real one (e.g. in tests). Body exceptions
+async def _thinking(message: Message, action: str = "typing") -> AsyncIterator[None]:
+    """Show a Telegram chat action while we work, so a slow LLM/vision turn never looks
+    frozen. Default «друкує…» (typing); pass `action="record_voice"` for «записує аудіо…»
+    on a voice turn. No-ops if the bot/chat isn't real (e.g. in tests). Body exceptions
     propagate to the caller's own error handling — we only gate the indicator itself."""
     bot = getattr(message, "bot", None)
     chat = getattr(message, "chat", None)
     if not isinstance(bot, Bot) or chat is None:
         yield
         return
-    async with ChatActionSender.typing(bot=bot, chat_id=chat.id):
+    async with ChatActionSender(bot=bot, chat_id=chat.id, action=action):
         yield
 
 
 # Rolling free-text dialogue (single user, single process) so the agent can resolve
 # short replies («давай», «а за травень?») against its own previous line. Kept short.
 _DIALOGUE: deque[dict[str, str]] = deque(maxlen=6)
+
+
+async def _try_voice(
+    message: Message,
+    ogg_path: str,
+    *,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> bool:
+    """Send a synthesized voice note. Returns True if delivered, False if Telegram refused
+    it — most often `VOICE_MESSAGES_FORBIDDEN` (the recipient's privacy setting forbids
+    voice messages from bots), but any send error returns False so the caller falls back
+    to text and the answer still lands. Stateless: the moment the recipient allows voice
+    notes, the next turn delivers one."""
+    try:
+        await message.answer_voice(FSInputFile(ogg_path), reply_markup=reply_markup)
+        return True
+    except Exception as exc:
+        log.warning("voice note not delivered (%s) — replying in text", exc)
+        return False
 
 
 async def _respond_to_text(
@@ -533,15 +553,18 @@ async def _respond_to_text(
     asks — so the bot feels like a real assistant rather than echoing the request back.
 
     `voice_reply` (set by the voice handler) makes the bot answer in a **voice note**: the
-    reply is synthesized locally (Piper) and sent as audio, with any image (chart/photo)
-    still attached. Synth failures fall back to a text reply, so a voice asker is never
-    left empty-handed."""
+    chat header shows «записує аудіо…» (not «друкує…»), the reply is synthesized locally
+    (Piper) and sent as audio, with any image (chart/photo) still attached. If synth or
+    the voice send fails (e.g. the recipient forbids voice messages) it falls back to a
+    text reply, so a voice asker is never left empty-handed."""
 
     async def _say_progress(line: str) -> None:
         await message.answer(line)
 
+    # A voice turn signals «записує аудіо…»; a typed/photo turn «друкує…».
+    work_action = "record_voice" if voice_reply else "typing"
     try:
-        async with _thinking(message), session_scope() as session:
+        async with _thinking(message, work_action), session_scope() as session:
             reply = await agent_dispatcher.handle_message(
                 user_text,
                 session,
@@ -560,12 +583,14 @@ async def _respond_to_text(
     _DIALOGUE.append({"role": "user", "text": user_text})
     _DIALOGUE.append({"role": "assistant", "text": reply.text or ""})
 
-    # Voice in → voice out: synthesize the spoken reply locally. None (synth disabled, no
-    # model, too long, or an error) → just send text, so the user always gets an answer.
+    # Voice in → voice out: synthesize the spoken reply locally (still showing «записує
+    # аудіо…»). None (synth disabled, no model, too long, or an error) → send text, so the
+    # user always gets an answer.
     voice_ogg: str | None = None
     if voice_reply:
         try:
-            voice_ogg = await get_tts_provider().synthesize(reply.text or "")
+            async with _thinking(message, "record_voice"):
+                voice_ogg = await get_tts_provider().synthesize(reply.text or "")
         except Exception:
             log.exception("tts synth raised; replying in text")
 
@@ -582,16 +607,17 @@ async def _respond_to_text(
                 parse_mode="HTML",
             )
             if voice_ogg:
-                await message.answer_voice(FSInputFile(voice_ogg))
+                await _try_voice(
+                    message, voice_ogg
+                )  # best-effort; photo already answered
             return
         if tr.get("pay_link"):
             markup = keyboards.pay_keyboard(tr["pay_link"], label=tr.get("pay_label"))
         elif tr.get("confirm_delete"):
             markup = keyboards.meter_delete_confirm_keyboard(tr["confirm_scope"])
-        if voice_ogg:
-            # The voice note is the reply; any buttons ride along on it.
-            await message.answer_voice(FSInputFile(voice_ogg), reply_markup=markup)
-        else:
+        # The voice note is the reply (buttons ride on it). If Telegram refuses it (e.g.
+        # recipient forbids voice messages), fall back to the text reply — never dead air.
+        if not (voice_ogg and await _try_voice(message, voice_ogg, reply_markup=markup)):
             await message.answer(reply.text or "…", reply_markup=markup)
         if reply.chart_path:
             await message.answer_photo(FSInputFile(reply.chart_path))
