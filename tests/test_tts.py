@@ -27,9 +27,14 @@ def test_voiceify_money_kopiyky_and_plural():
 
 
 def test_voiceify_dates_and_ordinals():
-    assert voiceify("подав 2026-06-06") == "подав шостого червня 2026"
+    # Full date reads like a person: genitive-ordinal day AND year, plus «року».
+    assert (
+        voiceify("подав 2026-06-06")
+        == "подав шостого червня дві тисячі двадцять шостого року"
+    )
     assert voiceify("за 2026-06") == "за червень 2026"
     assert voiceify("до 20-го") == "до двадцятого"
+    assert voiceify("до 31-го") == "до тридцять першого"
 
 
 def test_voiceify_decimals_read_as_koma():

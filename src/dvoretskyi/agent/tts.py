@@ -68,8 +68,9 @@ _MONTHS_NOM: dict[int, str] = {
     11: "листопад",
     12: "грудень",
 }
-# Day-of-month as a genitive ordinal («шостого»), so a date reads like a person says it.
-_DAY_ORD_1_20: dict[int, str] = {
+# Genitive ordinals, so dates read the way a person says them («шостого червня дві
+# тисячі двадцять шостого року») rather than digit-by-digit.
+_ORD_1_20: dict[int, str] = {
     1: "першого",
     2: "другого",
     3: "третього",
@@ -91,18 +92,45 @@ _DAY_ORD_1_20: dict[int, str] = {
     19: "дев'ятнадцятого",
     20: "двадцятого",
 }
+_TENS_ORD: dict[int, str] = {
+    20: "двадцятого",
+    30: "тридцятого",
+    40: "сорокового",
+    50: "п'ятдесятого",
+    60: "шістдесятого",
+    70: "сімдесятого",
+    80: "вісімдесятого",
+    90: "дев'яностого",
+}
+_TENS_CARD: dict[int, str] = {
+    20: "двадцять",
+    30: "тридцять",
+    40: "сорок",
+    50: "п'ятдесят",
+    60: "шістдесят",
+    70: "сімдесят",
+    80: "вісімдесят",
+    90: "дев'яносто",
+}
 
 
-def _day_ord_gen(d: int) -> str:
-    if d in _DAY_ORD_1_20:
-        return _DAY_ORD_1_20[d]
-    if 21 <= d <= 29:
-        return "двадцять " + _DAY_ORD_1_20[d - 20]
-    if d == 30:
-        return "тридцятого"
-    if d == 31:
-        return "тридцять першого"
-    return str(d)
+def _two_ord_gen(n: int) -> str:
+    """1–99 as a genitive ordinal: 6→«шостого», 26→«двадцять шостого», 30→«тридцятого»."""
+    if n in _ORD_1_20:
+        return _ORD_1_20[n]
+    tens, unit = (n // 10) * 10, n % 10
+    if tens not in _TENS_CARD:
+        return str(n)
+    return _TENS_ORD[tens] if unit == 0 else f"{_TENS_CARD[tens]} {_ORD_1_20[unit]}"
+
+
+def _year_ord_gen(y: int) -> str:
+    """A 21st-century year as a genitive ordinal: 2026 → «дві тисячі двадцять шостого»."""
+    if y == 2000:
+        return "двохтисячного"
+    if 2001 <= y <= 2099:
+        return "дві тисячі " + _two_ord_gen(y % 100)
+    return str(y)
 
 
 def _ua_plural(n: int, one: str, few: str, many: str) -> str:
@@ -150,7 +178,7 @@ def _date_dmy(m: re.Match[str]) -> str:
     y, mo, d = int(m[1]), int(m[2]), int(m[3])
     if not (1 <= mo <= 12 and 1 <= d <= 31):
         return m.group(0)
-    return f"{_day_ord_gen(d)} {_MONTHS_GEN[mo]} {y}"
+    return f"{_two_ord_gen(d)} {_MONTHS_GEN[mo]} {_year_ord_gen(y)} року"
 
 
 def _date_my(m: re.Match[str]) -> str:
@@ -176,7 +204,7 @@ def voiceify(text: str) -> str:
     out = _GROUP_RE.sub("", out)
     out = _DATE_DMY_RE.sub(_date_dmy, out)
     out = _DATE_MY_RE.sub(_date_my, out)
-    out = _ORD_GO_RE.sub(lambda m: _day_ord_gen(int(m[1])), out)
+    out = _ORD_GO_RE.sub(lambda m: _two_ord_gen(int(m[1])), out)
     out = _MONEY_RE.sub(lambda m: _money_words(m[1], m[2]), out)
     out = _DROP_ZEROS_RE.sub(r"\1", out)
     out = _RANGE_RE.sub(r"\1 до \2", out)
@@ -258,6 +286,8 @@ class PiperTTSProvider(TTSProvider):
             ]
             if s.piper_length_scale:
                 piper_args += ["--length_scale", s.piper_length_scale]
+            if s.piper_sentence_silence:
+                piper_args += ["--sentence_silence", s.piper_sentence_silence]
             if not await self._spawn(piper_args, stdin=spoken.encode("utf-8")):
                 return None
             if not os.path.getsize(wav_path):

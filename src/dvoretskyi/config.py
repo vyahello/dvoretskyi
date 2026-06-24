@@ -100,8 +100,12 @@ class Settings(BaseSettings):
     tts_provider: str = "piper"  # piper | none
     piper_bin: str = "piper"  # path/name of the piper executable
     piper_voice: str = ""  # path to the .onnx voice model (.json config sits beside it)
-    # speaking-rate override (e.g. "1.1" = slower); empty → the voice's own default.
-    piper_length_scale: str = ""
+    # Speaking rate: >1 is slower & clearer (Ukrainian espeak runs fast/robotic at 1.0).
+    # Empty → the voice's own default. Tune for intelligibility.
+    piper_length_scale: str = "1.15"
+    # Silence (seconds) after each sentence — breathing room so the reply doesn't run
+    # together into one breathless blur. Empty → piper default (~0.2s).
+    piper_sentence_silence: str = "0.5"
     tts_timeout_seconds: int = 30  # cap a slow synth so the bot never hangs
     tts_max_chars: int = 600  # don't voice a very long reply — fall back to text instead
 
