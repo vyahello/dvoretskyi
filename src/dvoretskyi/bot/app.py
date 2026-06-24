@@ -1010,7 +1010,9 @@ async def on_voice(message: Message) -> None:
     path: str | None = None
     transcript = ""
     try:
-        async with _thinking(message):
+        # «записує аудіо…» from the very first second (download + transcription), so the
+        # whole voice turn reads as one action — no «друкує…» flicker before the reply.
+        async with _thinking(message, "record_voice"):
             path = await _download_voice(message)
             transcript = await get_transcription_provider().transcribe(path)
     except Exception:
