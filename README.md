@@ -95,10 +95,12 @@ dvoretskyi learn-pattern "Газ (постачання)" "naftogaz"
 Telegram menu (also published in code via `set_my_commands`): `/start`, `/unpaid`
 (open this month), `/stats` (this month's spend, as a chart when there's data),
 `/help`. Commands run **deterministically** — no LLM. Anything else you type is free
-text handled by the agent (e.g. «що треба заплатити?»). For both typed and voiced asks,
-once the butler knows what you want it sends a short natural «I'm on it» line
-(«зазираю в кабінет інтернету…») and then the answer — like a real assistant, never
-echoing your words back. Send a **photo of a meter** to record a reading (gas/water) —
+text handled by the agent (e.g. «що треба заплатити?»). For a typed ask, once the butler
+knows what you want it sends a short natural «I'm on it» line («зазираю в кабінет
+інтернету…») and then the answer — like a real assistant, never echoing your words back.
+(On a **voice** ask that line is skipped — the «записує аудіо…» header already says it's
+working — and the answer comes straight back as a voice note.) Send a **photo of a
+meter** to record a reading (gas/water) —
 the bot routes, OCRs, validates, and tells you how to submit. You can also send a
 **voice note**: it's transcribed locally (faster-whisper, on-box — audio is deleted
 right after) and handled exactly like a typed message. Meter values stay photo-only

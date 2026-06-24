@@ -559,7 +559,12 @@ async def _respond_to_text(
     text reply, so a voice asker is never left empty-handed."""
 
     async def _say_progress(line: str) -> None:
-        await message.answer(line)
+        # A voice turn already signals work via the «записує аудіо…» header — don't also
+        # post a text «I'm on it» line (it reads as a stray text bubble before the voice
+        # reply). Still wired (not None) so the dispatcher composes the answer as just the
+        # data, with no «зараз гляну» preamble in what we then synthesize.
+        if not voice_reply:
+            await message.answer(line)
 
     # A voice turn signals «записує аудіо…»; a typed/photo turn «друкує…».
     work_action = "record_voice" if voice_reply else "typing"

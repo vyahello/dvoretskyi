@@ -148,10 +148,12 @@ a typed message, so stats/unpaid/balance/deletes all work for free. **No verbati
 the user's words: instead, once the agent picks a tool the bot sends a short, natural,
 topic-aware «I'm on it» line (`dispatcher._progress_line` via the `on_progress` callback —
 «Зазираю в кабінет інтернету…», «Підіймаю показники газу…»; varied, deterministic). This
-progress line fires for **both typed and voiced** asks (`_respond_to_text` always wires
-`on_progress`). When a progress line is sent the reply carries **just the data** (no «зараз
-гляну» preamble to double it). A plain chat reply (no tool) just answers — no progress
-line. The audio file is
+progress line is sent as text **only for typed asks**. On a **voice** ask it's suppressed
+(`_say_progress` no-ops when `voice_reply` — the «записує аудіо…» header already signals
+work, so a stray text bubble before the voice reply is avoided), but `on_progress` is
+**still wired** (not None) so the dispatcher composes the reply as **just the data** (no
+«зараз гляну» preamble) — which is what then gets synthesized. A plain chat reply (no tool)
+just answers — no progress line. The audio file is
 deleted right after (transient; bytes never logged). Empty/failed transcript → «не розчув,
 напиши текстом». **Meter values stay photo-only** — STT misreads digits, so a voice turn
 can ask or act but never files a reading; destructive actions (delete) keep their confirm-tap.

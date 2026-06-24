@@ -363,6 +363,34 @@ async def test_voice_synth_failure_falls_back_to_text(engine, monkeypatch):
     assert msg.answers == ["Усе закрито."]
 
 
+async def test_voice_turn_suppresses_text_progress_line(engine, monkeypatch, tmp_path):
+    # On a voice ask the «записує аудіо…» header is the ack; the «I'm on it» progress line
+    # must NOT also be posted as a text bubble before the voice reply.
+    from dvoretskyi.agent.dispatcher import Reply
+
+    async def fake_handle(user_text, session, llm, *, history=None, on_progress=None):
+        if on_progress is not None:
+            await on_progress("Збираю статистику…")  # a text bubble for a TYPED ask
+        return Reply(text="За червень — 460 ₴.")
+
+    monkeypatch.setattr(bot_app.agent_dispatcher, "handle_message", fake_handle)
+
+    ogg = tmp_path / "r.ogg"
+    ogg.write_bytes(b"OggS")
+
+    class FakeTTS:
+        async def synthesize(self, text: str) -> str:
+            return str(ogg)
+
+    monkeypatch.setattr(bot_app, "get_tts_provider", lambda: FakeTTS())
+
+    msg = FakeMessage()
+    await bot_app._respond_to_text(msg, "скільки за газ?", voice_reply=True)
+
+    assert len(msg.voices) == 1  # only the spoken answer
+    assert msg.answers == []  # the «Збираю статистику…» line was not sent as text
+
+
 async def test_voice_send_refused_falls_back_to_text(engine, monkeypatch, tmp_path):
     # Telegram can refuse a voice note (e.g. VOICE_MESSAGES_FORBIDDEN — the recipient's
     # privacy setting). The send error must fall back to text, never leave the user empty.
