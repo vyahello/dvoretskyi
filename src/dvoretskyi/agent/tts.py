@@ -180,6 +180,19 @@ _VOLUME_RE = re.compile(r"(\d+)(?:[.,](\d+))?\s*м(?:³|3)(?!\w)")
 # the year in full (genitive ordinal + «року»), the way a person says it — not a bare
 # cardinal «дві тисячі двадцять шість» with no «року» (what dead-ended «червень 2026»).
 _MONTH_YEAR_RE = re.compile(r"\b(" + "|".join(_MONTHS_NOM.values()) + r")\s+(\d{4})\b")
+# Latin brand/jargon terms espeak's uk voice mispronounces (it reads Latin letters with
+# its own rules: «monobank» comes out «монобайк»). Give each a Ukrainian spoken form;
+# matched case-insensitively, longest-first so «gigabit+» wins over «gigabit».
+_SPOKEN_TERMS: dict[str, str] = {
+    "monobank": "монобанк",
+    "autopay": "автосписання",
+    "gigabit+": "ґіґабіт плюс",
+    "gigabit": "ґіґабіт",
+}
+_TERMS_RE = re.compile(
+    "|".join(re.escape(k) for k in sorted(_SPOKEN_TERMS, key=len, reverse=True)),
+    re.IGNORECASE,
+)
 
 
 def _date_dmy(m: re.Match[str]) -> str:
@@ -322,9 +335,10 @@ def voiceify(text: str, *, stress_hints: bool = False) -> str:
     «510 гривень [10 копійок]» (declined), dates as «шостого червня дві тисячі двадцять
     шостого року», a period «червень 2026» with the year in full + «року», meter volumes
     «3.03 м³» as «3 кома нуль три кубометра», «20-го» as «двадцятого», decimals as «1888
-    кома 14» (leading zeros voiced: «03» → «нуль 3»); turns dashes into pauses and folds
-    newlines/bullets into sentences. With `stress_hints`, marks the stressed vowel of
-    domain words espeak-ng tends to mis-stress. Returns '' for empty input."""
+    кома 14» (leading zeros voiced: «03» → «нуль 3»); gives Latin brand/jargon terms a
+    spoken Ukrainian form («monobank» → «монобанк», else espeak says «монобайк»); turns
+    dashes into pauses and folds newlines/bullets into sentences. With `stress_hints`,
+    marks the stressed vowel of domain words espeak-ng mis-stresses. '' if empty."""
     if not text:
         return ""
     out = _EMOJI_RE.sub("", text)
@@ -357,6 +371,9 @@ def voiceify(text: str, *, stress_hints: bool = False) -> str:
         ("&", " і "),
     ):
         out = out.replace(sym, word)
+    # Latin brand/jargon terms → an explicit Ukrainian spoken form: espeak's uk voice
+    # reads a Latin word with its own rules and mangles it («monobank» → «монобайк»).
+    out = _TERMS_RE.sub(lambda m: _SPOKEN_TERMS[m.group(0).lower()], out)
     # Tidy spacing/punctuation left by the substitutions.
     out = re.sub(r"\s+", " ", out).strip()
     out = re.sub(r"\s+([,.])", r"\1", out)

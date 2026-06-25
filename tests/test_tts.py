@@ -57,6 +57,14 @@ def test_voiceify_meter_volume_named_with_unit():
     assert voiceify("1 м³") == "1 кубометр"
 
 
+def test_voiceify_speaks_latin_brand_terms():
+    # espeak's uk voice mangles a Latin word («monobank» → «монобайк») — give it a spoken
+    # Ukrainian form. Case-insensitive; «Gigabit+» wins over the «gigabit» prefix.
+    assert voiceify("автосписанням monobank 20-го") == "автосписанням монобанк двадцятого"
+    assert voiceify("autopay monobank усе зробить") == "автосписання монобанк усе зробить"
+    assert voiceify("Інтернет (Gigabit+)") == "Інтернет ґіґабіт плюс"
+
+
 def test_voiceify_stress_hints_are_a_flag():
     # voiceify's own param defaults off (the setting tts_stress_hints, default on, is what
     # PiperTTSProvider passes); off → plain text, no accents — the base contract holds.
