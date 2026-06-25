@@ -238,8 +238,8 @@ default), `LLM_PROVIDER` (claude_code|anthropic_api),
 RAM), `WHISPER_COMPUTE_TYPE` (int8), `WHISPER_LANGUAGE` (uk), `STT_TIMEOUT_SECONDS`.
 **Voice out:** `TTS_PROVIDER` (piper|none), `PIPER_BIN` (piper executable), `PIPER_VOICE`
 (path to the .onnx voice model; **empty → no synth, text reply** — so deploy is safe
-before it's installed), `PIPER_LENGTH_SCALE` (speaking rate, 1.0 = natural; >1 slower,
-default 1.0), `PIPER_SENTENCE_SILENCE` (pause after each sentence, default 0.3s),
+before it's installed), `PIPER_LENGTH_SCALE` (speaking rate, <1 faster / >1 slower,
+default 0.9), `PIPER_SENTENCE_SILENCE` (pause after each sentence, default 0.3s),
 `TTS_TIMEOUT_SECONDS` (30), `TTS_MAX_CHARS` (600 — longer replies go out as text). (No
 stress knob — espeak ignores explicit stress marks; see the voiceify note above.)
 

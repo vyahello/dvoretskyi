@@ -100,9 +100,9 @@ class Settings(BaseSettings):
     tts_provider: str = "piper"  # piper | none
     piper_bin: str = "piper"  # path/name of the piper executable
     piper_voice: str = ""  # path to the .onnx voice model (.json config sits beside it)
-    # Speaking rate: 1.0 = the voice's natural pace; >1 slows it down. We sat at 1.15 for
-    # clarity but it dragged — 1.0 sounds natural. Empty → the voice's own default.
-    piper_length_scale: str = "1.0"
+    # Speaking rate: <1 speeds the voice up, >1 slows it down. 1.15 dragged, 1.0 was
+    # natural-but-slow; 0.9 is a touch quicker without clipping clarity. Empty → default.
+    piper_length_scale: str = "0.9"
     # Silence (seconds) after each sentence — breathing room so the reply doesn't run
     # together. Empty → piper default (~0.2s); 0.3 is a natural beat without dragging.
     piper_sentence_silence: str = "0.3"
