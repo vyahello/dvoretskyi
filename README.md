@@ -163,7 +163,10 @@ right after) and handled exactly like a typed message. Meter values stay photo-o
   a Telegram voice note (buttons ride on it; a chart/photo is still attached). Screen text
   is cleaned for speech first (`voiceify`: emoji/markup dropped, «₴» → «гривень», meter
   readings → «… кубометра», a period → «червень дві тисячі двадцять шостого року»). Word
-  stress is left to espeak's own guess (espeak-ng has no explicit stress-mark support). It
+  stress, which espeak's uk rules sometimes get wrong, is corrected by an espeak
+  pronunciation dictionary (`scripts/build_espeak_stress.py` compiles
+  `scripts/uk_stress_overrides.txt` into a custom espeak data dir Piper is pointed at — no
+  text trick works, that's verified). It
   **falls back to text** whenever synth can't run — disabled, no voice model installed
   (`PIPER_VOICE` empty), reply too long, or any error — so a voice asker is never left
   empty-handed. Kill-switch: `TTS_PROVIDER=none`.

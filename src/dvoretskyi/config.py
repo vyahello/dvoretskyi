@@ -106,6 +106,14 @@ class Settings(BaseSettings):
     # Silence (seconds) after each sentence — breathing room so the reply doesn't run
     # together. Empty → piper default (~0.2s); 0.3 is a natural beat without dragging.
     piper_sentence_silence: str = "0.3"
+    # Custom espeak-ng data dir for Piper (--espeak_data). espeak's uk rules mis-stress
+    # some words (подано→«подА́но», баланс→«бА́ланс»); the ONLY fix that reaches Piper is
+    # an espeak pronunciation dictionary (text marks / [[phonemes]] are ignored/read
+    # literally — verified). `scripts/build_espeak_stress.py` compiles our overrides
+    # (scripts/uk_stress_overrides.txt) into a copy of Piper's bundled data. Empty here →
+    # the default ~/.dvoretskyi/espeak-ng-data is auto-used IF that build ran (else the
+    # bundled data / espeak's default stress). Set explicitly only for a non-default path.
+    piper_espeak_data: str = ""
     tts_timeout_seconds: int = 30  # cap a slow synth so the bot never hangs
     tts_max_chars: int = 600  # don't voice a very long reply — fall back to text instead
 

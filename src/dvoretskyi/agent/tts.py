@@ -25,6 +25,22 @@ from dvoretskyi.config import Settings, get_settings
 
 log = logging.getLogger(__name__)
 
+# Stress-override espeak data dir (built by scripts/build_espeak_stress.py). Convention
+# mirrors METER_PHOTO_DIR: an empty PIPER_ESPEAK_DATA falls back to this default path if a
+# uk_dict has actually been compiled there — so the fix turns on the moment the dir exists
+# (next voice reply), with no .env edit and no restart. An explicit setting always wins.
+_DEFAULT_ESPEAK_DATA = Path.home() / ".dvoretskyi" / "espeak-ng-data"
+
+
+def _espeak_data_dir(s: Settings) -> str:
+    """The espeak data dir to hand Piper, or '' to let it use its bundled default."""
+    if s.piper_espeak_data:
+        return s.piper_espeak_data
+    if (_DEFAULT_ESPEAK_DATA / "uk_dict").exists():
+        return str(_DEFAULT_ESPEAK_DATA)
+    return ""
+
+
 # Emoji / pictographs / arrows / symbols that a voice would read as "галочка", "стрілка",
 # … — strip them. ₴/numbers/dates are handled by the spoken-form passes below.
 _EMOJI_RE = re.compile(
@@ -348,6 +364,11 @@ class PiperTTSProvider(TTSProvider):
                 piper_args += ["--length_scale", s.piper_length_scale]
             if s.piper_sentence_silence:
                 piper_args += ["--sentence_silence", s.piper_sentence_silence]
+            espeak_dir = _espeak_data_dir(s)
+            if espeak_dir:
+                # Custom espeak data dir with our uk stress overrides (else espeak's own,
+                # sometimes-wrong, rule stress is used). See config / build_espeak_stress.
+                piper_args += ["--espeak_data", espeak_dir]
             if not await self._spawn(piper_args, stdin=spoken.encode("utf-8")):
                 return None
             if not os.path.getsize(wav_path):

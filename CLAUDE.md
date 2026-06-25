@@ -181,14 +181,24 @@ reading isn't a unitless «сума»; `_meter_history_message` now emits `м³`
 `3.03` isn't heard as `3.3` — `_spoken_frac`); **Latin brand/jargon** → a spoken Ukrainian
 form (`_SPOKEN_TERMS`: «monobank» → «монобанк», else espeak says «монобайк»; «autopay»,
 «Gigabit+»); dashes → pauses; lines folded into sentences.
-(Numerals stay as digits — espeak-ng voices them.) **Stress is NOT handled** — Ukrainian
-lexical stress is left to espeak's own guess. Confirmed from espeak-ng source: the `uk`
-rules have no stress-mark handling, and the general U+0301-as-stress feature is an unmerged
-2025 proposal (issue #2241). So feeding Piper a stress mark is a no-op — there's no way to
-fix stress on the Piper/espeak path. Correct stress needs a non-espeak TTS (e.g.
-`ukrainian-tts`/ESPnet), which is torch-heavy → would run on a **separate** box, never on
-the shared main VPS (site + other bots); not built. (An earlier curated U+0301 hint layer
-was removed once espeak was confirmed to ignore the mark.)
+(Numerals stay as digits — espeak-ng voices them.) **Stress — fixed via an espeak
+pronunciation dictionary, NOT via the text.** espeak's `uk` rules mis-stress some words
+(verified on the box: `подано → подА́но`, `баланс → бА́ланс`; both wrong). Nothing in the
+text fed to Piper can correct it — tested through Piper's own phonemizer: a U+0301 accent
+is **ignored**, a `[[phoneme]]` block is read **literally** (Piper says «відкрита квадратна
+дужка»), and a Cyrillic respelling moves stress only by injecting an audible junk vowel.
+The one override that reaches Piper is an espeak **pronunciation dictionary** (`uk_list` →
+compiled `uk_dict`), which flows through `phonemize`. So `scripts/build_espeak_stress.py`
+compiles `scripts/uk_stress_overrides.txt` (`подано p'odano`, `баланс bal'ans`, …, `'` =
+primary stress) into a **copy** of Piper's bundled `espeak-ng-data` (bundle untouched) and
+Piper is pointed at it via `--espeak_data` (`tts._espeak_data_dir`: explicit
+`PIPER_ESPEAK_DATA` wins, else the default `~/.dvoretskyi/espeak-ng-data` is auto-used iff
+that build ran — no .env edit, no restart). Extensible: add a verified word to the list and
+re-run the script. It's a **one-time VPS step** (the data dir lives outside the repo, like
+the voice model). Correct stress for the *whole* lexicon would still need a non-espeak TTS
+(`ukrainian-tts`/ESPnet, torch-heavy → a separate box, never the shared main VPS); the
+dictionary covers the words we actually hit. (U+0301-as-stress in espeak is an unmerged
+2025 proposal, issue #2241 — irrelevant here since Piper ignores it regardless.)
 **Graceful fallback to text** on any miss, in two places: (1) `synthesize` returns None —
 synth disabled, no voice model (`PIPER_VOICE` empty), reply over `TTS_MAX_CHARS`, or a
 synth error; (2) the voice **send** is refused — `_try_voice` catches it and returns False
@@ -240,8 +250,10 @@ RAM), `WHISPER_COMPUTE_TYPE` (int8), `WHISPER_LANGUAGE` (uk), `STT_TIMEOUT_SECON
 (path to the .onnx voice model; **empty → no synth, text reply** — so deploy is safe
 before it's installed), `PIPER_LENGTH_SCALE` (speaking rate, <1 faster / >1 slower,
 default 0.9), `PIPER_SENTENCE_SILENCE` (pause after each sentence, default 0.3s),
-`TTS_TIMEOUT_SECONDS` (30), `TTS_MAX_CHARS` (600 — longer replies go out as text). (No
-stress knob — espeak ignores explicit stress marks; see the voiceify note above.)
+`PIPER_ESPEAK_DATA` (custom espeak data dir for the uk stress overrides; empty →
+auto-use `~/.dvoretskyi/espeak-ng-data` if `scripts/build_espeak_stress.py` was run there,
+else Piper's bundled data), `TTS_TIMEOUT_SECONDS` (30), `TTS_MAX_CHARS` (600 — longer
+replies go out as text).
 
 ## Households (two properties, Phase A+)
 Two properties: **primary** (home; all 7 providers, photo meters) and **secondary**

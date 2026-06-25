@@ -125,6 +125,37 @@ async def test_piper_skips_overly_long_text(monkeypatch):
     get_settings.cache_clear()
 
 
+async def test_piper_forwards_custom_espeak_data(monkeypatch):
+    # An explicit PIPER_ESPEAK_DATA (our stress-override dir) is passed to piper as
+    # --espeak_data; with it empty and no default dir built, the flag is absent.
+    get_settings.cache_clear()
+    monkeypatch.setenv("PIPER_VOICE", "/some/voice.onnx")
+    monkeypatch.setenv("PIPER_ESPEAK_DATA", "/opt/uk-stress/espeak-ng-data")
+    captured: list = []
+
+    async def fake_spawn(args, *a, **k):
+        captured.append(args)
+        # Pretend piper wrote a non-empty WAV and ffmpeg produced the OGG.
+        if args[0].endswith("ffmpeg"):
+            import pathlib
+
+            pathlib.Path(args[-1]).write_bytes(b"x")
+        else:
+            import pathlib
+
+            pathlib.Path(args[args.index("--output_file") + 1]).write_bytes(b"x")
+        return True
+
+    monkeypatch.setattr(PiperTTSProvider, "_spawn", staticmethod(fake_spawn))
+    await PiperTTSProvider().synthesize("привіт")
+    piper_call = next(c for c in captured if not c[0].endswith("ffmpeg"))
+    assert "--espeak_data" in piper_call
+    assert piper_call[piper_call.index("--espeak_data") + 1] == (
+        "/opt/uk-stress/espeak-ng-data"
+    )
+    get_settings.cache_clear()
+
+
 def test_get_tts_provider_honours_none(monkeypatch):
     get_settings.cache_clear()
     monkeypatch.setenv("TTS_PROVIDER", "none")

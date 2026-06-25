@@ -1,0 +1,17 @@
+# Ukrainian stress overrides for espeak-ng (appended to uk_list, then compiled into
+# uk_dict by scripts/build_espeak_stress.py and used by Piper via PIPER_ESPEAK_DATA).
+#
+# WHY: espeak's uk rules guess lexical stress and get some words wrong. Nothing in the
+# *text* fed to Piper can fix it — U+0301 accents are ignored, and [[phoneme]] blocks are
+# read literally (both verified on the box). An espeak pronunciation dictionary is the
+# only override that flows through Piper's phonemizer.
+#
+# FORMAT (espeak _list): one entry per line, `word<TAB>phonemes`. In the phoneme string a
+# leading apostrophe marks the PRIMARY-stressed syllable. Lower-case the word. Confirm a
+# new entry's phonemes with:  espeak-ng -v uk -q --ipa "[[<phonemes>]]"
+# Add a word here ONLY after hearing espeak stress it wrong — a needless entry can make a
+# currently-correct word wrong. Re-run build_espeak_stress.py after editing.
+#
+# word      phonemes (’ = primary stress)
+подано	p'odano
+баланс	bal'ans
