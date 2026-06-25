@@ -234,102 +234,7 @@ def _volume_words(m: re.Match[str]) -> str:
     return f"{n} {_ua_plural(n, 'кубометр', 'кубометри', 'кубометрів')}"
 
 
-# --- optional pronunciation hints (TTS_STRESS_HINTS) ------------------------
-# Ukrainian stress is lexical and unmarked in writing, so espeak-ng's Ukrainian g2p often
-# stresses the wrong syllable («гри́вень» → «гриве́нь», «показни́к» → «пока́зник»). We mark
-# the stressed vowel with a COMBINING ACUTE ACCENT (U+0301) on the bounded set of words
-# the butler speaks — money, units, meters, months, a few verbs. An espeak-ng build
-# that honours the mark fixes the stress; one that ignores it is no worse than today. The
-# full fix (a 2.6M-form dictionary) needs stanza/torch — too heavy for the 2-core VPS — so
-# this stays a small curated set, OFF by default: flip it on the VPS to A/B your build.
-_ACUTE = "́"  # combining acute accent — sits AFTER the stressed vowel
-
-
-def _mark(word: str, i: int) -> str:
-    """Insert the stress accent right after character `i` (the stressed vowel)."""
-    return word[: i + 1] + _ACUTE + word[i + 1 :]
-
-
-# word → 0-based index of its stressed vowel (verified by hand; see _mark).
-_STRESS_HINTS: dict[str, str] = {
-    w: _mark(w, i)
-    for w, i in {
-        "гривня": 2,
-        "гривні": 2,
-        "гривень": 2,
-        "копійка": 3,
-        "копійки": 3,
-        "копійок": 3,
-        "кубометр": 5,
-        "кубометри": 5,
-        "кубометра": 5,
-        "кубометрів": 5,
-        "показник": 6,
-        "показники": 8,
-        "показника": 8,
-        "показників": 8,
-        "спожито": 2,
-        "лічильник": 3,
-        "лічильника": 3,
-        "рахунок": 3,
-        "рахунку": 3,
-        "портал": 4,
-        "постачання": 6,
-        "доставлення": 4,
-        "вода": 3,
-        "води": 3,
-        "електроенергія": 9,
-        "інтернет": 6,
-        "квартплата": 7,
-        "січень": 1,
-        "лютий": 1,
-        "березень": 1,
-        "квітень": 2,
-        "травень": 2,
-        "червень": 1,
-        "липень": 1,
-        "серпень": 1,
-        "вересень": 1,
-        "жовтень": 1,
-        "листопад": 6,
-        "грудень": 2,
-        "січня": 1,
-        "лютого": 1,
-        "березня": 1,
-        "квітня": 2,
-        "травня": 2,
-        "червня": 1,
-        "липня": 1,
-        "серпня": 1,
-        "вересня": 1,
-        "жовтня": 1,
-        "листопада": 6,
-        "грудня": 2,
-        "відкрито": 5,
-        "закрито": 4,
-        "сплачено": 3,
-        "записано": 5,
-        "подано": 1,
-    }.items()
-}
-_STRESS_RE = re.compile(
-    r"\b(" + "|".join(sorted(_STRESS_HINTS, key=len, reverse=True)) + r")\b",
-    re.IGNORECASE,
-)
-
-
-def _apply_stress(text: str) -> str:
-    """Mark the stressed vowel of a known word, preserving its original capitalization."""
-
-    def repl(m: re.Match[str]) -> str:
-        w = m.group(0)
-        s = _STRESS_HINTS[w.lower()]
-        return s[0].upper() + s[1:] if w[:1].isupper() else s
-
-    return _STRESS_RE.sub(repl, text)
-
-
-def voiceify(text: str, *, stress_hints: bool = False) -> str:
+def voiceify(text: str) -> str:
     """Turn a screen-oriented reply into natural spoken Ukrainian, so the butler sounds
     like a person, not a screen-reader. Drops emoji/quotes/brackets/markup; reads money as
     «510 гривень [10 копійок]» (declined), dates as «шостого червня дві тисячі двадцять
@@ -337,8 +242,10 @@ def voiceify(text: str, *, stress_hints: bool = False) -> str:
     «3.03 м³» as «3 кома нуль три кубометра», «20-го» as «двадцятого», decimals as «1888
     кома 14» (leading zeros voiced: «03» → «нуль 3»); gives Latin brand/jargon terms a
     spoken Ukrainian form («monobank» → «монобанк», else espeak says «монобайк»); turns
-    dashes into pauses and folds newlines/bullets into sentences. With `stress_hints`,
-    marks the stressed vowel of domain words espeak-ng mis-stresses. '' if empty."""
+    dashes into pauses and folds newlines/bullets into sentences. '' if empty.
+
+    Note: Ukrainian lexical stress is left to espeak's own guess — espeak-ng has no
+    handling for an explicit stress mark (U+0301), so we don't try to inject one."""
     if not text:
         return ""
     out = _EMOJI_RE.sub("", text)
@@ -379,8 +286,7 @@ def voiceify(text: str, *, stress_hints: bool = False) -> str:
     out = re.sub(r"\s+([,.])", r"\1", out)
     out = re.sub(r"([,.])(?:\s*\1)+", r"\1", out)
     out = re.sub(r",\s*\.", ".", out).strip()
-    # Last: nudge espeak's stress on the words it commonly gets wrong (opt-in).
-    return _apply_stress(out) if stress_hints else out
+    return out
 
 
 class TTSProvider(ABC):
@@ -407,7 +313,7 @@ class PiperTTSProvider(TTSProvider):
 
     async def synthesize(self, text: str) -> str | None:
         s = get_settings()
-        spoken = voiceify(text, stress_hints=s.tts_stress_hints)
+        spoken = voiceify(text)
         if not spoken or not s.piper_voice:
             return None
         if len(spoken) > s.tts_max_chars:

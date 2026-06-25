@@ -65,18 +65,6 @@ def test_voiceify_speaks_latin_brand_terms():
     assert voiceify("Інтернет (Gigabit+)") == "Інтернет гігабіт плюс"
 
 
-def test_voiceify_stress_hints_are_a_flag():
-    # voiceify's own param defaults off (the setting tts_stress_hints, default on, is what
-    # PiperTTSProvider passes); off → plain text, no accents — the base contract holds.
-    assert "́" not in voiceify("показник за червень: 510 гривень")
-    # On: the stressed vowel of known domain words is marked (U+0301 sits after it), and
-    # capitalization is preserved.
-    out = voiceify("Показник за червень: 510 гривень", stress_hints=True)
-    assert "Показни́к" in out
-    assert "че́рвень" in out
-    assert "гри́вень" in out
-
-
 def test_voiceify_folds_lines_into_sentences():
     # A multi-line emoji-bulleted self-description voices as flowing sentences, no markup.
     out = voiceify("💸 Гроші — записую\n🔢 Показники — читаю з фото")

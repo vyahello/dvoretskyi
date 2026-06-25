@@ -181,13 +181,14 @@ reading isn't a unitless «сума»; `_meter_history_message` now emits `м³`
 `3.03` isn't heard as `3.3` — `_spoken_frac`); **Latin brand/jargon** → a spoken Ukrainian
 form (`_SPOKEN_TERMS`: «monobank» → «монобанк», else espeak says «монобайк»; «autopay»,
 «Gigabit+»); dashes → pauses; lines folded into sentences.
-(Numerals stay as digits — espeak-ng voices them.) **Stress hints** (`TTS_STRESS_HINTS`,
-**off by default**): `voiceify(stress_hints=True)` marks the stressed vowel (U+0301) on the
-bounded set of domain words espeak-ng mis-stresses («гри́вень», «показни́к», «че́рвень») —
-the full-dictionary fix needs stanza/torch (too heavy for the 2-core VPS). **Off until the
-deployed espeak-ng is verified to honour the mark** (`espeak-ng -v uk -x` — does the `'`
-move?): on espeak **1.51** an unsupported combining accent can corrupt the marked word
-(«електроене́ргія» → «електроенергії») rather than just being ignored.
+(Numerals stay as digits — espeak-ng voices them.) **Stress is NOT handled** — Ukrainian
+lexical stress is left to espeak's own guess. Confirmed from espeak-ng source: the `uk`
+rules have no stress-mark handling, and the general U+0301-as-stress feature is an unmerged
+2025 proposal (issue #2241). So feeding Piper a stress mark is a no-op — there's no way to
+fix stress on the Piper/espeak path. Correct stress needs a non-espeak TTS (e.g.
+`ukrainian-tts`/ESPnet), which is torch-heavy → would run on a **separate** box, never on
+the shared main VPS (site + other bots); not built. (An earlier curated U+0301 hint layer
+was removed once espeak was confirmed to ignore the mark.)
 **Graceful fallback to text** on any miss, in two places: (1) `synthesize` returns None —
 synth disabled, no voice model (`PIPER_VOICE` empty), reply over `TTS_MAX_CHARS`, or a
 synth error; (2) the voice **send** is refused — `_try_voice` catches it and returns False
@@ -239,9 +240,8 @@ RAM), `WHISPER_COMPUTE_TYPE` (int8), `WHISPER_LANGUAGE` (uk), `STT_TIMEOUT_SECON
 (path to the .onnx voice model; **empty → no synth, text reply** — so deploy is safe
 before it's installed), `PIPER_LENGTH_SCALE` (speaking rate, 1.0 = natural; >1 slower,
 default 1.0), `PIPER_SENTENCE_SILENCE` (pause after each sentence, default 0.3s),
-`TTS_TIMEOUT_SECONDS` (30), `TTS_MAX_CHARS` (600 — longer replies go out as text),
-`TTS_STRESS_HINTS` (**false** — mark stressed vowels for espeak-ng; **off until espeak is
-confirmed to honour U+0301**: on espeak 1.51 it can mangle a marked word).
+`TTS_TIMEOUT_SECONDS` (30), `TTS_MAX_CHARS` (600 — longer replies go out as text). (No
+stress knob — espeak ignores explicit stress marks; see the voiceify note above.)
 
 ## Households (two properties, Phase A+)
 Two properties: **primary** (home; all 7 providers, photo meters) and **secondary**
