@@ -180,10 +180,10 @@ reading isn't a unitless «сума»; `_meter_history_message` now emits `м³`
 «двадцятого»; decimals → «1888 кома 14» with **leading zeros voiced** («03» → «нуль 3», so
 `3.03` isn't heard as `3.3` — `_spoken_frac`); dashes → pauses; lines folded into sentences.
 (Numerals stay as digits — espeak-ng voices them.) **Stress hints** (`TTS_STRESS_HINTS`,
-off by default): `voiceify(stress_hints=True)` marks the stressed vowel (U+0301) on the
+**on by default**): `voiceify(stress_hints=True)` marks the stressed vowel (U+0301) on the
 bounded set of domain words espeak-ng mis-stresses («гри́вень», «показни́к», «че́рвень») —
 the full-dictionary fix needs stanza/torch (too heavy for the 2-core VPS), so this is a
-small curated set; a build that ignores the mark is no worse than today (A/B on the VPS).
+small curated set; a build that ignores the mark is no worse than off (set false to A/B).
 **Graceful fallback to text** on any miss, in two places: (1) `synthesize` returns None —
 synth disabled, no voice model (`PIPER_VOICE` empty), reply over `TTS_MAX_CHARS`, or a
 synth error; (2) the voice **send** is refused — `_try_voice` catches it and returns False
@@ -236,8 +236,8 @@ RAM), `WHISPER_COMPUTE_TYPE` (int8), `WHISPER_LANGUAGE` (uk), `STT_TIMEOUT_SECON
 before it's installed), `PIPER_LENGTH_SCALE` (speaking rate, >1 = slower/clearer,
 default 1.15), `PIPER_SENTENCE_SILENCE` (pause after each sentence, default 0.5s — so the
 reply doesn't run together), `TTS_TIMEOUT_SECONDS` (30), `TTS_MAX_CHARS` (600 — longer
-replies go out as text), `TTS_STRESS_HINTS` (false — mark stressed vowels for espeak-ng;
-A/B on the VPS).
+replies go out as text), `TTS_STRESS_HINTS` (true — mark stressed vowels for espeak-ng;
+set false to A/B).
 
 ## Households (two properties, Phase A+)
 Two properties: **primary** (home; all 7 providers, photo meters) and **secondary**

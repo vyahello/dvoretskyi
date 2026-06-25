@@ -57,8 +57,9 @@ def test_voiceify_meter_volume_named_with_unit():
     assert voiceify("1 м³") == "1 кубометр"
 
 
-def test_voiceify_stress_hints_are_opt_in():
-    # Off (default): plain text, no accents — so the existing voiceify contract holds.
+def test_voiceify_stress_hints_are_a_flag():
+    # voiceify's own param defaults off (the setting tts_stress_hints, default on, is what
+    # PiperTTSProvider passes); off → plain text, no accents — the base contract holds.
     assert "́" not in voiceify("показник за червень: 510 гривень")
     # On: the stressed vowel of known domain words is marked (U+0301 sits after it), and
     # capitalization is preserved.

@@ -110,9 +110,9 @@ class Settings(BaseSettings):
     tts_max_chars: int = 600  # don't voice a very long reply — fall back to text instead
     # Mark the stressed vowel (U+0301) on the domain words espeak-ng tends to mis-stress,
     # so the voice puts the accent in the right place («гри́вень», «показни́к», «че́рвень»).
-    # Off by default — an espeak-ng build that ignores the mark is no worse than today, so
-    # enable it on the VPS and A/B against your build (it either helps or is a no-op).
-    tts_stress_hints: bool = False
+    # On by default — a build that ignores the mark is no worse than today; set
+    # TTS_STRESS_HINTS=false to A/B against it if a word ever sounds wrong.
+    tts_stress_hints: bool = True
 
     # --- pay links per provider (iOS apps / Portmone; no personal data) ---
     # Utilities paid in mono «Комунальні» → open the monobank app; ДАХ → the ДАХ app.
