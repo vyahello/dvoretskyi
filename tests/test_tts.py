@@ -62,7 +62,7 @@ def test_voiceify_speaks_latin_brand_terms():
     # Ukrainian form. Case-insensitive; «Gigabit+» wins over the «gigabit» prefix.
     assert voiceify("автосписанням monobank 20-го") == "автосписанням монобанк двадцятого"
     assert voiceify("autopay monobank усе зробить") == "автосписання монобанк усе зробить"
-    assert voiceify("Інтернет (Gigabit+)") == "Інтернет ґіґабіт плюс"
+    assert voiceify("Інтернет (Gigabit+)") == "Інтернет гігабіт плюс"
 
 
 def test_voiceify_stress_hints_are_a_flag():

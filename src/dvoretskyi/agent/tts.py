@@ -186,8 +186,8 @@ _MONTH_YEAR_RE = re.compile(r"\b(" + "|".join(_MONTHS_NOM.values()) + r")\s+(\d{
 _SPOKEN_TERMS: dict[str, str] = {
     "monobank": "монобанк",
     "autopay": "автосписання",
-    "gigabit+": "ґіґабіт плюс",
-    "gigabit": "ґіґабіт",
+    "gigabit+": "гігабіт плюс",
+    "gigabit": "гігабіт",
 }
 _TERMS_RE = re.compile(
     "|".join(re.escape(k) for k in sorted(_SPOKEN_TERMS, key=len, reverse=True)),

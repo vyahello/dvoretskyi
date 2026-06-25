@@ -100,19 +100,19 @@ class Settings(BaseSettings):
     tts_provider: str = "piper"  # piper | none
     piper_bin: str = "piper"  # path/name of the piper executable
     piper_voice: str = ""  # path to the .onnx voice model (.json config sits beside it)
-    # Speaking rate: >1 is slower & clearer (Ukrainian espeak runs fast/robotic at 1.0).
-    # Empty → the voice's own default. Tune for intelligibility.
-    piper_length_scale: str = "1.15"
+    # Speaking rate: 1.0 = the voice's natural pace; >1 slows it down. We sat at 1.15 for
+    # clarity but it dragged — 1.0 sounds natural. Empty → the voice's own default.
+    piper_length_scale: str = "1.0"
     # Silence (seconds) after each sentence — breathing room so the reply doesn't run
-    # together into one breathless blur. Empty → piper default (~0.2s).
-    piper_sentence_silence: str = "0.5"
+    # together. Empty → piper default (~0.2s); 0.3 is a natural beat without dragging.
+    piper_sentence_silence: str = "0.3"
     tts_timeout_seconds: int = 30  # cap a slow synth so the bot never hangs
     tts_max_chars: int = 600  # don't voice a very long reply — fall back to text instead
-    # Mark the stressed vowel (U+0301) on the domain words espeak-ng tends to mis-stress,
-    # so the voice puts the accent in the right place («гри́вень», «показни́к», «че́рвень»).
-    # On by default — a build that ignores the mark is no worse than today; set
-    # TTS_STRESS_HINTS=false to A/B against it if a word ever sounds wrong.
-    tts_stress_hints: bool = True
+    # Mark the stressed vowel (U+0301) on the domain words espeak-ng tends to mis-stress.
+    # OFF until we confirm the deployed espeak-ng honours the mark: on espeak 1.51 it may
+    # instead mangle a marked word (e.g. «електроене́ргія» → «електроенергії»), making it
+    # worse. Verify with `espeak-ng -v uk -x` (does the «'» move?) before turning on.
+    tts_stress_hints: bool = False
 
     # --- pay links per provider (iOS apps / Portmone; no personal data) ---
     # Utilities paid in mono «Комунальні» → open the monobank app; ДАХ → the ДАХ app.
