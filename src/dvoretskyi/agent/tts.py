@@ -187,6 +187,11 @@ _DROP_ZEROS_RE = re.compile(r"(\d)[.,]0{1,2}(?!\d)")  # "510.00" → "510"
 _RANGE_RE = re.compile(r"(\d)\s*[–—]\s*(\d)")  # "28–30" → "28 до 30"
 _SP_DASH_RE = re.compile(r"\s[-–—]+\s")  # « Світло — 420 » → « Світло, 420 »
 _DECIMAL_RE = re.compile(r"(\d+)[.,](\d+)")  # "1888.14" → "1888 кома 14"
+# A dotted identifier — a login/contract number like «00.28.00.36» (≥3 groups, so a plain
+# decimal «1888.14» with its single dot is left to the decimal pass). espeak would read
+# every dot as «крапка» («00 крапка 28 крапка…»); voice the groups with short pauses
+# instead, so it sounds like a number read aloud, not «крапка крапка крапка».
+_CODE_RE = re.compile(r"\b\d+(?:\.\d+){2,}\b")
 _PERCENT_RE = re.compile(r"(\d+)\s*%")
 # Meter readings/usage: "3.03 м³" → spoken «… кубометр(а/и/ів)», so a voiced reading names
 # its unit, not a bare number («спожито 3.03» → «спожито чого?»). Owns its decimal so
@@ -256,7 +261,8 @@ def voiceify(text: str) -> str:
     «510 гривень [10 копійок]» (declined), dates as «шостого червня дві тисячі двадцять
     шостого року», a period «червень 2026» with the year in full + «року», meter volumes
     «3.03 м³» as «3 кома нуль три кубометра», «20-го» as «двадцятого», decimals as «1888
-    кома 14» (leading zeros voiced: «03» → «нуль 3»); gives Latin brand/jargon terms a
+    кома 14» (leading zeros voiced: «03» → «нуль 3»); a dotted code «00.28.00.36» as
+    pause-separated groups (not «крапка крапка»); gives Latin brand/jargon terms a
     spoken Ukrainian form («monobank» → «монобанк», else espeak says «монобайк»); turns
     dashes into pauses and folds newlines/bullets into sentences. '' if empty.
 
@@ -277,6 +283,9 @@ def voiceify(text: str) -> str:
     out = _DATE_MY_RE.sub(_date_my, out)
     out = _MONTH_YEAR_RE.sub(_month_year, out)  # «червень 2026» → «… шостого року»
     out = _ORD_GO_RE.sub(lambda m: _two_ord_gen(int(m[1])), out)
+    # A dotted contract/login code → pause-separated groups (before the decimal/zero
+    # passes claim its dots), so «00.28.00.36» isn't read «00 крапка 28 крапка …».
+    out = _CODE_RE.sub(lambda m: m.group(0).replace(".", ", "), out)
     out = _MONEY_RE.sub(lambda m: _money_words(m[1], m[2]), out)
     out = _VOLUME_RE.sub(_volume_words, out)  # «3.03 м³» → «3 кома нуль три кубометра»
     out = _DROP_ZEROS_RE.sub(r"\1", out)

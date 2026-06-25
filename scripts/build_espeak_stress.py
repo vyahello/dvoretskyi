@@ -181,7 +181,7 @@ def _validate(piper_bin: str, voice: str, out_data: Path) -> None:
         )
         return m.group(1).strip() if m else "(no phonemes)"
 
-    samples = ["подано", "баланс", "за червень уже все подано"]
+    samples = ["подано", "баланс", "чіпав", "за червень уже все подано", "баланс не чіпав"]
     for t in samples:
         b, o = phon(t, False), phon(t, True)
         tag = " <- stress moved" if b != o else ""

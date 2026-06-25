@@ -46,6 +46,15 @@ def test_voiceify_decimals_read_as_koma():
     assert voiceify("5.007") == "5 кома нуль нуль 7"
 
 
+def test_voiceify_reads_dotted_code_as_pauses():
+    # A login/contract number «00.28.00.36» reads as pause-separated groups, never
+    # «00 крапка 28 крапка …» (espeak voices a literal dot as «крапка»).
+    assert voiceify("Логін (договір): 00.28.00.36.") == "Логін договір : 00, 28, 00, 36."
+    assert voiceify("договір 12.34.56") == "договір 12, 34, 56"
+    # A genuine decimal has a single dot → still spoken «кома», not split into groups.
+    assert voiceify("показник 1888.14") == "показник 1888 кома 14"
+
+
 def test_voiceify_meter_volume_named_with_unit():
     # «м³» is spoken as a declined «кубометр», so a reading isn't a bare unitless number.
     assert (
