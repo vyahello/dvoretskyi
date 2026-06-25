@@ -172,6 +172,14 @@ _RANGE_RE = re.compile(r"(\d)\s*[–—]\s*(\d)")  # "28–30" → "28 до 30"
 _SP_DASH_RE = re.compile(r"\s[-–—]+\s")  # « Світло — 420 » → « Світло, 420 »
 _DECIMAL_RE = re.compile(r"(\d+)[.,](\d+)")  # "1888.14" → "1888 кома 14"
 _PERCENT_RE = re.compile(r"(\d+)\s*%")
+# Meter readings/usage: "3.03 м³" → spoken «… кубометр(а/и/ів)», so a voiced reading names
+# its unit, not a bare number («спожито 3.03» → «спожито чого?»). Owns its decimal so
+# leading zeros are voiced (see `_spoken_frac`); runs BEFORE the generic decimal pass.
+_VOLUME_RE = re.compile(r"(\d+)(?:[.,](\d+))?\s*м(?:³|3)(?!\w)")
+# «<місяць> 2026» → «<місяць> дві тисячі двадцять шостого року»: a period is spoken with
+# the year in full (genitive ordinal + «року»), the way a person says it — not a bare
+# cardinal «дві тисячі двадцять шість» with no «року» (what dead-ended «червень 2026»).
+_MONTH_YEAR_RE = re.compile(r"\b(" + "|".join(_MONTHS_NOM.values()) + r")\s+(\d{4})\b")
 
 
 def _date_dmy(m: re.Match[str]) -> str:
@@ -186,12 +194,137 @@ def _date_my(m: re.Match[str]) -> str:
     return f"{_MONTHS_NOM[mo]} {y}" if 1 <= mo <= 12 else m.group(0)
 
 
-def voiceify(text: str) -> str:
+def _month_year(m: re.Match[str]) -> str:
+    return f"{m[1]} {_year_ord_gen(int(m[2]))} року"
+
+
+def _spoken_frac(frac: str) -> str:
+    """Fractional digits as read aloud, KEEPING leading zeros — «03» → «нуль три», not
+    «три» (which espeak would voice as .3). All-zero «00» → «нуль»."""
+    stripped = frac.lstrip("0")
+    if not stripped:
+        return "нуль"
+    return "нуль " * (len(frac) - len(stripped)) + stripped
+
+
+def _decimal_words(m: re.Match[str]) -> str:
+    return f"{m[1]} кома {_spoken_frac(m[2])}"
+
+
+def _volume_words(m: re.Match[str]) -> str:
+    """'3.03 м³' → '3 кома нуль три кубометра'; '5 м³' → '5 кубометрів'. After a decimal
+    the unit is genitive singular (кубометра); a whole number gets plural agreement."""
+    whole, frac = m[1], m[2]
+    if frac and int(frac) != 0:
+        return f"{whole} кома {_spoken_frac(frac)} кубометра"
+    n = int(whole)
+    return f"{n} {_ua_plural(n, 'кубометр', 'кубометри', 'кубометрів')}"
+
+
+# --- optional pronunciation hints (TTS_STRESS_HINTS) ------------------------
+# Ukrainian stress is lexical and unmarked in writing, so espeak-ng's Ukrainian g2p often
+# stresses the wrong syllable («гри́вень» → «гриве́нь», «показни́к» → «пока́зник»). We mark
+# the stressed vowel with a COMBINING ACUTE ACCENT (U+0301) on the bounded set of words
+# the butler speaks — money, units, meters, months, a few verbs. An espeak-ng build
+# that honours the mark fixes the stress; one that ignores it is no worse than today. The
+# full fix (a 2.6M-form dictionary) needs stanza/torch — too heavy for the 2-core VPS — so
+# this stays a small curated set, OFF by default: flip it on the VPS to A/B your build.
+_ACUTE = "́"  # combining acute accent — sits AFTER the stressed vowel
+
+
+def _mark(word: str, i: int) -> str:
+    """Insert the stress accent right after character `i` (the stressed vowel)."""
+    return word[: i + 1] + _ACUTE + word[i + 1 :]
+
+
+# word → 0-based index of its stressed vowel (verified by hand; see _mark).
+_STRESS_HINTS: dict[str, str] = {
+    w: _mark(w, i)
+    for w, i in {
+        "гривня": 2,
+        "гривні": 2,
+        "гривень": 2,
+        "копійка": 3,
+        "копійки": 3,
+        "копійок": 3,
+        "кубометр": 5,
+        "кубометри": 5,
+        "кубометра": 5,
+        "кубометрів": 5,
+        "показник": 6,
+        "показники": 8,
+        "показника": 8,
+        "показників": 8,
+        "спожито": 2,
+        "лічильник": 3,
+        "лічильника": 3,
+        "рахунок": 3,
+        "рахунку": 3,
+        "портал": 4,
+        "постачання": 6,
+        "доставлення": 4,
+        "вода": 3,
+        "води": 3,
+        "електроенергія": 9,
+        "інтернет": 6,
+        "квартплата": 7,
+        "січень": 1,
+        "лютий": 1,
+        "березень": 1,
+        "квітень": 2,
+        "травень": 2,
+        "червень": 1,
+        "липень": 1,
+        "серпень": 1,
+        "вересень": 1,
+        "жовтень": 1,
+        "листопад": 6,
+        "грудень": 2,
+        "січня": 1,
+        "лютого": 1,
+        "березня": 1,
+        "квітня": 2,
+        "травня": 2,
+        "червня": 1,
+        "липня": 1,
+        "серпня": 1,
+        "вересня": 1,
+        "жовтня": 1,
+        "листопада": 6,
+        "грудня": 2,
+        "відкрито": 5,
+        "закрито": 4,
+        "сплачено": 3,
+        "записано": 5,
+        "подано": 1,
+    }.items()
+}
+_STRESS_RE = re.compile(
+    r"\b(" + "|".join(sorted(_STRESS_HINTS, key=len, reverse=True)) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def _apply_stress(text: str) -> str:
+    """Mark the stressed vowel of a known word, preserving its original capitalization."""
+
+    def repl(m: re.Match[str]) -> str:
+        w = m.group(0)
+        s = _STRESS_HINTS[w.lower()]
+        return s[0].upper() + s[1:] if w[:1].isupper() else s
+
+    return _STRESS_RE.sub(repl, text)
+
+
+def voiceify(text: str, *, stress_hints: bool = False) -> str:
     """Turn a screen-oriented reply into natural spoken Ukrainian, so the butler sounds
     like a person, not a screen-reader. Drops emoji/quotes/brackets/markup; reads money as
-    «510 гривень [10 копійок]» (declined), dates as «шостого червня 2026», «20-го» as
-    «двадцятого», decimals as «1888 кома 14»; turns dashes into pauses and folds
-    newlines/bullets into sentences. Returns '' for empty input."""
+    «510 гривень [10 копійок]» (declined), dates as «шостого червня дві тисячі двадцять
+    шостого року», a period «червень 2026» with the year in full + «року», meter volumes
+    «3.03 м³» as «3 кома нуль три кубометра», «20-го» as «двадцятого», decimals as «1888
+    кома 14» (leading zeros voiced: «03» → «нуль 3»); turns dashes into pauses and folds
+    newlines/bullets into sentences. With `stress_hints`, marks the stressed vowel of
+    domain words espeak-ng tends to mis-stress. Returns '' for empty input."""
     if not text:
         return ""
     out = _EMOJI_RE.sub("", text)
@@ -200,16 +333,19 @@ def voiceify(text: str) -> str:
     # Fold each line into a sentence so the voice breathes between them.
     lines = [ln.strip(" -–—·•\t") for ln in out.splitlines()]
     out = ". ".join(ln for ln in lines if ln)
-    # Numbers & dates → spoken forms (order matters: ungroup → dates → money → decimals).
+    # Numbers & dates → spoken forms (order matters: ungroup → dates → money → volume →
+    # decimals, so the wider patterns claim their digits before the bare-decimal pass).
     out = _GROUP_RE.sub("", out)
     out = _DATE_DMY_RE.sub(_date_dmy, out)
     out = _DATE_MY_RE.sub(_date_my, out)
+    out = _MONTH_YEAR_RE.sub(_month_year, out)  # «червень 2026» → «… шостого року»
     out = _ORD_GO_RE.sub(lambda m: _two_ord_gen(int(m[1])), out)
     out = _MONEY_RE.sub(lambda m: _money_words(m[1], m[2]), out)
+    out = _VOLUME_RE.sub(_volume_words, out)  # «3.03 м³» → «3 кома нуль три кубометра»
     out = _DROP_ZEROS_RE.sub(r"\1", out)
     out = _RANGE_RE.sub(r"\1 до \2", out)
     out = _SP_DASH_RE.sub(", ", out)
-    out = _DECIMAL_RE.sub(r"\1 кома \2", out)
+    out = _DECIMAL_RE.sub(_decimal_words, out)
     out = _PERCENT_RE.sub(
         lambda m: f"{m[1]} {_ua_plural(int(m[1]), 'відсоток', 'відсотки', 'відсотків')}",
         out,
@@ -225,8 +361,9 @@ def voiceify(text: str) -> str:
     out = re.sub(r"\s+", " ", out).strip()
     out = re.sub(r"\s+([,.])", r"\1", out)
     out = re.sub(r"([,.])(?:\s*\1)+", r"\1", out)
-    out = re.sub(r",\s*\.", ".", out)
-    return out.strip()
+    out = re.sub(r",\s*\.", ".", out).strip()
+    # Last: nudge espeak's stress on the words it commonly gets wrong (opt-in).
+    return _apply_stress(out) if stress_hints else out
 
 
 class TTSProvider(ABC):
@@ -253,7 +390,7 @@ class PiperTTSProvider(TTSProvider):
 
     async def synthesize(self, text: str) -> str | None:
         s = get_settings()
-        spoken = voiceify(text)
+        spoken = voiceify(text, stress_hints=s.tts_stress_hints)
         if not spoken or not s.piper_voice:
             return None
         if len(spoken) > s.tts_max_chars:

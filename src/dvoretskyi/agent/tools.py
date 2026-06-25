@@ -1136,16 +1136,20 @@ def _meter_history_message(provider: str, readings: list[dict], portal: Any) -> 
     journal so the question still gets an answer."""
     if portal is not None and portal.value is not None:
         period = clock.format_cycle(portal.period) if portal.period else "останній період"
-        cons = f" (спожито {portal.difference})" if portal.difference is not None else ""
+        # Meter readings are in m³ — name the unit, else «спожито 3.03» reads as «чого?»
+        cons = (
+            f" (спожито {portal.difference} м³)" if portal.difference is not None else ""
+        )
         blocks = [
-            f"🔢 {provider} — на порталі infolviv:\n• {period}: {portal.value}{cons}"
+            f"🔢 {provider} — на порталі infolviv:\n• {period}: {portal.value} м³{cons}"
         ]
         drafts = [
             r for r in readings if r.get("status") in ("validated", "needs_confirm")
         ]
         if drafts:
             lines = "\n".join(
-                f"• {clock.format_cycle(r['cycle'])}: {r.get('value') or '—'}"
+                f"• {clock.format_cycle(r['cycle'])}: "
+                + (f"{r['value']} м³" if r.get("value") else "—")
                 for r in drafts
             )
             blocks.append("📝 Збережено з фото (ще не подано на портал):\n" + lines)
@@ -1153,8 +1157,9 @@ def _meter_history_message(provider: str, readings: list[dict], portal: Any) -> 
     # No portal record → show whatever local history we have.
     if readings:
         lines = "\n".join(
-            f"• {clock.format_cycle(r['cycle'])}: {r.get('value') or '—'}"
-            + (f" (спожито {r['consumption']})" if r.get("consumption") else "")
+            f"• {clock.format_cycle(r['cycle'])}: "
+            + (f"{r['value']} м³" if r.get("value") else "—")
+            + (f" (спожито {r['consumption']} м³)" if r.get("consumption") else "")
             for r in readings
         )
         return f"🔢 {provider} — останні показники:\n" + lines

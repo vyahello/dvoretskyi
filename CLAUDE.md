@@ -172,9 +172,18 @@ dep): text → WAV, then ffmpeg → OGG/Opus (mono 48 kHz). The OGG is sent then
 (transient; bytes never logged). Replies are written for the screen, so `tts.voiceify`
 normalizes them to natural spoken Ukrainian first: drops emoji/quotes/brackets/markup;
 money → declined «510 гривень [10 копійок]» (with `_ua_plural` + de-grouped thousands;
-.00 dropped); ISO dates → «шостого червня 2026» (genitive-ordinal day via `_day_ord_gen`,
-+ «2026-06» → «червень 2026»); «20-го» → «двадцятого»; decimals → «1888 кома 14»; dashes →
-pauses; lines folded into sentences. (Numerals stay as digits — espeak-ng voices them.)
+.00 dropped); ISO dates → «шостого червня дві тисячі двадцять шостого року»; a **period**
+«2026-06»/«червень 2026» → «червень дві тисячі двадцять шостого року» (`_MONTH_YEAR_RE` —
+year in full + «року», not a bare cardinal that dead-ended «червень 2026»); **meter volumes**
+«3.03 м³» → «3 кома нуль три кубометра» (`_VOLUME_RE`/`_volume_words`, declined unit — so a
+reading isn't a unitless «сума»; `_meter_history_message` now emits `м³`); «20-го» →
+«двадцятого»; decimals → «1888 кома 14» with **leading zeros voiced** («03» → «нуль 3», so
+`3.03` isn't heard as `3.3` — `_spoken_frac`); dashes → pauses; lines folded into sentences.
+(Numerals stay as digits — espeak-ng voices them.) **Stress hints** (`TTS_STRESS_HINTS`,
+off by default): `voiceify(stress_hints=True)` marks the stressed vowel (U+0301) on the
+bounded set of domain words espeak-ng mis-stresses («гри́вень», «показни́к», «че́рвень») —
+the full-dictionary fix needs stanza/torch (too heavy for the 2-core VPS), so this is a
+small curated set; a build that ignores the mark is no worse than today (A/B on the VPS).
 **Graceful fallback to text** on any miss, in two places: (1) `synthesize` returns None —
 synth disabled, no voice model (`PIPER_VOICE` empty), reply over `TTS_MAX_CHARS`, or a
 synth error; (2) the voice **send** is refused — `_try_voice` catches it and returns False
@@ -227,7 +236,8 @@ RAM), `WHISPER_COMPUTE_TYPE` (int8), `WHISPER_LANGUAGE` (uk), `STT_TIMEOUT_SECON
 before it's installed), `PIPER_LENGTH_SCALE` (speaking rate, >1 = slower/clearer,
 default 1.15), `PIPER_SENTENCE_SILENCE` (pause after each sentence, default 0.5s — so the
 reply doesn't run together), `TTS_TIMEOUT_SECONDS` (30), `TTS_MAX_CHARS` (600 — longer
-replies go out as text).
+replies go out as text), `TTS_STRESS_HINTS` (false — mark stressed vowels for espeak-ng;
+A/B on the VPS).
 
 ## Households (two properties, Phase A+)
 Two properties: **primary** (home; all 7 providers, photo meters) and **secondary**

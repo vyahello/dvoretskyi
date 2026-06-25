@@ -108,6 +108,11 @@ class Settings(BaseSettings):
     piper_sentence_silence: str = "0.5"
     tts_timeout_seconds: int = 30  # cap a slow synth so the bot never hangs
     tts_max_chars: int = 600  # don't voice a very long reply — fall back to text instead
+    # Mark the stressed vowel (U+0301) on the domain words espeak-ng tends to mis-stress,
+    # so the voice puts the accent in the right place («гри́вень», «показни́к», «че́рвень»).
+    # Off by default — an espeak-ng build that ignores the mark is no worse than today, so
+    # enable it on the VPS and A/B against your build (it either helps or is a no-op).
+    tts_stress_hints: bool = False
 
     # --- pay links per provider (iOS apps / Portmone; no personal data) ---
     # Utilities paid in mono «Комунальні» → open the monobank app; ДАХ → the ДАХ app.

@@ -161,7 +161,9 @@ right after) and handled exactly like a typed message. Meter values stay photo-o
   synthesized on-box by **Piper** (a local neural-TTS binary, like the `claude` CLI — no
   pip dep, audio never leaves the server), re-encoded to OGG/Opus with ffmpeg, and sent as
   a Telegram voice note (buttons ride on it; a chart/photo is still attached). Screen text
-  is cleaned for speech first (`voiceify`: emoji/markup dropped, «₴» → «гривень»). It
+  is cleaned for speech first (`voiceify`: emoji/markup dropped, «₴» → «гривень», meter
+  readings → «… кубометра», a period → «червень дві тисячі двадцять шостого року»;
+  optional `TTS_STRESS_HINTS` marks stressed vowels for espeak-ng). It
   **falls back to text** whenever synth can't run — disabled, no voice model installed
   (`PIPER_VOICE` empty), reply too long, or any error — so a voice asker is never left
   empty-handed. Kill-switch: `TTS_PROVIDER=none`.

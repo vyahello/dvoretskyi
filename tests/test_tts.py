@@ -32,13 +32,40 @@ def test_voiceify_dates_and_ordinals():
         voiceify("подав 2026-06-06")
         == "подав шостого червня дві тисячі двадцять шостого року"
     )
-    assert voiceify("за 2026-06") == "за червень 2026"
+    # A bare period is spoken with the year in full + «року», not a flat «червень 2026».
+    assert voiceify("за 2026-06") == "за червень дві тисячі двадцять шостого року"
     assert voiceify("до 20-го") == "до двадцятого"
     assert voiceify("до 31-го") == "до тридцять першого"
 
 
 def test_voiceify_decimals_read_as_koma():
     assert voiceify("показник 1888.14") == "показник 1888 кома 14"
+    # Leading zeros are voiced («нуль»), so «3.03» isn't read as «3.3». The non-zero
+    # remainder stays as digits — espeak voices «3» as «три».
+    assert voiceify("3.03") == "3 кома нуль 3"
+    assert voiceify("5.007") == "5 кома нуль нуль 7"
+
+
+def test_voiceify_meter_volume_named_with_unit():
+    # «м³» is spoken as a declined «кубометр», so a reading isn't a bare unitless number.
+    assert (
+        voiceify("• червень 2026: 1888.14 м³ (спожито 3.03 м³)")
+        == "червень дві тисячі двадцять шостого року: 1888 кома 14 кубометра "
+        "спожито 3 кома нуль 3 кубометра"
+    )
+    assert voiceify("5 м³") == "5 кубометрів"
+    assert voiceify("1 м³") == "1 кубометр"
+
+
+def test_voiceify_stress_hints_are_opt_in():
+    # Off (default): plain text, no accents — so the existing voiceify contract holds.
+    assert "́" not in voiceify("показник за червень: 510 гривень")
+    # On: the stressed vowel of known domain words is marked (U+0301 sits after it), and
+    # capitalization is preserved.
+    out = voiceify("Показник за червень: 510 гривень", stress_hints=True)
+    assert "Показни́к" in out
+    assert "че́рвень" in out
+    assert "гри́вень" in out
 
 
 def test_voiceify_folds_lines_into_sentences():
