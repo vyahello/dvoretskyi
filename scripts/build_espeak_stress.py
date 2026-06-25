@@ -31,9 +31,12 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-# espeak-ng dictsource tag to compile from — pin to the box's installed version so the
-# rebuilt uk_dict matches the rules the voice model was effectively trained against.
-ESPEAK_TAG = "1.51"
+# espeak-ng dictsource ref to compile from. Piper bundles espeak data built from `master`
+# (a 1.52-dev snapshot), NOT a release tag — verified on the box: compiling the master uk
+# dictsource against Piper's bundle reproduces its phonemes byte-for-byte, whereas 1.51
+# source mismatches the bundle's phoneme table (Bad phoneme errors). The system espeak-ng
+# 1.51 binary compiles the master source cleanly. uk has only uk_rules + uk_list.
+ESPEAK_TAG = "master"
 DICT_FILES = ["uk_rules", "uk_list", "uk_listx", "uk_emoji"]  # missing ones are skipped
 
 APP_DIR = Path(__file__).resolve().parent.parent
@@ -114,16 +117,17 @@ def main() -> None:
         die("could not fetch uk_rules/uk_list — check the VPS has outbound internet")
     print(f"==> fetched dictsource : {', '.join(got)}")
 
-    overrides_text = OVERRIDES.read_text(encoding="utf-8")
+    # Append only real entries — our file documents itself with `#` comments, but espeak's
+    # uk_list comment marker is `//`, so a `#` line would be parsed as a (bad) entry.
+    entries = [
+        ln
+        for ln in OVERRIDES.read_text(encoding="utf-8").splitlines()
+        if ln.strip() and not ln.lstrip().startswith("#")
+    ]
     with open(src / "uk_list", "a", encoding="utf-8") as fh:
         fh.write("\n// --- dvoretskyi stress overrides ---\n")
-        fh.write(overrides_text)
-    n_words = sum(
-        1
-        for ln in overrides_text.splitlines()
-        if ln.strip() and not ln.lstrip().startswith("#")
-    )
-    print(f"==> appended overrides : {n_words} word(s)")
+        fh.write("\n".join(entries) + "\n")
+    print(f"==> appended overrides : {len(entries)} word(s)")
 
     # 3) Compile uk_dict into the data dir (--path = the dir CONTAINING espeak-ng-data).
     res = subprocess.run(
@@ -179,9 +183,19 @@ def _validate(piper_bin: str, voice: str, out_data: Path) -> None:
 
     samples = ["подано", "баланс", "за червень уже все подано"]
     for t in samples:
+        b, o = phon(t, False), phon(t, True)
+        tag = " <- stress moved" if b != o else ""
         print(f"    {t!r}")
-        print(f"        bundled : {phon(t, False)}")
-        print(f"        override: {phon(t, True)}")
+        print(f"        bundled : {b}")
+        print(f"        override: {o}{tag}")
+    # Regression guard: a phrase with NO override word must phonemize identically — if it
+    # differs, the dictsource drifted from the bundle and the whole voice would change.
+    control = "вода газ світло інтернет"
+    cb, co = phon(control, False), phon(control, True)
+    print(
+        f"    regression control {control!r}: "
+        f"{'OK (identical)' if cb == co else 'WARNING — DIFFERS, dictsource drift!'}"
+    )
 
 
 if __name__ == "__main__":
