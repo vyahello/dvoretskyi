@@ -13,6 +13,7 @@ Callback grammar:
   md:<reading_id>                delete a stored reading (wrong value entered)
   mdc:<scope>|no                 confirm a scoped delete / cancel.
                                  scope='all' | '<pid>' | '<pid|*>:<cycle>' (by month)
+  mp:<reading_id>                send that reading's archived photo («📜 Історія» 📸 tap)
 """
 
 from __future__ import annotations
@@ -230,6 +231,22 @@ def meter_delete_confirm_keyboard(scope: str) -> InlineKeyboardMarkup:
                 ),
                 InlineKeyboardButton(text="↩️ Ні", callback_data="mdc:no"),
             ]
+        ]
+    )
+
+
+def meter_photo_keyboard(
+    items: Sequence[tuple[int, str]],
+) -> InlineKeyboardMarkup | None:
+    """«📸 Фото» buttons under the «📜 Історія» journal — one per reading whose archived
+    photo is still on disk. `items` = [(reading_id, label)]; label already names the
+    meter + month. None when nothing has a photo (so the journal goes out plain)."""
+    if not items:
+        return None
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=label, callback_data=f"mp:{rid}")]
+            for rid, label in items
         ]
     )
 

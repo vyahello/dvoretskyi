@@ -270,6 +270,37 @@ async def test_get_meter_journal_empty_is_friendly(session, providers):
     assert "журнал чистий" in res["message"]
 
 
+async def test_get_meter_photo_by_id(session, providers, tmp_path):
+    # The «📸 Фото» tap fetches one specific reading's archived photo by id.
+    from dvoretskyi.db.models import MeterReading, MeterStatus
+
+    photo = tmp_path / "meter_x.jpg"
+    photo.write_bytes(
+        b"\xff\xd8\xff\xd9"
+    )  # stand-in file; _photo_result reads DB, not it
+    water = providers["Холодна вода"]
+    r = MeterReading(
+        provider_id=water.id,
+        cycle="2026-06",
+        value=Decimal("100.500"),
+        status=MeterStatus.submitted,
+        created_at=clock.now(),
+        photo_ref=str(photo),
+    )
+    session.add(r)
+    await session.commit()
+
+    res = await tools.get_meter_photo_by_id(session, r.id)
+    assert res["ok"] and res["photo_path"] == str(photo)
+    assert "Холодна вода" in res["caption"] and "100.500" in res["caption"]
+
+    # File gone from disk → ok=False (no dead button).
+    photo.unlink()
+    assert (await tools.get_meter_photo_by_id(session, r.id))["ok"] is False
+    # Unknown id → ok=False, no crash.
+    assert (await tools.get_meter_photo_by_id(session, 10_000_000))["ok"] is False
+
+
 async def test_meter_history_leads_with_portal(session, providers, monkeypatch):
     # When the infolviv portal answers, its filed value is authoritative and leads the
     # reply (conversational «покажи показники води» mirrors the «Мої показники» button).

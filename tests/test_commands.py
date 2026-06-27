@@ -129,6 +129,36 @@ def test_main_keyboard_has_menu_buttons():
     assert "🎩 Привіт" not in labels  # the greeting button was dropped
 
 
+def test_journal_photo_buttons_only_for_saved_photos():
+    from dvoretskyi.bot import app as bot_app
+
+    sections = [
+        {
+            "provider": "Газ (постачання)",
+            "readings": [
+                {"id": 7, "cycle": "2026-06", "has_photo": True},
+                {"id": 8, "cycle": "2026-05", "has_photo": False},  # no photo → no button
+            ],
+        },
+        {
+            "provider": "Холодна вода",
+            "readings": [{"id": 9, "cycle": "2026-06", "has_photo": True}],
+        },
+    ]
+    items = bot_app._journal_photo_buttons(sections)
+    assert [rid for rid, _ in items] == [7, 9]  # only the ones with a saved photo
+    assert items[0][1] == "📸 Газ (постачання) · червень 2026"  # names meter + month
+
+
+def test_meter_photo_keyboard():
+    from dvoretskyi.bot import keyboards
+
+    kb = keyboards.meter_photo_keyboard([(7, "📸 Газ · червень 2026")])
+    assert kb is not None
+    assert kb.inline_keyboard[0][0].callback_data == "mp:7"
+    assert keyboards.meter_photo_keyboard([]) is None  # nothing saved → plain message
+
+
 async def test_menu_button_meters_shows_infolviv_when_available(engine, monkeypatch):
     from dvoretskyi.agent.infolviv import InfolvivReading
 

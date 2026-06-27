@@ -1250,6 +1250,23 @@ async def get_meter_photo(
             "ok": False,
             "message": f"Фото лічильника{scope} не збереглося — скинь нове, відкладу.",
         }
+    return await _photo_result(session, reading)
+
+
+async def get_meter_photo_by_id(session: AsyncSession, reading_id: int) -> dict:
+    """Pull back ONE specific reading's archived photo — the «📸 Фото» tap in the journal,
+    where the exact reading is known. Gone from disk → ok=False with a hint."""
+    reading = await session.get(MeterReading, reading_id)
+    if reading is None or not photo_store.exists(reading.photo_ref):
+        return {
+            "ok": False,
+            "message": "Це фото вже не збереглося — скинь нове, відкладу.",
+        }
+    return await _photo_result(session, reading)
+
+
+async def _photo_result(session: AsyncSession, reading: MeterReading) -> dict:
+    """Build the send-able photo dict (path + captions naming meter, household, value)."""
     owner = (
         await session.get(Provider, reading.provider_id)
         if reading.provider_id is not None
@@ -1382,6 +1399,7 @@ async def get_meter_journal(
                 per_cycle[r.cycle] = r
         readings = [
             {
+                "id": r.id,
                 "cycle": r.cycle,
                 "value": str(r.value),
                 "consumption": (

@@ -138,7 +138,13 @@ zero / spike vs history → `needs_confirm`) → store `MeterReading` → submit
   чернетка» with a 📸 mark where the archived photo still exists. The bot handler
   `menu_history` renders `result["message"]`; it's also an LLM tool so «покажи історію
   показників» works conversationally. `get_meter_history` (current state) and
-  `get_meter_journal` (timeline + dates) are distinct on purpose.
+  `get_meter_journal` (timeline + dates) are distinct on purpose. Each journal reading
+  carries its `id`; `menu_history` builds a «📸 Фото» **inline button** per month that
+  still has an archived photo (`_journal_photo_buttons` → `keyboards.meter_photo_keyboard`,
+  `mp:<reading_id>`). The `mp:` tap (`on_meter_photo`) sends **that exact** reading's photo
+  via `get_meter_photo_by_id` — a deterministic tap, not via the LLM (mirrors the other
+  meter taps). `get_meter_photo` (freshest by provider/cycle) and `get_meter_photo_by_id`
+  (one known reading) share the caption builder `_photo_result`.
 - `_format_unpaid` phrasings (all-clear / mobile-autopay note) are **randomized** so the
   deterministic `/unpaid` reply never reads like a canned autoreply.
 - Legacy per-provider `SubmissionChannel`s (`ManualAssistChannel` default, Sms/WebForm

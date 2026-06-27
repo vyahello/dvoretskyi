@@ -135,7 +135,8 @@ right after) and handled exactly like a typed message. Meter values stay photo-o
   button merges the authoritative portal record with any unfiled photo drafts that are
   ahead of it; the **«📜 Історія»** button shows the month-by-month timeline from our own
   records — each reading with its consumption and the date it was filed (the portal keeps
-  only the latest). `INFOLV_SUBMIT_ENABLED` is a **kill-switch** — off ⇒ the bot falls back to
+  only the latest), and a **«📸 Фото»** button on every month that still has a saved
+  photo, so one tap pulls that month's image back. `INFOLV_SUBMIT_ENABLED` is a **kill-switch** — off ⇒ the bot falls back to
   handing you the value + a **«Відправив ✓»** tap. Each photo is **archived** (downscaled
   JPEG in a private dir) so «витягни фото газу» pulls it back; OCR failure → it asks you
   to retype, never guesses.

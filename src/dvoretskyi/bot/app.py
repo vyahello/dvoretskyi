@@ -52,6 +52,7 @@ from dvoretskyi.agent.tools import (
     execute_meter_delete,
     get_meter_history,
     get_meter_journal,
+    get_meter_photo_by_id,
     get_provider_balance,
     get_stats,
     get_unpaid,
@@ -490,13 +491,53 @@ async def menu_meters(message: Message) -> None:
         await message.answer(await _local_journal())
 
 
+def _journal_photo_buttons(sections: list[dict]) -> list[tuple[int, str]]:
+    """One «📸 Фото» button per journal reading that still has an archived photo —
+    label names the meter + month so a tap pulls back exactly that month's image."""
+    items: list[tuple[int, str]] = []
+    for sec in sections:
+        for r in sec["readings"]:
+            if r.get("has_photo") and r.get("id") is not None:
+                label = f"📸 {sec['provider']} · {_format_cycle(r['cycle'])}"
+                items.append((r["id"], label))
+    return items
+
+
 @router.message(F.text == keyboards.MENU_HISTORY)
 async def menu_history(message: Message) -> None:
     """«📜 Історія» — the month-by-month journal from our own records: per meter, each
-    reading with its consumption and filing date (the portal keeps only the last)."""
+    reading with its consumption and filing date (the portal keeps only the last). Each
+    month that still has a saved photo gets a «📸 Фото» button to pull the image back."""
     async with session_scope() as session:
         result = await get_meter_journal(session)
-    await message.answer(result["message"])
+    markup = keyboards.meter_photo_keyboard(_journal_photo_buttons(result["sections"]))
+    await message.answer(result["message"], reply_markup=markup)
+
+
+@router.callback_query(F.data.startswith("mp:"))
+async def on_meter_photo(callback: CallbackQuery) -> None:
+    """«📸 Фото» tap → send that specific reading's archived photo with its caption."""
+    if not callback.data:
+        await callback.answer()
+        return
+    try:
+        reading_id = int(callback.data.split(":", 1)[1])
+    except ValueError:
+        await callback.answer()
+        return
+    async with session_scope() as session:
+        res = await get_meter_photo_by_id(session, reading_id)
+    if isinstance(callback.message, Message):
+        photo_path = res.get("photo_path")
+        if res.get("ok") and photo_path and os.path.exists(photo_path):
+            await callback.message.answer_photo(
+                FSInputFile(photo_path),
+                caption=res.get("caption_html") or res.get("caption"),
+                parse_mode="HTML",
+            )
+        else:
+            await callback.message.answer(res.get("message") or "Фото не знайшов.")
+    await callback.answer()
 
 
 @asynccontextmanager
