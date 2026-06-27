@@ -192,6 +192,15 @@ _DECIMAL_RE = re.compile(r"(\d+)[.,](\d+)")  # "1888.14" → "1888 кома 14"
 # every dot as «крапка» («00 крапка 28 крапка…»); voice the groups with short pauses
 # instead, so it sounds like a number read aloud, not «крапка крапка крапка».
 _CODE_RE = re.compile(r"\b\d+(?:\.\d+){2,}\b")
+# A bare run of digits that's an IDENTIFIER, not a quantity — a login / contract / account
+# number (e.g. «00280036»). espeak reads a long digit run as a grouped cardinal and voices
+# the thousands separators as «крапка» («00280036» → «00 крапка 280 крапка 036»); leading
+# zeros also make it a non-number. Read it digit-by-digit instead — clear, and the way a
+# contract number is dictated aloud. Scoped to ≥6 digits so it never touches small numbers
+# or the 2–3-digit groups a dotted code (`_CODE_RE`) leaves behind; the lookahead
+# skips a run already worded as money/percent/volume (e.g. «100000 гривень»). Runs LAST.
+_DIGIT_ID_RE = re.compile(r"\b\d{6,}\b")
+_UNIT_WORD_AHEAD = re.compile(r"\s*(?:грив|копій|відсот|кубометр)")
 _PERCENT_RE = re.compile(r"(\d+)\s*%")
 # Meter readings/usage: "3.03 м³" → spoken «… кубометр(а/и/ів)», so a voiced reading names
 # its unit, not a bare number («спожито 3.03» → «спожито чого?»). Owns its decimal so
@@ -255,6 +264,15 @@ def _volume_words(m: re.Match[str]) -> str:
     return f"{n} {_ua_plural(n, 'кубометр', 'кубометри', 'кубометрів')}"
 
 
+def _digit_id_words(m: re.Match[str]) -> str:
+    """A bare ≥6-digit identifier → its digits, space-separated, so espeak reads each
+    digit («00280036» → «0 0 2 8 0 0 3 6») instead of grouping it into «00 крапка 280
+    крапка 036». Skips a run already worded as money/percent/volume (unit follows)."""
+    if _UNIT_WORD_AHEAD.match(m.string, m.end()):
+        return m.group(0)
+    return " ".join(m.group(0))
+
+
 def voiceify(text: str) -> str:
     """Turn a screen-oriented reply into natural spoken Ukrainian, so the butler sounds
     like a person, not a screen-reader. Drops emoji/quotes/brackets/markup; reads money as
@@ -262,7 +280,9 @@ def voiceify(text: str) -> str:
     шостого року», a period «червень 2026» with the year in full + «року», meter volumes
     «3.03 м³» as «3 кома нуль три кубометра», «20-го» as «двадцятого», decimals as «1888
     кома 14» (leading zeros voiced: «03» → «нуль 3»); a dotted code «00.28.00.36» as
-    pause-separated groups (not «крапка крапка»); gives Latin brand/jargon terms a
+    pause-separated groups (not «крапка крапка»); a bare ≥6-digit identifier (login
+    «00280036») digit-by-digit (else espeak groups it «00 крапка 280 крапка 036»); gives
+    Latin brand/jargon terms a
     spoken Ukrainian form («monobank» → «монобанк», else espeak says «монобайк»); turns
     dashes into pauses and folds newlines/bullets into sentences. '' if empty.
 
@@ -296,6 +316,10 @@ def voiceify(text: str) -> str:
         lambda m: f"{m[1]} {_ua_plural(int(m[1]), 'відсоток', 'відсотки', 'відсотків')}",
         out,
     )
+    # A bare ≥6-digit identifier (login/contract) → digit-by-digit, so espeak reads each
+    # digit instead of voicing «крапка» between grouped thousands. Last digit pass, so
+    # money/volume/percent have already worded their numbers (the lookahead skips those).
+    out = _DIGIT_ID_RE.sub(_digit_id_words, out)
     for sym, word in (
         ("₴", " гривень"),
         ("№", " номер "),

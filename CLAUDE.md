@@ -202,7 +202,12 @@ reading isn't a unitless «сума»; `_meter_history_message` now emits `м³`
 «двадцятого»; decimals → «1888 кома 14» with **leading zeros voiced** («03» → «нуль 3», so
 `3.03` isn't heard as `3.3` — `_spoken_frac`); a **dotted code** (login/contract «00.28.00.36»,
 ≥3 groups so a plain decimal is untouched) → pause-separated groups «00, 28, 00, 36»
-(`_CODE_RE`) so it isn't read «00 крапка 28 крапка…»; **Latin brand/jargon** → a spoken Ukrainian
+(`_CODE_RE`) so it isn't read «00 крапка 28 крапка…»; a **bare ≥6-digit identifier** (the
+Gigabit+ login/contract is a separator-less digit run like «00280036») → spoken
+digit-by-digit «0 0 2 8 0 0 3 6» (`_DIGIT_ID_RE`, runs last), because espeak otherwise reads
+a long run as a grouped cardinal and voices the thousands separators as «крапка» («00280036»
+→ «00 крапка 280 крапка 036»); a lookahead skips a run already worded as money/percent/volume
+(«100000 гривень» stays a number); **Latin brand/jargon** → a spoken Ukrainian
 form (`_SPOKEN_TERMS`: «monobank» → «монобанк», else espeak says «монобайк»; «autopay»,
 «Gigabit+»); dashes → pauses; lines folded into sentences.
 (Numerals stay as digits — espeak-ng voices them.) **Stress — fixed via an espeak

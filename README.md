@@ -166,7 +166,9 @@ right after) and handled exactly like a typed message. Meter values stay photo-o
   pip dep, audio never leaves the server), re-encoded to OGG/Opus with ffmpeg, and sent as
   a Telegram voice note (buttons ride on it; a chart/photo is still attached). Screen text
   is cleaned for speech first (`voiceify`: emoji/markup dropped, «₴» → «гривень», meter
-  readings → «… кубометра», a period → «червень дві тисячі двадцять шостого року»). Word
+  readings → «… кубометра», a period → «червень дві тисячі двадцять шостого року», a
+  separator-less login/contract number read digit-by-digit so espeak doesn't voice it as
+  «00 крапка 280 крапка 036»). Word
   stress, which espeak's uk rules sometimes get wrong, is corrected by an espeak
   pronunciation dictionary (`scripts/build_espeak_stress.py` compiles
   `scripts/uk_stress_overrides.txt` into a custom espeak data dir Piper is pointed at — no

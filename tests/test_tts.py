@@ -55,6 +55,19 @@ def test_voiceify_reads_dotted_code_as_pauses():
     assert voiceify("показник 1888.14") == "показник 1888 кома 14"
 
 
+def test_voiceify_reads_bare_digit_login_digit_by_digit():
+    # A bare digit identifier (the Gigabit+ login/contract has no separators) — espeak
+    # would read «00280036» as a grouped cardinal and voice «00 крапка 280 крапка 036».
+    # Read it digit-by-digit so each digit (incl. the leading zeros) is spoken cleanly.
+    assert voiceify("Логін (договір): 00280036.") == "Логін договір : 0 0 2 8 0 0 3 6."
+    assert voiceify("договір 12345678") == "договір 1 2 3 4 5 6 7 8"
+    # A short number / year is left alone (espeak reads it as a normal cardinal).
+    assert voiceify("за 2026 рік") == "за 2026 рік"
+    assert voiceify("420 разів") == "420 разів"
+    # A large money amount is already worded — the digits keep their «гривень», not split.
+    assert voiceify("разом 100000 ₴") == "разом 100000 гривень"
+
+
 def test_voiceify_meter_volume_named_with_unit():
     # «м³» is spoken as a declined «кубометр», so a reading isn't a bare unitless number.
     assert (
