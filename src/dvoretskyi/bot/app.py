@@ -497,9 +497,11 @@ def _journal_photo_buttons(sections: list[dict]) -> list[tuple[int, str]]:
     items: list[tuple[int, str]] = []
     for sec in sections:
         for r in sec["readings"]:
-            if r.get("has_photo") and r.get("id") is not None:
+            # photo_id is the reading whose archived file actually survives (may differ
+            # from the displayed row), so the tap always lands on a real photo.
+            if r.get("has_photo") and r.get("photo_id") is not None:
                 label = f"📸 {sec['provider']} · {_format_cycle(r['cycle'])}"
-                items.append((r["id"], label))
+                items.append((r["photo_id"], label))
     return items
 
 

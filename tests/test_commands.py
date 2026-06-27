@@ -136,17 +136,19 @@ def test_journal_photo_buttons_only_for_saved_photos():
         {
             "provider": "Газ (постачання)",
             "readings": [
-                {"id": 7, "cycle": "2026-06", "has_photo": True},
-                {"id": 8, "cycle": "2026-05", "has_photo": False},  # no photo → no button
+                # photo_id may differ from the displayed id (photo on a sibling row).
+                {"id": 2, "photo_id": 5, "cycle": "2026-06", "has_photo": True},
+                {"id": 8, "photo_id": None, "cycle": "2026-05", "has_photo": False},
             ],
         },
         {
             "provider": "Холодна вода",
-            "readings": [{"id": 9, "cycle": "2026-06", "has_photo": True}],
+            "readings": [{"id": 1, "photo_id": 6, "cycle": "2026-06", "has_photo": True}],
         },
     ]
     items = bot_app._journal_photo_buttons(sections)
-    assert [rid for rid, _ in items] == [7, 9]  # only the ones with a saved photo
+    # The button carries the photo_id (the row whose file survives), not the display id.
+    assert [rid for rid, _ in items] == [5, 6]
     assert items[0][1] == "📸 Газ (постачання) · червень 2026"  # names meter + month
 
 

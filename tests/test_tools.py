@@ -270,6 +270,52 @@ async def test_get_meter_journal_empty_is_friendly(session, providers):
     assert "журнал чистий" in res["message"]
 
 
+async def test_journal_surfaces_surviving_draft_photo(session, providers, tmp_path):
+    # Regression: a filed (submitted) reading whose archived photo vanished, plus a newer
+    # un-filed draft of the SAME month whose photo survives. The journal line shows the
+    # filed value/date, but the 📸 must come from the draft (the dedup used to pick the
+    # submitted row and hide the only real photo → «не бачу фото»).
+    from dvoretskyi.db.models import MeterReading, MeterStatus
+
+    gone = tmp_path / "gone.jpg"  # referenced but never created → exists()=False
+    kept = tmp_path / "kept.jpg"
+    kept.write_bytes(b"\xff\xd8\xff\xd9")
+    water = providers["Холодна вода"]
+    session.add_all(
+        [
+            MeterReading(
+                provider_id=water.id,
+                cycle="2026-06",
+                value=Decimal("107.695"),
+                status=MeterStatus.submitted,
+                created_at=clock.now(),
+                submitted_at=clock.now(),
+                photo_ref=str(gone),
+            ),
+            MeterReading(
+                provider_id=water.id,
+                cycle="2026-06",
+                value=Decimal("108.000"),
+                status=MeterStatus.validated,
+                created_at=clock.now(),
+                photo_ref=str(kept),
+            ),
+        ]
+    )
+    await session.commit()
+
+    res = await tools.get_meter_journal(session, "Холодна вода")
+    rd = res["sections"][0]["readings"][0]
+    assert rd["value"] == "107.695" and rd["status"] == "submitted"  # filed value leads
+    assert (
+        rd["has_photo"] is True and rd["photo_id"] is not None
+    )  # draft's photo surfaced
+    assert "📸" in res["message"]
+    # The button's photo_id fetches the surviving file (the draft), not the gone one.
+    photo = await tools.get_meter_photo_by_id(session, rd["photo_id"])
+    assert photo["ok"] and photo["photo_path"] == str(kept)
+
+
 async def test_get_meter_photo_by_id(session, providers, tmp_path):
     # The «📸 Фото» tap fetches one specific reading's archived photo by id.
     from dvoretskyi.db.models import MeterReading, MeterStatus

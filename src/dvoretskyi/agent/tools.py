@@ -854,10 +854,11 @@ async def submit_meter_reading(
     reading.status = verdict.status
     await session.flush()
     # Keep a compressed copy so the user can pull this meter's photo back later. The
-    # temp download is deleted by the caller; this archive copy persists in photo_ref.
-    archived = photo_store.archive(image_path, reading.id)
-    if archived:
-        reading.photo_ref = archived
+    # temp download (`image_path`, set above) is deleted by the caller, so only a
+    # successful archive leaves a ref we can actually serve — on a miss, drop the ref
+    # rather than dangle the soon-deleted temp path (which would later 404 as a phantom
+    # «📸» that points at nothing).
+    reading.photo_ref = photo_store.archive(image_path, reading.id)
     # A fresh reading for this meter supersedes any earlier un-filed draft of it.
     await _supersede_pending(session, prov.id, reading.id)
 
@@ -1387,32 +1388,51 @@ async def get_meter_journal(
             .scalars()
             .all()
         )
-        # One entry per cycle. Rows are newest-first; a filed (submitted) reading is the
-        # record of that month, so it wins over a later un-filed re-photo of that cycle.
-        per_cycle: dict[str, MeterReading] = {}
+        # Group every reading by cycle (rows are newest-first, created_at desc), then emit
+        # one line per month.
+        by_cycle: dict[str, list[MeterReading]] = {}
         for r in rows:
-            cur = per_cycle.get(r.cycle)
-            if cur is None or (
-                r.status is MeterStatus.submitted
-                and cur.status is not MeterStatus.submitted
-            ):
-                per_cycle[r.cycle] = r
-        readings = [
-            {
-                "id": r.id,
-                "cycle": r.cycle,
-                "value": str(r.value),
-                "consumption": (
-                    str(r.consumption_delta) if r.consumption_delta is not None else None
-                ),
-                "submitted_at": (
-                    clock.ensure_aware(r.submitted_at) if r.submitted_at else None
-                ),
-                "status": r.status.value,
-                "has_photo": bool(r.photo_ref and photo_store.exists(r.photo_ref)),
-            }
-            for r in sorted(per_cycle.values(), key=lambda x: x.cycle, reverse=True)
-        ]
+            by_cycle.setdefault(r.cycle, []).append(r)
+        readings = []
+        for cycle in sorted(by_cycle, reverse=True):
+            group = by_cycle[cycle]
+            # The line shows the filed (submitted) reading when there is one — it's the
+            # authoritative value + date; otherwise the freshest draft.
+            display = next(
+                (r for r in group if r.status is MeterStatus.submitted), group[0]
+            )
+            # The surviving photo may sit on a DIFFERENT row than `display` — e.g. a
+            # re-photo draft taken after filing, or the filed row's own archive went
+            # missing. Surface whichever row in this month still has a file on disk,
+            # preferring `display`'s own, so a real photo is never hidden by the dedup.
+            photo_row = (
+                display
+                if (display.photo_ref and photo_store.exists(display.photo_ref))
+                else next(
+                    (r for r in group if r.photo_ref and photo_store.exists(r.photo_ref)),
+                    None,
+                )
+            )
+            readings.append(
+                {
+                    "id": display.id,
+                    "photo_id": photo_row.id if photo_row else None,
+                    "cycle": cycle,
+                    "value": str(display.value),
+                    "consumption": (
+                        str(display.consumption_delta)
+                        if display.consumption_delta is not None
+                        else None
+                    ),
+                    "submitted_at": (
+                        clock.ensure_aware(display.submitted_at)
+                        if display.submitted_at
+                        else None
+                    ),
+                    "status": display.status.value,
+                    "has_photo": photo_row is not None,
+                }
+            )
         hh_name = (
             household_names.get(prov.household_id)
             if prov.household_id is not None
