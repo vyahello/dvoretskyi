@@ -1,8 +1,10 @@
 """APScheduler payment reminders.
 
 Daily job: for each provider with a due_day, nudge iff this cycle is unpaid AND we're
-inside the nudge window (due_day-3 … due_day) AND not snoozed AND not already nudged
-today. Near the deadline (due_day or due_day-1) the copy escalates. Two more daily jobs
+inside the nudge window (due_day-`payment_nudge_window_days` … due_day, default 5) AND
+not snoozed AND not already nudged today. Each nudge carries a pay link routed by the
+provider's type (monobank «Комуналка» / ДАХ app / Gigabit+ Portmone) via `pay_link_for`.
+Near the deadline (due_day or due_day-1) the copy escalates. Two more daily jobs
 nudge for meter readings (kind="meter") inside each meter's submission window, and for a
 low provider balance (kind="balance", e.g. Gigabit+ below its monthly fee).
 
@@ -42,7 +44,9 @@ from dvoretskyi.db.session import session_scope
 
 log = logging.getLogger(__name__)
 
-NUDGE_WINDOW_DAYS = 3  # start nudging this many days before due_day
+# Default window (days before due_day) to start nudging. The live value is
+# `payment_nudge_window_days` (default 5), read per-run so a config change needs no code.
+NUDGE_WINDOW_DAYS = 5  # start nudging this many days before due_day
 
 
 class Notifier(Protocol):
@@ -73,14 +77,16 @@ class PendingNudge:
 
     def message(self) -> str:
         amount = f" (≈{self.expected_amount} ₴)" if self.expected_amount else ""
+        where = " Платіж — кнопкою нижче." if self.pay_link else ""
         if self.near_deadline:
             return (
-                f"{self.provider_name}{amount} — лишився останній день. "
-                "Далі нарахують по-своєму, а ми цього не любимо. Платимо?"
+                f"{self.provider_name}{amount} — лишився останній день, "
+                f"до {self.due_day}-го. Далі нарахують по-своєму, а ми цього не "
+                f"любимо. Платимо?{where}"
             )
         return (
-            f"Без фанатизму: {self.provider_name}{amount} цього місяця ще відкрите. "
-            "Дедлайн не горить — просто щоб не загубилось."
+            f"Без фанатизму: {self.provider_name}{amount} цього місяця ще відкрите — "
+            f"до {self.due_day}-го.{where} Щоб не загубилось."
         )
 
 
@@ -111,6 +117,7 @@ async def compute_pending_nudges(
     now = now or clock.now()
     cycle = clock.cycle_of(now)
     today = now.day
+    window = get_settings().payment_nudge_window_days
 
     providers = (
         (await session.execute(select(Provider).where(Provider.due_day.is_not(None))))
@@ -125,8 +132,8 @@ async def compute_pending_nudges(
         due = prov.due_day
         if due is None:  # filtered in SQL, but keep the type checker honest
             continue
-        # Inside the nudge window: due_day-3 … due_day.
-        if not (due - NUDGE_WINDOW_DAYS <= today <= due):
+        # Inside the nudge window: due_day-`window` … due_day (default 5 days before).
+        if not (due - window <= today <= due):
             continue
         if await _paid_this_cycle(session, prov.id, cycle):
             continue

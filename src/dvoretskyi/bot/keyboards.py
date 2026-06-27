@@ -36,22 +36,36 @@ MENU_STATS = "📊 Статистика"
 MENU_BALANCE = "🌐 Баланс інтернету"
 MENU_METERS = "🔢 Мої показники"
 MENU_HISTORY = "📜 Історія"
+MENU_PAYPLAN = "🗓 Як платити"
 MENU_HELP = "❓ Довідка"
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
     """Always-on tap menu above the text box (no need to type slash-commands). The two
     meter buttons sit together: «Мої показники» = the current state, «Історія» = the
-    month-by-month journal with filing dates."""
+    month-by-month journal with filing AND payment dates. «Як платити» = the monthly
+    plan (when/where/through which service), with pay links."""
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=MENU_UNPAID), KeyboardButton(text=MENU_STATS)],
             [KeyboardButton(text=MENU_METERS), KeyboardButton(text=MENU_HISTORY)],
-            [KeyboardButton(text=MENU_BALANCE), KeyboardButton(text=MENU_HELP)],
+            [KeyboardButton(text=MENU_PAYPLAN), KeyboardButton(text=MENU_BALANCE)],
+            [KeyboardButton(text=MENU_HELP)],
         ],
         resize_keyboard=True,
         is_persistent=True,
     )
+
+
+def links_keyboard(links: Sequence[dict]) -> InlineKeyboardMarkup | None:
+    """Tappable pay-link buttons for the payment plan — one per distinct service
+    (monobank / ДАХ / Portmone). `links` = [{"url":…, "label":…}]; None when empty."""
+    rows = [
+        [InlineKeyboardButton(text=link["label"], url=link["url"])]
+        for link in links
+        if link.get("url") and link.get("label")
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
 
 def categorize_keyboard(

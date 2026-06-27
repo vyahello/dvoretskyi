@@ -89,6 +89,11 @@ class Settings(BaseSettings):
     # then on the 3rd «подай раніше» tap we submit even though it's before the 28th).
     meter_early_submit_attempts: int = 3
 
+    # --- payment reminders ---
+    # How many days before a provider's due_day to start nudging (daily, until paid). The
+    # nudge carries a pay link routed by provider type (monobank / ДАХ / Portmone).
+    payment_nudge_window_days: int = 5
+
     # --- speech-to-text (voice messages, L2.5) ---
     # Local faster-whisper by default — audio never leaves the box (the OGG is deleted
     # right after, like a meter photo). "none" disables voice handling entirely.

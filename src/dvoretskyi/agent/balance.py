@@ -84,6 +84,25 @@ def pay_link_for(provider: Provider) -> tuple[str | None, str | None]:
     return None, None
 
 
+def pay_method_label(provider: Provider) -> str:
+    """Human «через що / де» a provider is paid — for the payment plan. Mirrors the
+    routing of `pay_link_for` (the confirmed real methods), in spoken Ukrainian.
+    Утиліти → monobank «Комуналка»; Кварплата → застосунок ДАХ; Gigabit+ → Portmone;
+    Мобільний → автосписання monobank."""
+    from dvoretskyi.db.models import Category
+
+    name = provider.name.casefold()
+    if provider.category is Category.housing:
+        return "застосунок ДАХ"
+    if "gigabit" in name:
+        return "Portmone (поповнення кабінету Gigabit+)"
+    if provider.category is Category.mobile:
+        return "автосписання monobank"
+    if provider.category in (Category.water, Category.electricity, Category.gas):
+        return "monobank, розділ «Комуналка»"
+    return "вручну"
+
+
 def _to_decimal(value: object) -> Decimal | None:
     try:
         return Decimal(str(value)).quantize(Decimal("0.01"))

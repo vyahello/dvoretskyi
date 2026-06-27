@@ -126,6 +126,22 @@ def _progress_line(tool: str, args: dict) -> str:
                 "Гортаю витрати по полицях…",
             ]
         )
+    if tool == "get_payment_journal":
+        return random.choice(
+            [
+                "Гортаю історію платежів…",
+                "Дивлюся, коли й за що платив…",
+                "Підіймаю дати оплат…",
+            ]
+        )
+    if tool == "get_payment_plan":
+        return random.choice(
+            [
+                "Складаю план оплат…",
+                "Дивлюся, що, коли й через що платимо…",
+                "Звіряю графік оплат…",
+            ]
+        )
     if tool == "log_payment_manual":
         return random.choice(
             ["Записую платіж…", "Фіксую…", "Заношу в журнал…", "Беру на олівець…"]

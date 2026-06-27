@@ -1615,11 +1615,216 @@ async def get_provider_balance(
     }
 
 
+# --- payment journal & plan ------------------------------------------------
+
+_CATEGORY_EMOJI = {
+    "water": "💧",
+    "electricity": "💡",
+    "gas": "🔥",
+    "internet": "🌐",
+    "housing": "🏠",
+    "mobile": "📱",
+}
+
+
+def _payment_journal_message(sections: list[dict]) -> str:
+    """Render the payment history newest-first: per provider (+ household), each payment
+    as «<dd.mm.yyyy> — <сума> ₴». Mirror of the meter journal's shape and voice."""
+    blocks: list[str] = []
+    for sec in sections:
+        if not sec["payments"]:
+            continue
+        label = f"{_CATEGORY_EMOJI.get(sec['category'], '💸')} {sec['provider']}"
+        if sec.get("household"):
+            label += f" · {sec['household']}"
+        lines = [label]
+        lines += [f"• {p['date']} — {p['amount']} ₴" for p in sec["payments"]]
+        if sec.get("more"):
+            lines.append(f"  …та ще {sec['more']} раніше")
+        blocks.append("\n".join(lines))
+    if not blocks:
+        return (
+            "Платежів поки не бачу — історія порожня. 💸\n"
+            "Щойно monobank повідомить про оплату, занесу її сюди з датою."
+        )
+    return "💸 Історія платежів:\n\n" + "\n\n".join(blocks)
+
+
+async def get_payment_journal(
+    session: AsyncSession,
+    provider_name: str | None = None,
+    household: str | None = None,
+    period: str | None = None,
+) -> dict:
+    """Per-payment history WITH DATES, newest-first, grouped by provider (+ household).
+
+    The only view with the actual PAYMENT DATE of each transaction — `get_stats` gives
+    totals, this gives the dated timeline. Answers «коли я платив за газ», «коли востаннє
+    платив за світло», «покажи платежі по <житлу>». `provider_name` narrows to one service
+    (substring → «газ» catches both gas providers); `household` filters to one property;
+    `period` ("YYYY"/"YYYY-MM"/season) limits the range."""
+    start, end = _period_bounds(period)
+
+    provs = (
+        (
+            await session.execute(
+                select(Provider).order_by(Provider.household_id, Provider.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    household_names = {
+        h.id: h.name for h in (await session.execute(select(Household))).scalars()
+    }
+    want = await households.resolve(session, household) if household else None
+    needle = (provider_name or "").strip().casefold()
+
+    per_provider = 6  # cap lines per provider so the journal stays readable
+    sections: list[dict] = []
+    for prov in provs:
+        if want is not None and prov.household_id != want.id:
+            continue
+        if needle and needle not in prov.name.casefold():
+            continue
+        conds: list[ColumnElement[bool]] = [Payment.provider_id == prov.id]
+        if start is not None:
+            conds.append(Payment.paid_at >= start)
+        if end is not None:
+            conds.append(Payment.paid_at < end)
+        rows = (
+            (
+                await session.execute(
+                    select(Payment).where(*conds).order_by(Payment.paid_at.desc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not rows:
+            continue
+        payments = [
+            {
+                "date": clock.ensure_aware(p.paid_at).strftime("%d.%m.%Y"),
+                "amount": _fmt_uah(p.amount_uah),
+                "cycle": clock.cycle_of(clock.ensure_aware(p.paid_at)),
+            }
+            for p in rows[:per_provider]
+        ]
+        sections.append(
+            {
+                "provider": prov.name,
+                "household": (
+                    household_names.get(prov.household_id) if prov.household_id else None
+                ),
+                "category": prov.category.value,
+                "payments": payments,
+                "more": max(0, len(rows) - per_provider),
+            }
+        )
+    return {"sections": sections, "message": _payment_journal_message(sections)}
+
+
+def _payment_plan_message(rows: list[dict], autopay: list[dict]) -> str:
+    """Render the monthly payment plan: per scheduled provider — by which day, how much
+    (if known) and through which service; mobile's autopay is noted separately."""
+    if not rows and not autopay:
+        return "Поки нема за що платити за планом — жодної послуги з датою оплати."
+    blocks: list[str] = ["🗓 Як і коли платимо щомісяця:"]
+    for r in rows:
+        head = f"{_CATEGORY_EMOJI.get(r['category'], '💸')} {r['provider']}"
+        if r.get("household"):
+            head += f" · {r['household']}"
+        amount = f" ≈{r['expected_amount']} ₴," if r.get("expected_amount") else ""
+        blocks.append(f"{head}\n• до {r['due_day']}-го,{amount} через {r['method']}")
+    for a in autopay:
+        head = f"{_CATEGORY_EMOJI.get(a['category'], '📱')} {a['provider']}"
+        blocks.append(
+            f"{head}\n• автосписанням monobank {a['autopay_day']}-го — "
+            "робити нічого не треба"
+        )
+    tail = "\n\nПосилання на оплату — кнопками нижче." if rows else ""
+    return "\n\n".join(blocks) + tail
+
+
+async def get_payment_plan(session: AsyncSession, household: str | None = None) -> dict:
+    """The monthly payment plan: for each scheduled service — WHEN (due day), HOW MUCH
+    (if a typical amount is known) and THROUGH WHICH SERVICE it's paid (monobank
+    «Комуналка» / застосунок ДАХ / Portmone for Gigabit+), plus the relevant pay links.
+    Answers «коли і за що я плачу», «як і де платити», «що по оплатах цього місяця».
+    `household` filters to one property; mobile autopay is listed as a no-action note.
+    `links` (deduped by url) are rendered as tappable buttons by the bot layer."""
+    from dvoretskyi.agent.balance import pay_link_for, pay_method_label
+
+    want = await households.resolve(session, household) if household else None
+    household_names = {
+        h.id: h.name for h in (await session.execute(select(Household))).scalars()
+    }
+    provs = (
+        (
+            await session.execute(
+                select(Provider).order_by(Provider.household_id, Provider.due_day)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    rows: list[dict] = []
+    autopay: list[dict] = []
+    links: list[dict] = []
+    seen_urls: set[str] = set()
+    autopay_day = get_settings().mobile_autopay_day
+
+    for prov in provs:
+        if want is not None and prov.household_id != want.id:
+            continue
+        hh = household_names.get(prov.household_id) if prov.household_id else None
+        if prov.category is Category.mobile and prov.due_day is None:
+            autopay.append(
+                {
+                    "provider": prov.name,
+                    "category": prov.category.value,
+                    "autopay_day": autopay_day,
+                }
+            )
+            continue
+        if prov.due_day is None:
+            continue  # no scheduled payment (e.g. the unoccupied flat's providers)
+        rows.append(
+            {
+                "provider": prov.name,
+                "household": hh,
+                "category": prov.category.value,
+                "due_day": prov.due_day,
+                "expected_amount": (
+                    _fmt_uah(prov.expected_amount)
+                    if prov.expected_amount is not None
+                    else None
+                ),
+                "method": pay_method_label(prov),
+            }
+        )
+        url, label = pay_link_for(prov)
+        if url and label and url not in seen_urls:
+            seen_urls.add(url)
+            links.append({"url": url, "label": label})
+
+    return {
+        "rows": rows,
+        "autopay": autopay,
+        "links": links,
+        "message": _payment_plan_message(rows, autopay),
+    }
+
+
 Tool = Callable[..., Awaitable[dict[str, Any]]]
 
 TOOLS: dict[str, Tool] = {
     "get_unpaid": get_unpaid,
     "get_stats": get_stats,
+    "get_payment_journal": get_payment_journal,
+    "get_payment_plan": get_payment_plan,
     "log_payment_manual": log_payment_manual,
     "categorize_payment": categorize_payment,
     "snooze_reminder": snooze_reminder,

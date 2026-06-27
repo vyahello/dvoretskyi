@@ -110,12 +110,14 @@ right after) and handled exactly like a typed message. Meter values stay photo-o
 - **Webhook** → idempotent (by `mono_tx_id`), outflow-only. Matches the description
   to a provider → logs + confirms; unmatched-but-utility-candidate → asks you to
   categorize (and learns the pattern); non-utility → silently ignored.
-- **Agent tools:** `get_unpaid`, `get_stats` (+PNG chart), `log_payment_manual`,
-  `categorize_payment`, `snooze_reminder`, `submit_meter_reading`,
+- **Agent tools:** `get_unpaid`, `get_stats` (+PNG chart), `get_payment_journal`
+  (dated per-payment history — «коли я платив за газ»), `get_payment_plan` (the monthly
+  plan: when/how-much/through-which-service + pay links — the «🗓 Як платити» button),
+  `log_payment_manual`, `categorize_payment`, `snooze_reminder`, `submit_meter_reading`,
   `confirm_meter_reading`, `delete_meter_reading`, `get_meter_history`,
-  `get_meter_journal` (month-by-month history + filing dates — the «📜 Історія» button),
-  `get_meter_photo`, `get_provider_balance`. The LLM only picks `{tool, args}` and writes
-  the reply copy; the work is deterministic Python — it never invents an amount or value.
+  `get_meter_journal` (month-by-month history + filing dates), `get_meter_photo`,
+  `get_provider_balance`. The LLM only picks `{tool, args}` and writes the reply copy;
+  the work is deterministic Python — it never invents an amount or value.
 - **Provider balance (Gigabit+ & mobile):** `get_provider_balance` logs into the ISP
   cabinet (`cabinet.gigabit.te.ua`, JSON API) and reads the current balance, last top-up,
   **monthly fee** (from the tariff plan, not hardcoded), and the **contract/login** — so
@@ -133,10 +135,10 @@ right after) and handled exactly like a typed message. Meter values stay photo-o
   and files on the third insistence. A fresh photo of a meter **supersedes** that meter's
   earlier unfiled draft, so the journal never piles up duplicates. The **«Мої показники»**
   button merges the authoritative portal record with any unfiled photo drafts that are
-  ahead of it; the **«📜 Історія»** button shows the month-by-month timeline from our own
-  records — each reading with its consumption and the date it was filed (the portal keeps
-  only the latest), and a **«📸 Фото»** button on every month that still has a saved
-  photo, so one tap pulls that month's image back. `INFOLV_SUBMIT_ENABLED` is a **kill-switch** — off ⇒ the bot falls back to
+  ahead of it; the **«📜 Історія»** button is the dated timeline — the month-by-month
+  meter journal (each reading with its consumption, filing date and a **«📸 Фото»** button
+  where the image is still saved) **plus** the payment history (each payment with its
+  date). `INFOLV_SUBMIT_ENABLED` is a **kill-switch** — off ⇒ the bot falls back to
   handing you the value + a **«Відправив ✓»** tap. Each photo is **archived** (downscaled
   JPEG in a private dir) so «витягни фото газу» pulls it back; OCR failure → it asks you
   to retype, never guesses.
@@ -206,15 +208,19 @@ right after) and handled exactly like a typed message. Meter values stay photo-o
         ▼
   answer_voice(ogg)  ──► spoken reply (deleted after send)
   ```
-- **Reminders:** daily jobs nudge for (1) **payments** inside the due-day window
-  (escalating near the deadline), (2) **meters** inside the submission window (the last
-  `meter_window` days of the month), and (3) a **low Gigabit+ balance** (below the
-  monthly fee). Each fires once per day, respecting **snooze**. Nudges carry a tappable
-  **pay button** to the right place: utilities → the **monobank** app, Кварплата → the
-  **ДАХ** app, Gigabit+ → its prefilled **Portmone** top-up (iOS App Store / universal
-  links; no card data touches the bot). Mobile is **auto-paid** (a scheduled monobank
-  payment) so it has no reminder — top-ups still arrive via the webhook, and a manual
-  top-up link is available on request.
+- **Reminders:** daily jobs nudge for (1) **payments** starting **5 days** before the
+  due day (`PAYMENT_NUDGE_WINDOW_DAYS`, escalating near the deadline), (2) **meters**
+  inside the submission window (the last `meter_window` days of the month), and (3) a
+  **low Gigabit+ balance** (below the monthly fee). Each fires once per day, respecting
+  **snooze**. Nudges carry a tappable **pay button** to the right place: utilities → the
+  **monobank** app, Кварплата → the **ДАХ** app, Gigabit+ → its prefilled **Portmone**
+  top-up (iOS App Store / universal links; no card data touches the bot). Mobile is
+  **auto-paid** (a scheduled monobank payment) so it has no reminder — top-ups still
+  arrive via the webhook, and a manual top-up link is available on request.
+- **Payment plan («🗓 Як платити»):** a single view — per service the **due day**,
+  typical **amount** and **through which service** it's paid (monobank «Комуналка» /
+  ДАХ app / Gigabit+ Portmone), with tappable pay links; mobile is shown as a no-action
+  autopay note. Reachable by button or conversationally («як і коли платити за світло?»).
 
 ## Test & static analysis
 ```bash

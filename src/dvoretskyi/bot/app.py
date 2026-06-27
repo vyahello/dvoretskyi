@@ -53,6 +53,8 @@ from dvoretskyi.agent.tools import (
     get_meter_history,
     get_meter_journal,
     get_meter_photo_by_id,
+    get_payment_journal,
+    get_payment_plan,
     get_provider_balance,
     get_stats,
     get_unpaid,
@@ -107,19 +109,23 @@ class AllowlistMiddleware(BaseMiddleware):
 
 HELP_TEXT = (
     "До ваших послуг. Веду вашу комуналку: фіксую платежі, рахую статистику, "
-    "стежу за показниками й нагадую про дедлайни.\n\n"
-    "Найзручніше — кнопки внизу екрана:\n"
+    "стежу за показниками й нагадую про оплати.\n\n"
+    "🎙 Можна ГОЛОСОМ. Надиктуйте голосове — я розшифрую й відповім теж голосом. "
+    "Усе, що роблю текстом, працює й голосом (лише показники лічильників — фото: "
+    "цифри на слух я б наплутав).\n\n"
+    "Кнопки внизу екрана:\n"
     "💸 Що сплатити — що ще відкрите цього місяця\n"
     "📊 Статистика — витрати за місяць, з графіком\n"
-    "🌐 Баланс інтернету — баланс і абонплата Gigabit+\n"
     "🔢 Мої показники — поточні лічильники: подане й чернетки\n"
-    "📜 Історія — коли що подавав і які були показники\n"
+    "📜 Історія — коли що подавав і коли за що платив (з датами)\n"
+    "🗓 Як платити — коли, скільки й через що платити, з посиланнями\n"
+    "🌐 Баланс інтернету — баланс і абонплата Gigabit+\n"
     "❓ Довідка — це повідомлення\n\n"
-    "А найкраще — просто пишіть або говоріть до мене як до людини:\n"
+    "А найкраще — просто пишіть або говоріть як людині:\n"
     "• «що треба заплатити?», «скільки вийшло за травень?»\n"
-    "• «покажи показники газу», «витягни фото лічильника»\n"
-    "• «відклади воду на три дні»\n"
-    "Можна голосовим — почую й відповім теж голосом.\n\n"
+    "• «коли я платив за газ?», «як і коли платити за світло?»\n"
+    "• «покажи показники газу», «витягни фото лічильника»\n\n"
+    "Нагадаю про оплату за 5 днів до дедлайну — з посиланням, куди платити.\n"
     "Щоб подати показники — просто пришліть фото лічильника. Решту зроблю сам."
 )
 
@@ -202,7 +208,9 @@ def _format_stats(result: dict) -> str:
 async def cmd_start(message: Message) -> None:
     await message.answer(
         "До ваших послуг — ваш комунальний дворецький. Стежу за платежами, "
-        "статистикою та дедлайнами.\n"
+        "статистикою та оплатами.\n"
+        "🎙 Можна не лише писати, а й говорити — надиктуйте голосове, відповім теж "
+        "голосом.\n"
         "Тапай кнопки внизу або просто пиши чи говори як людині — напр. «що треба "
         "заплатити?». Усе, що вмію, — за кнопкою «❓ Довідка».",
         reply_markup=keyboards.main_keyboard(),
@@ -507,12 +515,29 @@ def _journal_photo_buttons(sections: list[dict]) -> list[tuple[int, str]]:
 
 @router.message(F.text == keyboards.MENU_HISTORY)
 async def menu_history(message: Message) -> None:
-    """«📜 Історія» — the month-by-month journal from our own records: per meter, each
-    reading with its consumption and filing date (the portal keeps only the last). Each
-    month that still has a saved photo gets a «📸 Фото» button to pull the image back."""
+    """«📜 Історія» — the dated timeline from our own records: meter readings (consumption
+    + filing date, with a «📸 Фото» button per saved photo) AND payments (each with its
+    payment date). The one place that answers «коли я подавав/платив за …»."""
     async with session_scope() as session:
-        result = await get_meter_journal(session)
-    markup = keyboards.meter_photo_keyboard(_journal_photo_buttons(result["sections"]))
+        meters_result = await get_meter_journal(session)
+        pay_result = await get_payment_journal(session)
+    markup = keyboards.meter_photo_keyboard(
+        _journal_photo_buttons(meters_result["sections"])
+    )
+    text = meters_result["message"]
+    if pay_result["sections"]:  # append payments only when there are any
+        text += "\n\n" + pay_result["message"]
+    await message.answer(text, reply_markup=markup)
+
+
+@router.message(F.text == keyboards.MENU_PAYPLAN)
+async def menu_payplan(message: Message) -> None:
+    """«🗓 Як платити» — the monthly payment plan: per service the due day, typical amount
+    and through which service it's paid, plus tappable pay links (monobank / ДАХ /
+    Portmone)."""
+    async with session_scope() as session:
+        result = await get_payment_plan(session)
+    markup = keyboards.links_keyboard(result.get("links") or [])
     await message.answer(result["message"], reply_markup=markup)
 
 
@@ -655,6 +680,8 @@ async def _respond_to_text(
             return
         if tr.get("pay_link"):
             markup = keyboards.pay_keyboard(tr["pay_link"], label=tr.get("pay_label"))
+        elif tr.get("links"):  # payment plan → one pay button per distinct service
+            markup = keyboards.links_keyboard(tr["links"])
         elif tr.get("confirm_delete"):
             markup = keyboards.meter_delete_confirm_keyboard(tr["confirm_scope"])
         # The voice note is the reply (buttons ride on it). If Telegram refuses it (e.g.

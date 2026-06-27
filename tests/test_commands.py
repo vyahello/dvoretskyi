@@ -33,9 +33,11 @@ class FakeMessage:
         self.answers: list[str] = []
         self.photos: list[tuple[object, str | None]] = []
         self.voices: list[tuple[object, object]] = []
+        self.markups: list[object] = []
 
     async def answer(self, text: str, **kw) -> None:
         self.answers.append(text)
+        self.markups.append(kw.get("reply_markup"))
 
     async def answer_photo(self, photo, caption: str | None = None, **kw) -> None:
         self.photos.append((photo, caption))
@@ -78,6 +80,55 @@ async def test_cmd_help(engine):
     assert "/unpaid" not in text and "/stats" not in text
     assert "заплатити" in text  # free-text hint
     assert "фото лічильника" in text  # how to file a reading
+    # Voice is now emphasised, and the new buttons are documented.
+    assert "ГОЛОСОМ" in text and "🎙" in text
+    assert "Як платити" in text
+
+
+async def test_cmd_start_mentions_voice(engine):
+    msg = FakeMessage()
+    await cmd_start(msg)
+    assert "голос" in msg.answers[0].lower()
+
+
+async def test_menu_payplan_shows_plan_with_links(engine, providers):
+    from dvoretskyi.bot.app import menu_payplan
+
+    msg = FakeMessage()
+    await menu_payplan(msg)
+    text = msg.answers[0]
+    assert "Як і коли платимо" in text
+    assert "monobank" in text and "ДАХ" in text  # method per provider
+    # Pay links ride as an inline keyboard.
+    markup = msg.markups[0]
+    assert markup is not None and markup.inline_keyboard
+
+
+async def test_menu_history_includes_payment_dates(engine, providers):
+    from dvoretskyi.bot.app import menu_history
+    from dvoretskyi.db.models import MeterReading, MeterStatus
+
+    gas = providers["Газ (постачання)"]
+    async with bot_app.session_scope() as s:
+        s.add(_payment(gas.id, "480.00", "hist1"))
+        s.add(
+            MeterReading(
+                provider_id=gas.id,
+                cycle=clock.current_cycle(),
+                value=Decimal("1888.14"),
+                status=MeterStatus.submitted,
+                created_at=clock.now(),
+                submitted_at=clock.now(),
+            )
+        )
+        await s.commit()
+
+    msg = FakeMessage()
+    await menu_history(msg)
+    text = msg.answers[0]
+    # Meters journal header AND the payments section both present in one «📜 Історія».
+    assert "Історія показників" in text
+    assert "Історія платежів" in text and "480.00" in text
 
 
 # --- /unpaid ---------------------------------------------------------------

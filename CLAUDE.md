@@ -36,6 +36,15 @@ Auth Claude Code via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
   (постачання vs доставлення — no merged «Газ» block).
   It also answers seasons «зима/літо» as 3-month ranges via `_period_bounds`/`_period_label`,
   so a conversational stats ask never dead-ends on a «зараз гляну» preamble.
+  **Payments — dates & plan (distinct from stats):** `get_payment_journal(provider_name?,
+  household?, period?)` is the dated per-payment timeline (each `Payment.paid_at` newest-
+  first, grouped by provider, capped at 6/provider) — «коли я платив за газ», the data
+  `get_stats` (totals/chart) lacks. `get_payment_plan(household?)` is the monthly plan: per
+  scheduled provider the **due day**, typical **amount** (`expected_amount`) and **how/where**
+  (`balance.pay_method_label`, mirroring `pay_link_for`'s real routing) + deduped pay `links`;
+  mobile (`due_day=None`) is listed as a no-action autopay note. Both build their reply in
+  `result["message"]` (dispatcher surfaces that); `links` ride as inline buttons
+  (`_respond_to_text` → `keyboards.links_keyboard`).
   `delete_meter_reading` removes a wrongly-entered reading. **L2 meters:** `vision`
   (VisionProvider ABC + ClaudeCodeVisionProvider — `claude -p --allowed-tools "Read"`,
   Pillow downscale, robust JSON extract), `meters` (pure delta `validate` + `window_open`),
@@ -59,11 +68,21 @@ Auth Claude Code via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
   `_respond_to_text` = the same agent path as text), keyboards, and the webhook→Telegram
   notifier. `_respond_to_text` (text + voice) wires an `on_progress` line so the bot says
   a natural «I'm on it» before acting, never echoing the request back. The reply keyboard
-  (`keyboards.main_keyboard`) is six buttons in three rows: 💸 Що сплатити · 📊 Статистика /
-  🔢 Мої показники · 📜 Історія / 🌐 Баланс інтернету · ❓ Довідка (the low-value «🎩 Привіт»
-  greeting button was dropped — a typed «привіт» is just handled by the LLM).
+  (`keyboards.main_keyboard`) is seven buttons: 💸 Що сплатити · 📊 Статистика /
+  🔢 Мої показники · 📜 Історія / 🗓 Як платити · 🌐 Баланс інтернету / ❓ Довідка (the
+  low-value «🎩 Привіт» greeting button was dropped — a typed «привіт» is just handled by
+  the LLM). **«📜 Історія» (`menu_history`) is the dated timeline:** the meter journal
+  (`get_meter_journal`, consumption + filing date + 📸 photo buttons) **plus** the payment
+  history (`get_payment_journal`, each payment with its date) in one message. **«🗓 Як
+  платити» (`menu_payplan`)** renders `get_payment_plan` — per service the due day, typical
+  amount and **through which service** it's paid (monobank «Комуналка» / застосунок ДАХ /
+  Portmone for Gigabit+), with `keyboards.links_keyboard` pay-link buttons (deduped by url).
+  `HELP_TEXT` + `cmd_start` **emphasise voice** up front (🎙 «можна ГОЛОСОМ»).
 - `reminders/` — APScheduler daily payment **and** meter nudges (Redis jobstore,
-  memory fallback).
+  memory fallback). The payment nudge fires inside `due_day − payment_nudge_window_days …
+  due_day` (**default 5 days**, was 3) and carries a pay link routed by provider type
+  (`agent.balance.pay_link_for`: monobank / ДАХ / Portmone), so every reminder says where
+  to pay. `PendingNudge.message` names the due day and points at the button.
 - `app.py` — FastAPI; lifespan starts bot long-polling + scheduler + notifier.
 
 ## Setup
@@ -251,7 +270,7 @@ The mono webhook must be reachable over public HTTPS at
 
 ## Test, lint, types
 ```bash
-pytest -q                       # 178 tests, in-memory SQLite, no network, no API key
+pytest -q                       # 242 tests, in-memory SQLite, no network, no API key
 ruff check src tests            # lint (E,W,F,I,UP,B)
 ruff format src tests           # format (black-compatible; the project standard)
 mypy                            # type-check src/ (config in pyproject)
@@ -281,6 +300,8 @@ default), `LLM_PROVIDER` (claude_code|anthropic_api),
 `METER_SUBMIT_FROM_DAY` (28), `METER_EARLY_SUBMIT_ATTEMPTS` (3),
 `METER_PHOTO_DIR` (empty → `~/.dvoretskyi/meter_photos`), `METER_PHOTO_MAX_LONG_SIDE`
 (1000), `METER_PHOTO_QUALITY` (55).
+**Payment reminders:** `PAYMENT_NUDGE_WINDOW_DAYS` (5 — days before `due_day` to start
+nudging, with a type-routed pay link).
 **Voice in:** `STT_PROVIDER` (whisper|none), `WHISPER_MODEL` (small default; base to save
 RAM), `WHISPER_COMPUTE_TYPE` (int8), `WHISPER_LANGUAGE` (uk), `STT_TIMEOUT_SECONDS`.
 **Voice out:** `TTS_PROVIDER` (piper|none), `PIPER_BIN` (piper executable), `PIPER_VOICE`
