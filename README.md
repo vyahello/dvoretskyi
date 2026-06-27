@@ -135,10 +135,12 @@ right after) and handled exactly like a typed message. Meter values stay photo-o
   and files on the third insistence. A fresh photo of a meter **supersedes** that meter's
   earlier unfiled draft, so the journal never piles up duplicates. The **«Мої показники»**
   button merges the authoritative portal record with any unfiled photo drafts that are
-  ahead of it; the **«📜 Історія»** button is the dated timeline — the month-by-month
-  meter journal (each reading with its consumption, filing date and a **«📸 Фото»** button
-  where the image is still saved) **plus** the payment history (each payment with its
-  date). `INFOLV_SUBMIT_ENABLED` is a **kill-switch** — off ⇒ the bot falls back to
+  ahead of it; the **«📜 Історія»** button opens a small **chooser** (🔢 Показники ·
+  💸 Платежі) that navigates **in place** with a **«⬅️ Назад»** button — readings (each with
+  its consumption, filing date and a **«📸 Фото»** button where the image is still saved)
+  and payments (each with its date, **split per household** when there are two). Sections
+  are ordered the way you read bills — gas, water, electricity, кварплата, internet, mobile.
+  `INFOLV_SUBMIT_ENABLED` is a **kill-switch** — off ⇒ the bot falls back to
   handing you the value + a **«Відправив ✓»** tap. Each photo is **archived** (downscaled
   JPEG in a private dir) so «витягни фото газу» pulls it back; OCR failure → it asks you
   to retype, never guesses.

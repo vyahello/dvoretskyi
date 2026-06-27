@@ -98,7 +98,7 @@ def test_pay_link_for_by_category(monkeypatch):
     url, label = pay_link_for(prov("Кварплата (ДАХ)", Category.housing))
     assert url == "https://dah.app" and "ДАХ" in label
     url, label = pay_link_for(prov("Інтернет (Gigabit+)", Category.internet))
-    assert "portmone" in url and "0000TEST" in url and label == "💳 Поповнити"
+    assert "portmone" in url and "0000TEST" in url and label == "🌐 Поповнити"
     url, label = pay_link_for(prov("Мобільний", Category.mobile))
     assert url is None and label is None  # mobile is auto-paid → no nudge button
 

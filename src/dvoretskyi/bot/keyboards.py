@@ -14,6 +14,7 @@ Callback grammar:
   mdc:<scope>|no                 confirm a scoped delete / cancel.
                                  scope='all' | '<pid>' | '<pid|*>:<cycle>' (by month)
   mp:<reading_id>                send that reading's archived photo («📜 Історія» 📸 tap)
+  h:<view>[:<slug>]              «📜 Історія» nav: menu | met | pay | pay:<household-slug>
 """
 
 from __future__ import annotations
@@ -66,6 +67,52 @@ def links_keyboard(links: Sequence[dict]) -> InlineKeyboardMarkup | None:
         if link.get("url") and link.get("label")
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
+
+
+def history_menu_keyboard() -> InlineKeyboardMarkup:
+    """«📜 Історія» root: choose readings or payments (each opens its own view with a
+    «⬅️ Назад» button), so neither dumps everything into one wall of text."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🔢 Показники", callback_data="h:met"),
+                InlineKeyboardButton(text="💸 Платежі", callback_data="h:pay"),
+            ]
+        ]
+    )
+
+
+def history_meters_keyboard(
+    photo_items: Sequence[tuple[int, str]],
+) -> InlineKeyboardMarkup:
+    """Readings view: a «📸 Фото» button per saved photo (mp:<id>) + «⬅️ Назад» to root."""
+    rows = [
+        [InlineKeyboardButton(text=label, callback_data=f"mp:{rid}")]
+        for rid, label in photo_items
+    ]
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="h:menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def history_households_keyboard(
+    households: Sequence[tuple[str, str]],
+) -> InlineKeyboardMarkup:
+    """Payments are long across two properties → pick one first. `households` =
+    [(slug, name)]; each opens that household's payments. + «⬅️ Назад» to root."""
+    rows = [
+        [InlineKeyboardButton(text=f"🏠 {name}", callback_data=f"h:pay:{slug}")]
+        for slug, name in households
+    ]
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="h:menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def history_back_keyboard(target: str = "h:menu") -> InlineKeyboardMarkup:
+    """A lone «⬅️ Назад» button pointing at `target` (the root menu or the household
+    chooser), so any leaf view can step back."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data=target)]]
+    )
 
 
 def categorize_keyboard(
@@ -272,7 +319,7 @@ def pay_keyboard(url: str, label: str | None = None) -> InlineKeyboardMarkup:
         fee = str(get_settings().gigabit_monthly_fee)
         if "." in fee:  # trim only fractional zeros: 200.00→200, 199.50→199.5
             fee = fee.rstrip("0").rstrip(".")
-        label = f"💳 Поповнити {fee} ₴"
+        label = f"🌐 Поповнити {fee} ₴"
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text=label, url=url)]]
     )

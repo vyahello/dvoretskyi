@@ -82,6 +82,38 @@ async def test_payment_journal_empty_is_friendly(session, providers):
     assert "порожня" in res["message"]
 
 
+async def test_payment_journal_orders_by_category(session, providers):
+    # Pay one of each available category; sections must come out in the reading order
+    # gas, water, electricity, housing, internet, mobile (here: gas, water, housing, net).
+    now = clock.now()
+    for key, tx in [
+        ("Холодна вода", "w"),
+        ("Кварплата (ДАХ)", "h"),
+        ("Газ (постачання)", "g"),
+        ("Інтернет (Gigabit+)", "i"),
+    ]:
+        session.add(_payment(providers[key].id, "10.00", now, tx=tx))
+    await session.commit()
+
+    res = await tools.get_payment_journal(session)
+    order = [s["provider"] for s in res["sections"]]
+    assert order == [
+        "Газ (постачання)",
+        "Холодна вода",
+        "Кварплата (ДАХ)",
+        "Інтернет (Gigabit+)",
+    ]
+
+
+async def test_payment_plan_orders_by_category(session, providers):
+    res = await tools.get_payment_plan(session)
+    order = [r["provider"] for r in res["rows"]]
+    # gas (15) before water (20) before housing/internet — by category, not due day.
+    assert order.index("Газ (постачання)") < order.index("Холодна вода")
+    assert order.index("Холодна вода") < order.index("Кварплата (ДАХ)")
+    assert order.index("Кварплата (ДАХ)") < order.index("Інтернет (Gigabit+)")
+
+
 # --- get_payment_plan (when / how much / through which service) ------------
 
 

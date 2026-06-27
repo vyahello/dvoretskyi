@@ -515,19 +515,68 @@ def _journal_photo_buttons(sections: list[dict]) -> list[tuple[int, str]]:
 
 @router.message(F.text == keyboards.MENU_HISTORY)
 async def menu_history(message: Message) -> None:
-    """«📜 Історія» — the dated timeline from our own records: meter readings (consumption
-    + filing date, with a «📸 Фото» button per saved photo) AND payments (each with its
-    payment date). The one place that answers «коли я подавав/платив за …»."""
-    async with session_scope() as session:
-        meters_result = await get_meter_journal(session)
-        pay_result = await get_payment_journal(session)
-    markup = keyboards.meter_photo_keyboard(
-        _journal_photo_buttons(meters_result["sections"])
+    """«📜 Історія» — a small chooser (readings / payments) so neither view dumps the
+    whole timeline at once. Each leaf opens in place and carries a «⬅️ Назад» button."""
+    await message.answer(
+        "📜 Що показати?", reply_markup=keyboards.history_menu_keyboard()
     )
-    text = meters_result["message"]
-    if pay_result["sections"]:  # append payments only when there are any
-        text += "\n\n" + pay_result["message"]
-    await message.answer(text, reply_markup=markup)
+
+
+async def _households_for_nav(session) -> list[tuple[str, str]]:
+    return [
+        (h.slug, h.name)
+        for h in (
+            await session.execute(select(Household).order_by(Household.is_primary.desc()))
+        ).scalars()
+    ]
+
+
+@router.callback_query(F.data.startswith("h:"))
+async def on_history_nav(callback: CallbackQuery) -> None:
+    """«📜 Історія» navigation — edits the message in place between the root menu, the
+    readings journal, and payments (split per household when there are two)."""
+    if not callback.data:
+        await callback.answer()
+        return
+    parts = callback.data.split(":")
+    view = parts[1] if len(parts) > 1 else "menu"
+    arg = parts[2] if len(parts) > 2 else None
+
+    if view == "menu":
+        await _edit(callback, "📜 Що показати?", keyboards.history_menu_keyboard())
+        await callback.answer()
+        return
+
+    if view == "met":
+        async with session_scope() as session:
+            result = await get_meter_journal(session)
+        photo_items = _journal_photo_buttons(result["sections"])
+        await _edit(
+            callback, result["message"], keyboards.history_meters_keyboard(photo_items)
+        )
+        await callback.answer()
+        return
+
+    if view == "pay":
+        async with session_scope() as session:
+            households_list = await _households_for_nav(session)
+            multi = len(households_list) > 1
+            # Two properties → choose one first (the combined list is very long).
+            if arg is None and multi:
+                await _edit(
+                    callback,
+                    "💸 Платежі за яким житлом?",
+                    keyboards.history_households_keyboard(households_list),
+                )
+                await callback.answer()
+                return
+            result = await get_payment_journal(session, household=arg)
+        back = "h:pay" if (arg is not None and multi) else "h:menu"
+        await _edit(callback, result["message"], keyboards.history_back_keyboard(back))
+        await callback.answer()
+        return
+
+    await callback.answer()
 
 
 @router.message(F.text == keyboards.MENU_PAYPLAN)

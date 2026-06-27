@@ -71,13 +71,20 @@ Auth Claude Code via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
   (`keyboards.main_keyboard`) is seven buttons: 💸 Що сплатити · 📊 Статистика /
   🔢 Мої показники · 📜 Історія / 🗓 Як платити · 🌐 Баланс інтернету / ❓ Довідка (the
   low-value «🎩 Привіт» greeting button was dropped — a typed «привіт» is just handled by
-  the LLM). **«📜 Історія» (`menu_history`) is the dated timeline:** the meter journal
-  (`get_meter_journal`, consumption + filing date + 📸 photo buttons) **plus** the payment
-  history (`get_payment_journal`, each payment with its date) in one message. **«🗓 Як
-  платити» (`menu_payplan`)** renders `get_payment_plan` — per service the due day, typical
-  amount and **through which service** it's paid (monobank «Комуналка» / застосунок ДАХ /
-  Portmone for Gigabit+), with `keyboards.links_keyboard` pay-link buttons (deduped by url).
-  `HELP_TEXT` + `cmd_start` **emphasise voice** up front (🎙 «можна ГОЛОСОМ»).
+  the LLM). **«📜 Історія» (`menu_history`) is a chooser, not a wall of text:** it sends a
+  2-button inline menu (🔢 Показники · 💸 Платежі); `on_history_nav` (`h:<view>[:<slug>]`
+  callbacks) edits the message in place between the root menu, the readings journal
+  (`get_meter_journal` + 📸 photo buttons), and payments (`get_payment_journal`) — payments
+  are **split per household** (a `🏠 <житло>` chooser when there are two, since the combined
+  list is long), and every leaf carries a **«⬅️ Назад»** button (`keyboards.history_*`).
+  **Provider display order** (journal, payment history, plan) is `_provider_order_key`:
+  gas, water, electricity, housing, internet, mobile (home household first) — the order the
+  user reads bills in, not insertion/due-day. **«🗓 Як платити» (`menu_payplan`)** renders
+  `get_payment_plan` — per service the due day, typical amount and **through which service**
+  it's paid (monobank «Комуналка» / застосунок ДАХ / Portmone for Gigabit+), with
+  `keyboards.links_keyboard` pay-link buttons (deduped by url). The Gigabit+ top-up button
+  is **🌐 Поповнити** (not 💳; mobile keeps 💳). `HELP_TEXT` + `cmd_start` **emphasise
+  voice** up front (🎙 «можна ГОЛОСОМ»).
 - `reminders/` — APScheduler daily payment **and** meter nudges (Redis jobstore,
   memory fallback). The payment nudge fires inside `due_day − payment_nudge_window_days …
   due_day` (**default 5 days**, was 3) and carries a pay link routed by provider type

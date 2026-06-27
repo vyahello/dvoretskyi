@@ -46,6 +46,28 @@ class FakeMessage:
         self.voices.append((voice, reply_markup))
 
 
+class _FakeBot:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, object]] = []
+
+    async def send_message(self, chat_id, text, reply_markup=None, **kw) -> None:
+        self.sent.append((text, reply_markup))
+
+
+class _FakeCallback:
+    """Duck-typed CallbackQuery; .message isn't an aiogram Message, so `_edit` routes
+    through bot.send_message (recorded in `.bot.sent`)."""
+
+    def __init__(self, data: str) -> None:
+        self.data = data
+        self.bot = _FakeBot()
+        self.message = type("M", (), {"chat": type("C", (), {"id": 1})()})()
+        self.answered = False
+
+    async def answer(self, text: str | None = None, **kw) -> None:
+        self.answered = True
+
+
 def _payment(provider_id, amount, tx):
     return Payment(
         provider_id=provider_id,
@@ -104,8 +126,20 @@ async def test_menu_payplan_shows_plan_with_links(engine, providers):
     assert markup is not None and markup.inline_keyboard
 
 
-async def test_menu_history_includes_payment_dates(engine, providers):
+async def test_history_button_opens_a_chooser_menu(engine, providers):
     from dvoretskyi.bot.app import menu_history
+
+    msg = FakeMessage()
+    await menu_history(msg)
+    # «📜 Історія» no longer dumps everything — it offers a 2-button chooser.
+    assert "Що показати" in msg.answers[0]
+    markup = msg.markups[0]
+    labels = [b.text for row in markup.inline_keyboard for b in row]
+    assert any("Показники" in x for x in labels) and any("Платежі" in x for x in labels)
+
+
+async def test_history_nav_readings_and_payments(engine, providers):
+    from dvoretskyi.bot.app import on_history_nav
     from dvoretskyi.db.models import MeterReading, MeterStatus
 
     gas = providers["Газ (постачання)"]
@@ -123,12 +157,24 @@ async def test_menu_history_includes_payment_dates(engine, providers):
         )
         await s.commit()
 
-    msg = FakeMessage()
-    await menu_history(msg)
-    text = msg.answers[0]
-    # Meters journal header AND the payments section both present in one «📜 Історія».
+    # Readings view — edits in place, carries a «⬅️ Назад» button.
+    cb = _FakeCallback("h:met")
+    await on_history_nav(cb)
+    text, kb = cb.bot.sent[-1]
     assert "Історія показників" in text
+    assert any("Назад" in b.text for row in kb.inline_keyboard for b in row)
+
+    # Payments → two households → a chooser first, then the primary's payments.
+    cb = _FakeCallback("h:pay")
+    await on_history_nav(cb)
+    text, _ = cb.bot.sent[-1]
+    assert "за яким житлом" in text
+
+    cb = _FakeCallback("h:pay:primary")
+    await on_history_nav(cb)
+    text, kb = cb.bot.sent[-1]
     assert "Історія платежів" in text and "480.00" in text
+    assert any("Назад" in b.text for row in kb.inline_keyboard for b in row)
 
 
 # --- /unpaid ---------------------------------------------------------------
@@ -303,10 +349,14 @@ def test_format_cycle_unit():
 
 
 async def test_menu_button_history_shows_journal(engine, providers):
-    # Empty journal still answers cleanly (no readings yet → «журнал чистий»).
+    # «📜 Історія» now opens a chooser; the empty readings journal lives one tap deeper.
     msg = FakeMessage()
     await bot_app.menu_history(msg)  # tap «📜 Історія»
-    assert msg.answers and "журнал чистий" in msg.answers[0]
+    assert msg.answers and "Що показати" in msg.answers[0]
+    cb = _FakeCallback("h:met")
+    await bot_app.on_history_nav(cb)  # → readings view
+    text, _ = cb.bot.sent[-1]
+    assert "журнал чистий" in text  # empty journal still answers cleanly
     # No greeting button/handler remains.
     assert not hasattr(bot_app, "menu_hello")
 

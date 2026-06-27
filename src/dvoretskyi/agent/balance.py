@@ -78,7 +78,7 @@ def pay_link_for(provider: Provider) -> tuple[str | None, str | None]:
     if provider.category is Category.housing:
         return st.dah_pay_url, "📲 Відкрити ДАХ"
     if "gigabit" in name:
-        return gigabit_pay_link(), "💳 Поповнити"
+        return gigabit_pay_link(), "🌐 Поповнити"
     if provider.category in (Category.water, Category.electricity, Category.gas):
         return st.monobank_pay_url, "📲 Відкрити monobank"
     return None, None

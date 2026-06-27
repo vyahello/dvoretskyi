@@ -200,6 +200,24 @@ def _parse_until(value: object) -> datetime:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=clock.KYIV)
 
 
+# Display order for provider sections/rows across the journal, payment history and plan:
+# gas, water, electricity, housing (кварплата), internet, mobile — the order the user
+# reads bills in. Unknown categories sort last; within a category, home household first
+# (the primary household is seeded first, so the lower id sorts ahead).
+_CATEGORY_ORDER = {
+    "gas": 0,
+    "water": 1,
+    "electricity": 2,
+    "housing": 3,
+    "internet": 4,
+    "mobile": 5,
+}
+
+
+def _provider_order_key(prov: Provider) -> tuple[int, int]:
+    return (_CATEGORY_ORDER.get(prov.category.value, 99), prov.household_id or 0)
+
+
 # --- tools -----------------------------------------------------------------
 
 
@@ -1356,11 +1374,8 @@ async def get_meter_journal(
     if provider_name:
         prov = await _provider_by_name(session, provider_name)
         prov_stmt = prov_stmt.where(Provider.id == prov.id)
-    providers = list(
-        (await session.execute(prov_stmt.order_by(Provider.household_id, Provider.id)))
-        .scalars()
-        .all()
-    )
+    providers = list((await session.execute(prov_stmt)).scalars().all())
+    providers.sort(key=_provider_order_key)  # gas, water, … home household first
     household_names = {
         h.id: h.name for h in (await session.execute(select(Household))).scalars()
     }
@@ -1597,7 +1612,7 @@ async def get_provider_balance(
             "login": login,
             "need_to_pay": True,
             "pay_link": gigabit_pay_link(fee),  # rendered as a button, not raw URL
-            "pay_label": f"💳 Поповнити {fee_label} ₴",
+            "pay_label": f"🌐 Поповнити {fee_label} ₴",
             "message": _balance_low_message(str(bal.balance), str(fee))
             + (login_note if full else ""),
         }
@@ -1665,15 +1680,8 @@ async def get_payment_journal(
     `period` ("YYYY"/"YYYY-MM"/season) limits the range."""
     start, end = _period_bounds(period)
 
-    provs = (
-        (
-            await session.execute(
-                select(Provider).order_by(Provider.household_id, Provider.id)
-            )
-        )
-        .scalars()
-        .all()
-    )
+    provs = list((await session.execute(select(Provider))).scalars().all())
+    provs.sort(key=_provider_order_key)  # gas, water, electricity, … home first
     household_names = {
         h.id: h.name for h in (await session.execute(select(Household))).scalars()
     }
@@ -1760,15 +1768,8 @@ async def get_payment_plan(session: AsyncSession, household: str | None = None) 
     household_names = {
         h.id: h.name for h in (await session.execute(select(Household))).scalars()
     }
-    provs = (
-        (
-            await session.execute(
-                select(Provider).order_by(Provider.household_id, Provider.due_day)
-            )
-        )
-        .scalars()
-        .all()
-    )
+    provs = list((await session.execute(select(Provider))).scalars().all())
+    provs.sort(key=_provider_order_key)  # gas, water, electricity, … home first
 
     rows: list[dict] = []
     autopay: list[dict] = []
