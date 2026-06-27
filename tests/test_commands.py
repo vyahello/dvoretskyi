@@ -63,16 +63,21 @@ async def test_cmd_start(engine):
     await cmd_start(msg)
     assert len(msg.answers) == 1
     text = msg.answers[0]
-    assert "/help" in text and "дворецький" in text.lower()
+    # Steers to the buttons + natural language, not slash commands.
+    assert "Довідка" in text and "дворецький" in text.lower()
+    assert "/help" not in text
 
 
 async def test_cmd_help(engine):
     msg = FakeMessage()
     await cmd_help(msg)
     text = msg.answers[0]
-    for cmd in ("/unpaid", "/stats", "/help"):
-        assert cmd in text
+    # The help now points at the on-screen buttons, not «/команди».
+    for label in ("Що сплатити", "Статистика", "Мої показники", "Довідка"):
+        assert label in text
+    assert "/unpaid" not in text and "/stats" not in text
     assert "заплатити" in text  # free-text hint
+    assert "фото лічильника" in text  # how to file a reading
 
 
 # --- /unpaid ---------------------------------------------------------------
@@ -117,10 +122,11 @@ def test_main_keyboard_has_menu_buttons():
         keyboards.MENU_STATS,
         keyboards.MENU_BALANCE,
         keyboards.MENU_METERS,
-        keyboards.MENU_HELLO,
+        keyboards.MENU_HISTORY,
         keyboards.MENU_HELP,
     ):
         assert lbl in labels
+    assert "🎩 Привіт" not in labels  # the greeting button was dropped
 
 
 async def test_menu_button_meters_shows_infolviv_when_available(engine, monkeypatch):
@@ -213,10 +219,13 @@ def test_format_cycle_unit():
     assert bot_app._format_cycle("garbage") == "garbage"
 
 
-async def test_menu_button_hello_greets(engine):
+async def test_menu_button_history_shows_journal(engine, providers):
+    # Empty journal still answers cleanly (no readings yet → «журнал чистий»).
     msg = FakeMessage()
-    await bot_app.menu_hello(msg)  # tap «🎩 Привіт»
-    assert msg.answers and msg.answers[0] in bot_app._GREETINGS
+    await bot_app.menu_history(msg)  # tap «📜 Історія»
+    assert msg.answers and "журнал чистий" in msg.answers[0]
+    # No greeting button/handler remains.
+    assert not hasattr(bot_app, "menu_hello")
 
 
 async def test_menu_button_unpaid_routes_like_command(engine, providers):
@@ -228,7 +237,7 @@ async def test_menu_button_unpaid_routes_like_command(engine, providers):
 async def test_menu_button_help_routes_like_command(engine):
     msg = FakeMessage()
     await bot_app.menu_help(msg)  # tap «❓ Довідка»
-    assert "/unpaid" in msg.answers[0]
+    assert msg.answers[0] == bot_app.HELP_TEXT
 
 
 def test_format_unpaid_mentions_mobile_autopay():

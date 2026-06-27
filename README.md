@@ -113,6 +113,7 @@ right after) and handled exactly like a typed message. Meter values stay photo-o
 - **Agent tools:** `get_unpaid`, `get_stats` (+PNG chart), `log_payment_manual`,
   `categorize_payment`, `snooze_reminder`, `submit_meter_reading`,
   `confirm_meter_reading`, `delete_meter_reading`, `get_meter_history`,
+  `get_meter_journal` (month-by-month history + filing dates — the «📜 Історія» button),
   `get_meter_photo`, `get_provider_balance`. The LLM only picks `{tool, args}` and writes
   the reply copy; the work is deterministic Python — it never invents an amount or value.
 - **Provider balance (Gigabit+ & mobile):** `get_provider_balance` logs into the ISP
@@ -132,7 +133,9 @@ right after) and handled exactly like a typed message. Meter values stay photo-o
   and files on the third insistence. A fresh photo of a meter **supersedes** that meter's
   earlier unfiled draft, so the journal never piles up duplicates. The **«Мої показники»**
   button merges the authoritative portal record with any unfiled photo drafts that are
-  ahead of it. `INFOLV_SUBMIT_ENABLED` is a **kill-switch** — off ⇒ the bot falls back to
+  ahead of it; the **«📜 Історія»** button shows the month-by-month timeline from our own
+  records — each reading with its consumption and the date it was filed (the portal keeps
+  only the latest). `INFOLV_SUBMIT_ENABLED` is a **kill-switch** — off ⇒ the bot falls back to
   handing you the value + a **«Відправив ✓»** tap. Each photo is **archived** (downscaled
   JPEG in a private dir) so «витягни фото газу» pulls it back; OCR failure → it asks you
   to retype, never guesses.

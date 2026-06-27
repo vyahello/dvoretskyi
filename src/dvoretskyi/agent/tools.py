@@ -1281,6 +1281,136 @@ async def get_meter_photo(
     }
 
 
+# --- meter journal (L2): the month-by-month history with filing dates ------
+
+_METER_EMOJI = {"water": "💧", "gas": "🔥"}
+
+
+def _meter_journal_message(sections: list[dict]) -> str:
+    """Render the local journal newest-first: month → reading (consumption) → when it was
+    filed (or «чернетка»), with a 📸 mark where the photo is still archived."""
+    blocks: list[str] = []
+    any_photo = False
+    for sec in sections:
+        if not sec["readings"]:
+            continue
+        label = f"{_METER_EMOJI.get(sec['category'], '🔢')} {sec['provider']}"
+        if sec.get("household"):
+            label += f" · {sec['household']}"
+        lines = [label]
+        for r in sec["readings"]:
+            cons = f" (спожито {r['consumption']})" if r.get("consumption") else ""
+            if r.get("submitted_at"):
+                when = f"подано {r['submitted_at'].strftime('%d.%m')}"
+            elif r["status"] == "needs_confirm":
+                when = "чернетка, чекає підтвердження"
+            else:
+                when = "чернетка, ще не подано"
+            mark = ""
+            if r.get("has_photo"):
+                mark = " 📸"
+                any_photo = True
+            lines.append(
+                f"• {clock.format_cycle(r['cycle'])} — {r['value']}{cons} · {when}{mark}"
+            )
+        blocks.append("\n".join(lines))
+    if not blocks:
+        return (
+            "Поки що історії нема — журнал чистий. 🔢\n"
+            "Кинь фото лічильника, і я вестиму помісячний журнал."
+        )
+    out = "📜 Історія показників:\n\n" + "\n\n".join(blocks)
+    if any_photo:
+        out += "\n\n📸 — фото збережено: напиши «витягни фото газу за <місяць>»."
+    return out
+
+
+async def get_meter_journal(
+    session: AsyncSession,
+    provider_name: str | None = None,
+) -> dict:
+    """Month-by-month meter journal from **our own records** — the only place with the
+    full history AND **when each reading was filed** (the infolviv portal returns just
+    the latest factor). Covers every meter we track across both households (the secondary
+    static gas included), newest-first, marking which months still have a saved photo.
+    Optional `provider_name` narrows to one meter («історія газу»)."""
+    prov_stmt = select(Provider).where(Provider.meter_window.is_not(None))
+    if provider_name:
+        prov = await _provider_by_name(session, provider_name)
+        prov_stmt = prov_stmt.where(Provider.id == prov.id)
+    providers = list(
+        (await session.execute(prov_stmt.order_by(Provider.household_id, Provider.id)))
+        .scalars()
+        .all()
+    )
+    household_names = {
+        h.id: h.name for h in (await session.execute(select(Household))).scalars()
+    }
+
+    sections: list[dict] = []
+    for prov in providers:
+        rows = (
+            (
+                await session.execute(
+                    select(MeterReading)
+                    .where(
+                        MeterReading.provider_id == prov.id,
+                        MeterReading.status.in_(
+                            (
+                                MeterStatus.submitted,
+                                MeterStatus.validated,
+                                MeterStatus.needs_confirm,
+                            )
+                        ),
+                        MeterReading.value.is_not(None),
+                    )
+                    .order_by(MeterReading.created_at.desc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        # One entry per cycle. Rows are newest-first; a filed (submitted) reading is the
+        # record of that month, so it wins over a later un-filed re-photo of that cycle.
+        per_cycle: dict[str, MeterReading] = {}
+        for r in rows:
+            cur = per_cycle.get(r.cycle)
+            if cur is None or (
+                r.status is MeterStatus.submitted
+                and cur.status is not MeterStatus.submitted
+            ):
+                per_cycle[r.cycle] = r
+        readings = [
+            {
+                "cycle": r.cycle,
+                "value": str(r.value),
+                "consumption": (
+                    str(r.consumption_delta) if r.consumption_delta is not None else None
+                ),
+                "submitted_at": (
+                    clock.ensure_aware(r.submitted_at) if r.submitted_at else None
+                ),
+                "status": r.status.value,
+                "has_photo": bool(r.photo_ref and photo_store.exists(r.photo_ref)),
+            }
+            for r in sorted(per_cycle.values(), key=lambda x: x.cycle, reverse=True)
+        ]
+        hh_name = (
+            household_names.get(prov.household_id)
+            if prov.household_id is not None
+            else None
+        )
+        sections.append(
+            {
+                "provider": prov.name,
+                "household": hh_name,
+                "category": prov.category.value,
+                "readings": readings,
+            }
+        )
+    return {"sections": sections, "message": _meter_journal_message(sections)}
+
+
 # --- provider balance (L2) -------------------------------------------------
 
 
@@ -1461,6 +1591,7 @@ TOOLS: dict[str, Tool] = {
     "confirm_meter_reading": confirm_meter_reading,
     "delete_meter_reading": delete_meter_reading,
     "get_meter_history": get_meter_history,
+    "get_meter_journal": get_meter_journal,
     "get_meter_photo": get_meter_photo,
     "get_provider_balance": get_provider_balance,
 }

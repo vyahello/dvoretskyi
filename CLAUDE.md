@@ -50,11 +50,16 @@ Auth Claude Code via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
   bot replies in text.
 - `bot/` — aiogram 3 bot, allowlist middleware, slash commands (`/start /unpaid
   /stats /help` — deterministic, registered before the free-text catch-all and
-  mirrored via `set_my_commands`), text + callback handlers, **photo handler**
+  mirrored via `set_my_commands`; they still work but the **persistent reply keyboard**
+  is the primary surface and `HELP_TEXT` steers to it + natural language, not «/команди»),
+  text + callback handlers, **photo handler**
   (`F.photo` → meter pipeline), **voice handler** (`F.voice` → transcribe →
   `_respond_to_text` = the same agent path as text), keyboards, and the webhook→Telegram
   notifier. `_respond_to_text` (text + voice) wires an `on_progress` line so the bot says
-  a natural «I'm on it» before acting, never echoing the request back.
+  a natural «I'm on it» before acting, never echoing the request back. The reply keyboard
+  (`keyboards.main_keyboard`) is six buttons in three rows: 💸 Що сплатити · 📊 Статистика /
+  🔢 Мої показники · 📜 Історія / 🌐 Баланс інтернету · ❓ Довідка (the low-value «🎩 Привіт»
+  greeting button was dropped — a typed «привіт» is just handled by the LLM).
 - `reminders/` — APScheduler daily payment **and** meter nudges (Redis jobstore,
   memory fallback).
 - `app.py` — FastAPI; lifespan starts bot long-polling + scheduler + notifier.
@@ -123,6 +128,17 @@ zero / spike vs history → `needs_confirm`) → store `MeterReading` → submit
   `use_portal=False` keeps it local-only (the portal-down fallback `_local_journal` passes
   it). Reply text is built tool-side in `result["message"]` (the dispatcher surfaces only
   that), so the readings reach the user instead of a bare «зараз гляну».
+- **Month-by-month journal with filing dates** (the «📜 Історія» button / «коли я подавав
+  газ?»): `get_meter_journal(provider_name?)` reads **our own `MeterReading` rows** — the
+  only place with the full per-month timeline **and `submitted_at`** (the portal returns
+  just the latest factor). Covers every metered provider across **both** households
+  (the secondary static gas included — unlike `_meter_providers`, which is primary-only),
+  newest-first, one entry per cycle (a `submitted` reading wins over a later un-filed
+  re-photo of that month), each line «<місяць> — <показник> (спожито …) · подано dd.mm |
+  чернетка» with a 📸 mark where the archived photo still exists. The bot handler
+  `menu_history` renders `result["message"]`; it's also an LLM tool so «покажи історію
+  показників» works conversationally. `get_meter_history` (current state) and
+  `get_meter_journal` (timeline + dates) are distinct on purpose.
 - `_format_unpaid` phrasings (all-clear / mobile-autopay note) are **randomized** so the
   deterministic `/unpaid` reply never reads like a canned autoreply.
 - Legacy per-provider `SubmissionChannel`s (`ManualAssistChannel` default, Sms/WebForm

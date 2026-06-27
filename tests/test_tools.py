@@ -223,6 +223,53 @@ async def test_get_meter_history_empty_is_friendly(session, providers):
     assert "журнал чистий" in res["message"]
 
 
+async def test_get_meter_journal_shows_dates_and_drafts(session, providers):
+    # The journal is the only place with filing dates + a per-month timeline.
+    from dvoretskyi.db.models import MeterReading, MeterStatus
+
+    water = providers["Холодна вода"]
+    filed_on = clock.now().replace(day=27)
+    session.add_all(
+        [
+            MeterReading(
+                provider_id=water.id,
+                cycle="2026-05",
+                value=Decimal("95.300"),
+                consumption_delta=Decimal("2.100"),
+                status=MeterStatus.submitted,
+                created_at=clock.now(),
+                submitted_at=filed_on,
+            ),
+            MeterReading(
+                provider_id=water.id,
+                cycle="2026-06",
+                value=Decimal("100.500"),
+                consumption_delta=Decimal("5.200"),
+                status=MeterStatus.validated,
+                created_at=clock.now(),
+            ),
+        ]
+    )
+    await session.commit()
+
+    res = await tools.get_meter_journal(session)
+    msg = res["message"]
+    assert "Історія показників" in msg
+    # The filed reading shows when it was filed; the draft is marked not-yet-filed.
+    assert f"подано {filed_on.strftime('%d.%m')}" in msg
+    assert "чернетка" in msg
+    assert "100.500" in msg and "95.300" in msg
+    assert "спожито 5.200" in msg
+    # Narrowing to one meter keeps just that section.
+    one = await tools.get_meter_journal(session, "Холодна вода")
+    assert len(one["sections"]) == 1 and one["sections"][0]["provider"] == "Холодна вода"
+
+
+async def test_get_meter_journal_empty_is_friendly(session, providers):
+    res = await tools.get_meter_journal(session)
+    assert "журнал чистий" in res["message"]
+
+
 async def test_meter_history_leads_with_portal(session, providers, monkeypatch):
     # When the infolviv portal answers, its filed value is authoritative and leads the
     # reply (conversational «покажи показники води» mirrors the «Мої показники» button).
