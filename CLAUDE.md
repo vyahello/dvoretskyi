@@ -48,7 +48,9 @@ Auth Claude Code via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
   external binary → WAV → ffmpeg → OGG/Opus — + `Null…` when `TTS_PROVIDER=none`; plus
   `voiceify`: screen text → clean spoken Ukrainian). Contract on any failure: None → the
   bot replies in text.
-- `bot/` — aiogram 3 bot, allowlist middleware, slash commands (`/start /unpaid
+- `bot/` — aiogram 3 bot, allowlist middleware (`AllowlistMiddleware` admits the
+  **owner + any family** — `Settings.allowed_user_ids`, owner ∪ `telegram_extra_allowed_user_ids`),
+  slash commands (`/start /unpaid
   /stats /help` — deterministic, registered before the free-text catch-all and
   mirrored via `set_my_commands`; they still work but the **persistent reply keyboard**
   is the primary surface and `HELP_TEXT` steers to it + natural language, not «/команди»),
@@ -262,7 +264,12 @@ lazily so the suite never loads it) and pass `now` explicitly to reminder/window
 (aiogram/apscheduler ship partial/no stubs).
 
 ## Env vars (see `.env.example`)
-`MONO_TOKEN`, `MONO_WEBHOOK_SECRET`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID`,
+`MONO_TOKEN`, `MONO_WEBHOOK_SECRET`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID`
+(the **owner** — reminders + webhook payment confirmations go here alone),
+`TELEGRAM_EXTRA_ALLOWED_USER_IDS` (optional CSV of extra user IDs — family — who may
+**talk** to the bot; the owner is always allowed, these only widen the allowlist, no
+nudges sent to them; `Settings.allowed_user_ids` = owner ∪ extras feeds
+`AllowlistMiddleware`),
 `DATABASE_URL`, `REDIS_URL`, `CLAUDE_BIN`, `CLAUDE_MODEL` (pins the decision turn's
 model — default `claude-sonnet-4-6`; fast yet keeps the persona witty; empty → CLI
 default), `LLM_PROVIDER` (claude_code|anthropic_api),

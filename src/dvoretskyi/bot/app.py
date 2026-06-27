@@ -86,10 +86,10 @@ router = Router()
 
 
 class AllowlistMiddleware(BaseMiddleware):
-    """Silently drop any update not from the single authorized user."""
+    """Silently drop any update not from an allowed user (the owner + any family)."""
 
-    def __init__(self, allowed_user_id: int) -> None:
-        self.allowed_user_id = allowed_user_id
+    def __init__(self, allowed_user_ids: set[int]) -> None:
+        self.allowed_user_ids = allowed_user_ids
 
     async def __call__(
         self,
@@ -98,7 +98,7 @@ class AllowlistMiddleware(BaseMiddleware):
         data: dict[str, Any],
     ) -> Any:
         user = data.get("event_from_user")
-        if user is None or user.id != self.allowed_user_id:
+        if user is None or user.id not in self.allowed_user_ids:
             return None  # drop, no reply
         return await handler(event, data)
 
@@ -1272,7 +1272,7 @@ async def on_meter_snooze(callback: CallbackQuery) -> None:
 def build_dispatcher() -> Dispatcher:
     settings = get_settings()
     dp = Dispatcher()
-    dp.update.outer_middleware(AllowlistMiddleware(settings.telegram_allowed_user_id))
+    dp.update.outer_middleware(AllowlistMiddleware(settings.allowed_user_ids))
     dp.include_router(router)
     return dp
 

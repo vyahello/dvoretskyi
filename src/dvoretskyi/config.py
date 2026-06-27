@@ -27,7 +27,14 @@ class Settings(BaseSettings):
 
     # --- Telegram ---
     telegram_bot_token: str = ""
+    # The OWNER: the one user reminders + webhook payment confirmations are sent to.
     telegram_allowed_user_id: int = 0
+    # Extra users allowed to TALK to the bot (family). The owner is always allowed; these
+    # extend the allowlist only — proactive messages (nudges, confirmations) still go to
+    # the owner alone. CSV form: "111,222". NoDecode → the validator parses it (not JSON).
+    telegram_extra_allowed_user_ids: Annotated[set[int], NoDecode] = Field(
+        default_factory=set
+    )
 
     # --- infra ---
     database_url: str = "sqlite+aiosqlite:///./dvoretskyi.db"
@@ -182,13 +189,22 @@ class Settings(BaseSettings):
     tz: str = "Europe/Kyiv"
     public_base_url: str = "https://example.com"
 
-    @field_validator("utility_mccs", mode="before")
+    @field_validator("utility_mccs", "telegram_extra_allowed_user_ids", mode="before")
     @classmethod
-    def _parse_mccs(cls, value: object) -> object:
+    def _parse_int_set(cls, value: object) -> object:
         """Accept "4900,4814" (env string) as well as a real iterable of ints."""
         if isinstance(value, str):
             return {int(part) for part in value.split(",") if part.strip()}
         return value
+
+    @property
+    def allowed_user_ids(self) -> set[int]:
+        """Every Telegram user allowed to talk to the bot: the owner + any extras.
+        The owner is always included; an unset (0) owner is dropped."""
+        ids = set(self.telegram_extra_allowed_user_ids)
+        if self.telegram_allowed_user_id:
+            ids.add(self.telegram_allowed_user_id)
+        return ids
 
     @field_validator("submission_channels", mode="before")
     @classmethod
