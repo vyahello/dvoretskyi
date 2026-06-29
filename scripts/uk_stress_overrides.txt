@@ -16,3 +16,9 @@
 подано	p'odano
 баланс	bal'ans
 чіпав	tSip'av
+# зберігати-family: espeak says «зберІгаю», стрес має бути на -га- (зберіга́ю).
+зберігаю	zberih'aju
+зберігаєш	zberih'ajeS
+зберігає	zberih'aje
+зберігаємо	zberih'ajemo
+зберігати	zberih'atI
