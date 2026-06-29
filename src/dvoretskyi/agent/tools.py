@@ -723,6 +723,35 @@ async def _history_values(
     return [r.value for r in rows if r.value is not None]
 
 
+async def _portal_baseline_value(
+    session: AsyncSession, provider: Provider
+) -> Decimal | None:
+    """The infolviv portal's last filed value for this meter — the authoritative
+    «previous» reading used to validate a fresh photo even when our local journal is
+    empty (a clean DB, or a value filed straight on the portal). Without it a misread
+    like 14.679 against a real 108.679 sails through as a «перший показник».
+
+    Routed to the right counter by household account (the two gas counters share one
+    login). Best-effort: any network/auth/parse failure → None, so OCR validation never
+    blocks on the portal being reachable."""
+    if provider.category.value not in ("gas", "water"):
+        return None
+    account: str | None = None
+    if provider.household_id is not None:
+        hh = await session.get(Household, provider.household_id)
+        account = hh.infolviv_account_code if hh else None
+    try:
+        from dvoretskyi.agent.infolviv import reading_for_kind
+
+        portal = await reading_for_kind(provider.category.value, account_code=account)
+    except Exception:  # network/auth/parse — never let it sink a reading
+        log.warning(
+            "infolviv baseline lookup for %s failed", provider.name, exc_info=True
+        )
+        return None
+    return portal.value if portal is not None else None
+
+
 async def _supersede_pending(
     session: AsyncSession, provider_id: int, keep_id: int | None
 ) -> None:
@@ -861,6 +890,13 @@ async def submit_meter_reading(
 
     # Compare against earlier MONTHS only — a re-shoot of this month isn't "consumption".
     history = await _history_values(session, prov.id, exclude_cycle=reading.cycle)
+    # Seed the baseline with the portal's authoritative last filed value when it's
+    # higher than (or absent from) our local journal — so a backwards misread is caught
+    # against what's actually on infolviv, not just against local drafts. Meters are
+    # monotonic, so the highest known prior reading is the true «previous».
+    portal_prev = await _portal_baseline_value(session, prov)
+    if portal_prev is not None and (not history or portal_prev > history[0]):
+        history = [portal_prev, *history]
     verdict = meters.validate(
         value,
         history,

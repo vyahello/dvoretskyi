@@ -125,7 +125,15 @@ or tap a provider on the bot's categorize prompt (auto-learns the stable token).
 ## Meters (L2, Phase 2)
 Send the bot a **photo** of a meter → OCR (`agent/vision.py` via `claude -p
 --allowed-tools "Read"`) → **delta validation** (`agent/meters.validate`: backwards /
-zero / spike vs history → `needs_confirm`) → store `MeterReading` → submit.
+zero / spike vs history → `needs_confirm`) → store `MeterReading` → submit. The OCR
+prompt makes the model **count the integer wheels and read every leading digit** (a live
+misread filed 108.679 as 14.679 by dropping the leading «10»). The validation `history`
+is **seeded with the infolviv portal's last filed value** (`_portal_baseline_value`,
+routed to the right counter by household account) when it's higher than (or absent from)
+our local journal — so a backwards misread is caught against what's actually filed on the
+portal even on a clean local DB, not only against local drafts (meters are monotonic → the
+highest known prior reading is the true «previous»). Best-effort: portal unreachable →
+local history alone.
 - **Which meter?** Caption hint ("показники газу") → else the single meter provider in
   its window → else ask `[Газ][Вода]` (an `ocr_pending` row holds the photo until the
   tap routes it).

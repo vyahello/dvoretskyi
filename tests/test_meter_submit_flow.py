@@ -106,6 +106,49 @@ async def test_second_same_month_photo_supersedes_and_compares_to_prior_month(
     assert len(june) == 1 and june[0].value == Decimal("1888.50")
 
 
+async def test_below_portal_reading_flagged_without_local_history(
+    engine, providers, session, monkeypatch
+):
+    """A misread far below the portal's filed value is caught even with an EMPTY local
+    journal: the portal's last filed value seeds the validation baseline. Mirrors the
+    live bug — OCR read 14.679 against a real filed 108.679 and it sailed through as a
+    «перший показник»."""
+    from dvoretskyi.agent import infolviv as infolviv_mod
+    from dvoretskyi.agent.infolviv import InfolvivReading
+    from dvoretskyi.agent.vision import MeterRead
+
+    filed = InfolvivReading(
+        kind="water",
+        account_code="ACC-WATER-1",
+        counter_number="111",
+        provider="Львівводоканал",
+        service="Вода",
+        period="2026-05",
+        value=Decimal("108.679"),
+        difference=Decimal("1.200"),
+        window_start_day=28,
+        window_end_day=30,
+        window_open=True,
+        counter_id=111,
+    )
+
+    async def fake_reading_for_kind(kind, **kw):
+        return filed if kind == "water" else None
+
+    monkeypatch.setattr(infolviv_mod, "reading_for_kind", fake_reading_for_kind)
+
+    # No local MeterReading rows at all — pre-fix this accepted 14.679 as a baseline.
+    flagged = await tools.submit_meter_reading(
+        session,
+        "Холодна вода",
+        "/tmp/w.jpg",
+        read=MeterRead(value=Decimal("14.679"), raw="14.679", note="", kind="water"),
+        auto_submit=False,
+    )
+    assert flagged["status"] == MeterStatus.needs_confirm.value
+    assert "108.679" in flagged["message"]  # names the portal value it's below
+
+
 async def test_drafts_hidden_when_portal_already_reflects_them(
     engine, providers, session
 ):

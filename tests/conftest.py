@@ -9,12 +9,15 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from dvoretskyi.agent import infolviv
 from dvoretskyi.agent.provider import Decision, LLMProvider
 from dvoretskyi.agent.vision import MeterRead, VisionProvider
+from dvoretskyi.config import get_settings
 from dvoretskyi.db import session as db_session
 from dvoretskyi.db.models import (
     Base,
@@ -25,6 +28,19 @@ from dvoretskyi.db.models import (
     Provider,
     ProviderPattern,
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_live_infolviv(monkeypatch):
+    """Keep the suite hermetic: never reach the live infolviv portal just because a
+    developer's local `.env` happens to hold real creds (CI has none, so it was already
+    isolated there). With creds blank, `fetch_infolviv_readings()` short-circuits to [].
+    Tests that need a portal value monkeypatch `reading_for_kind` in their own body (which
+    runs after this fixture); `test_infolviv` sets its own creds + a mock client."""
+    st = get_settings()
+    monkeypatch.setattr(st, "infolv_login", "", raising=False)
+    monkeypatch.setattr(st, "infolv_pwd", "", raising=False)
+    infolviv.clear_cache()
 
 
 @pytest_asyncio.fixture
