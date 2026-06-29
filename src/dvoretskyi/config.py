@@ -113,9 +113,9 @@ class Settings(BaseSettings):
     piper_bin: str = "piper"  # path/name of the piper executable
     piper_voice: str = ""  # path to the .onnx voice model (.json config sits beside it)
     # Speaking rate: <1 speeds the voice up, >1 slows it down. 1.15 dragged, 1.0 was
-    # natural-but-slow, 0.9 still read slow; 0.8 is noticeably quicker yet stays clear
-    # (below ~0.75 it starts clipping). Empty → default.
-    piper_length_scale: str = "0.8"
+    # natural-but-slow, 0.9/0.8 still read a touch slow; 0.75 is brisk and about the floor
+    # before it starts clipping. Empty → default.
+    piper_length_scale: str = "0.75"
     # Silence (seconds) after each sentence — breathing room so the reply doesn't run
     # together. Empty → piper default (~0.2s); 0.2 keeps replies snappy without slurring.
     piper_sentence_silence: str = "0.2"
