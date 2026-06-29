@@ -201,7 +201,7 @@ class FakeVisionProvider(VisionProvider):
         self.comment = comment
         self.calls: list[str] = []
 
-    async def read_meter(self, image_path: str) -> MeterRead:
+    async def read_meter(self, image_path: str, hint=None) -> MeterRead:
         self.calls.append(image_path)
         return MeterRead(
             value=self.value,

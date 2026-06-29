@@ -140,7 +140,14 @@ independent reads **agree** (`vision._reconcile`); a disagreement (e.g. 108.679 
 `MeterRead` **not `confident`** (the differing read rides in `alt_value`), and
 `submit_meter_reading` then forces `needs_confirm` regardless of the delta verdict, asking
 the user to verify the number against the meter or re-photograph. This is the real catch
-for intermittent single-digit misreads that land in a believable range.
+for intermittent single-digit misreads that land in a believable range. **Hint-guided
+re-read:** when a baseline exists (portal value, else the last local reading),
+`submit_meter_reading` re-OCRs the photo **with the previous value as an anchor**
+(`vision.read_meter(path, hint=…)` → `_HINT_TMPL`) and that context-aware read supersedes
+the blind one. Knowing the meter stood at ~108 lets the model resolve an ambiguous wheel
+(a rounded 0 misread as 4 → 148) the way a human does; the prompt forbids forcing a
+clearly-different digit, so a genuine jump still reads true. Skipped when there's no
+baseline or no vision provider passed (so the no-`.env` test suite is unaffected).
 - **Which meter?** Caption hint ("показники газу") → else the single meter provider in
   its window → else ask `[Газ][Вода]` (an `ocr_pending` row holds the photo until the
   tap routes it).

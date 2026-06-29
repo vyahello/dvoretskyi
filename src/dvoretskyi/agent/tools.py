@@ -866,6 +866,19 @@ async def submit_meter_reading(
         session.add(reading)
     reading.provider_id = prov.id
     reading.photo_ref = image_path
+
+    # Compare against earlier MONTHS only — a re-shoot of this month isn't "consumption".
+    history = await _history_values(session, prov.id, exclude_cycle=reading.cycle)
+    portal_prev = await _portal_baseline_value(session, prov)
+    # Anchor a context-aware re-read on the previous filed value: knowing the meter stood
+    # at ~108 lets the model resolve an ambiguous wheel (a rounded 0 misread as 4 → 148)
+    # the way a human does — far better than a blind read. Only when we both have a
+    # baseline and a vision provider to re-OCR with.
+    anchor = portal_prev if portal_prev is not None else (history[0] if history else None)
+    if anchor is not None and image_path and vision is not None:
+        hinted = await vision.read_meter(image_path, hint=anchor)
+        if hinted.value is not None:
+            read = hinted  # the context-aware read supersedes the blind one
     reading.ocr_raw = read.raw or None
 
     if read.value is None:
@@ -888,13 +901,10 @@ async def submit_meter_reading(
     quantum = Decimal(1).scaleb(-prov.meter_decimals)
     value = read.value.quantize(quantum, rounding=ROUND_HALF_UP)
 
-    # Compare against earlier MONTHS only — a re-shoot of this month isn't "consumption".
-    history = await _history_values(session, prov.id, exclude_cycle=reading.cycle)
-    # Seed the baseline with the portal's authoritative last filed value when it's
-    # higher than (or absent from) our local journal — so a backwards misread is caught
-    # against what's actually on infolviv, not just against local drafts. Meters are
-    # monotonic, so the highest known prior reading is the true «previous».
-    portal_prev = await _portal_baseline_value(session, prov)
+    # Seed the validation baseline with the portal's authoritative last filed value when
+    # it's higher than (or absent from) our local journal — so a backwards misread is
+    # caught against what's actually on infolviv. Meters are monotonic, so the highest
+    # known prior reading is the true «previous».
     if portal_prev is not None and (not history or portal_prev > history[0]):
         history = [portal_prev, *history]
     verdict = meters.validate(

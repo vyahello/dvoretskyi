@@ -139,6 +139,51 @@ async def test_low_confidence_ocr_is_flagged_even_when_delta_plausible(
     assert "108.679" in res["message"]  # surfaces the differing read
 
 
+async def test_hint_guided_reread_corrects_an_ambiguous_wheel(
+    session, providers, monkeypatch
+):
+    """With a portal baseline of ~108, a blind read of 148.679 is re-read WITH the
+    previous value as an anchor → the model resolves the ambiguous wheel back to 108.679,
+    and that context-aware value is what gets stored."""
+    from dvoretskyi.agent import infolviv as infolviv_mod
+    from dvoretskyi.agent.infolviv import InfolvivReading
+    from dvoretskyi.agent.vision import MeterRead, VisionProvider
+
+    class _HintAwareVision(VisionProvider):
+        """Misreads 148.679 blind, but reads 108.679 when given the anchor (like the real
+        model resolving the rounded 0 once it knows the meter stood near 108)."""
+
+        async def read_meter(self, image_path, hint=None):
+            v = Decimal("108.679") if hint is not None else Decimal("148.679")
+            return MeterRead(value=v, raw=str(v), note="", kind="water")
+
+    filed = InfolvivReading(
+        kind="water",
+        account_code="ACC-WATER-1",
+        counter_number="111",
+        provider="Львівводоканал",
+        service="Вода",
+        period="2026-05",
+        value=Decimal("108.000"),
+        difference=Decimal("1.0"),
+        window_start_day=28,
+        window_end_day=30,
+        window_open=True,
+        counter_id=111,
+    )
+
+    async def fake_reading_for_kind(kind, **kw):
+        return filed if kind == "water" else None
+
+    monkeypatch.setattr(infolviv_mod, "reading_for_kind", fake_reading_for_kind)
+
+    res = await tools.submit_meter_reading(
+        session, "Холодна вода", "/p.png", vision=_HintAwareVision()
+    )
+    assert res["value"] == "108.679"  # the anchored re-read, not the blind 148.679
+    assert res["status"] == MeterStatus.validated.value
+
+
 def test_reconcile_agreeing_reads_are_confident():
     from dvoretskyi.agent.vision import MeterRead, _reconcile
 
