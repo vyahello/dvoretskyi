@@ -153,8 +153,8 @@ async def test_hint_guided_reread_corrects_an_ambiguous_wheel(
         """Misreads 148.679 blind, but reads 108.679 when given the anchor (like the real
         model resolving the rounded 0 once it knows the meter stood near 108)."""
 
-        async def read_meter(self, image_path, hint=None):
-            v = Decimal("108.679") if hint is not None else Decimal("148.679")
+        async def read_meter(self, image_path, hints=None):
+            v = Decimal("108.679") if hints else Decimal("148.679")
             return MeterRead(value=v, raw=str(v), note="", kind="water")
 
     filed = InfolvivReading(

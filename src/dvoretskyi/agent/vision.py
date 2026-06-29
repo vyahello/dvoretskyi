@@ -45,18 +45,27 @@ _OCR_PROMPT = (
     '"raw": "<цифри як бачиш>", "comment": "<жарт, якщо other>"}}'
 )
 
-# Appended when we know the previous filed value: an anchor that lets the model resolve
+# Appended when we know the previous filed value(s): an anchor that lets the model resolve
 # an ambiguous wheel (a rounded 0 misread as 4 → 148 instead of 108) the way a human does
 # — by knowing roughly where the meter stood. Must NOT override a clearly-different digit.
-_HINT_TMPL = (
-    "\n\nПІДКАЗКА: попередній поданий показник ЦЬОГО лічильника — близько {prev}. "
-    "Лічильник лише РОСТЕ і зазвичай на невелику величину, тож ціла частина нового "
-    "показання майже напевно така сама або трохи більша за цілу частину {prev}. Якщо "
-    "твоє зчитування цілої частини дуже інше за {prev} (на десятки/сотні) — ти "
-    "майже напевно сплутав цифру на барабані (округлий 0 ↔ 4, 1 ↔ 7, 6 ↔ 8 тощо): "
-    "перечитай сумнівні барабани ще раз. Але НЕ підганяй штучно — якщо цифра ЧІТКО інша, "
-    "довірся зображенню."
-)
+# A photo's kind is decided in the same pass, so we pass anchors for BOTH possible kinds.
+_KIND_WORD = {"water": "вода", "gas": "газ"}
+
+
+def _build_hint(hints: dict[str, Decimal]) -> str:
+    parts = [
+        f"якщо це {_KIND_WORD.get(k, k)} — попередній показник ≈ {v}"
+        for k, v in hints.items()
+    ]
+    return (
+        "\n\nПІДКАЗКА про попередній показник цього лічильника: "
+        + "; ".join(parts)
+        + ". Лічильник лише РОСТЕ і зазвичай на невелику величину, тож ціла частина "
+        "нового показання майже напевно така сама або трохи більша. Якщо твоє зчитування "
+        "цілої частини дуже інше — ти, найімовірніше, сплутав цифру (округлий "
+        "0 ↔ 4, 1 ↔ 7, 6 ↔ 8 тощо): перечитай сумнівні барабани. Але НЕ підганяй — якщо "
+        "цифра ЧІТКО інша, довірся зображенню."
+    )
 
 
 @dataclass
@@ -73,7 +82,7 @@ class MeterRead:
 class VisionProvider(ABC):
     @abstractmethod
     async def read_meter(
-        self, image_path: str, hint: Decimal | None = None
+        self, image_path: str, hints: dict[str, Decimal] | None = None
     ) -> MeterRead: ...
 
 
@@ -238,11 +247,13 @@ class ClaudeCodeVisionProvider(VisionProvider):
             return stdout.decode("utf-8", "replace")
         return outer.get("result") if isinstance(outer, dict) else None
 
-    async def read_meter(self, image_path: str, hint: Decimal | None = None) -> MeterRead:
+    async def read_meter(
+        self, image_path: str, hints: dict[str, Decimal] | None = None
+    ) -> MeterRead:
         path, is_temp = downscale(image_path, self.max_long_side)
         prompt = _OCR_PROMPT.format(path=path)
-        if hint is not None:
-            prompt += _HINT_TMPL.format(prev=hint)
+        if hints:
+            prompt += _build_hint(hints)
         try:
             # Read the photo several times in parallel (same wall-clock as one read) and
             # only trust a value the independent reads agree on — intermittent digit

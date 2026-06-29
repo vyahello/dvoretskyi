@@ -140,14 +140,20 @@ independent reads **agree** (`vision._reconcile`); a disagreement (e.g. 108.679 
 `MeterRead` **not `confident`** (the differing read rides in `alt_value`), and
 `submit_meter_reading` then forces `needs_confirm` regardless of the delta verdict, asking
 the user to verify the number against the meter or re-photograph. This is the real catch
-for intermittent single-digit misreads that land in a believable range. **Hint-guided
-re-read:** when a baseline exists (portal value, else the last local reading),
-`submit_meter_reading` re-OCRs the photo **with the previous value as an anchor**
-(`vision.read_meter(path, hint=…)` → `_HINT_TMPL`) and that context-aware read supersedes
-the blind one. Knowing the meter stood at ~108 lets the model resolve an ambiguous wheel
-(a rounded 0 misread as 4 → 148) the way a human does; the prompt forbids forcing a
-clearly-different digit, so a genuine jump still reads true. Skipped when there's no
-baseline or no vision provider passed (so the no-`.env` test suite is unaffected).
+for intermittent single-digit misreads that land in a believable range. **Hint-anchored
+read (one pass, not two):** the OCR is given the previous value as context — knowing the
+meter stood at ~108 lets the model resolve an ambiguous wheel (a rounded 0 misread as 4 →
+148) the way a human does. The prompt forbids forcing a clearly-different digit, so a
+genuine jump still reads true. The photo handler (`bot/app.py::on_photo`) pre-fetches each
+meter's anchor (`tools.meter_hints` — portal value else last local reading, per kind) and
+feeds **one** anchored `read_meter(path, hints={kind: prev})` call that decides kind AND
+value together; `submit_meter_reading` is then handed that `read` and does **not** re-OCR.
+Only when `submit_meter_reading` has no `read` (the «який лічильник?» `m:` tap, where the
+kind is known) does it OCR itself — once, with that kind's hint. So the user waits on a
+**single** vision call, not a blind read + a hinted re-read. The whole turn (download +
+the one OCR + store + reply) runs inside the `_thinking` chat-action so «друкує…» never
+vanishes mid-work. Hints are skipped without a baseline (so the no-`.env` test suite is
+unaffected).
 - **Which meter?** Caption hint ("показники газу") → else the single meter provider in
   its window → else ask `[Газ][Вода]` (an `ocr_pending` row holds the photo until the
   tap routes it).

@@ -752,6 +752,23 @@ async def _portal_baseline_value(
     return portal.value if portal is not None else None
 
 
+async def meter_hints(
+    session: AsyncSession, providers: list[Provider]
+) -> dict[str, Decimal]:
+    """Per-kind anchor values (portal last filed, else local last reading) for the photo
+    handler to feed into a SINGLE anchored OCR. Letting one read know «if water, prev was
+    ~108; if gas, ~1890» fixes ambiguous-wheel misreads without a second OCR round."""
+    out: dict[str, Decimal] = {}
+    for prov in providers:
+        anchor = await _portal_baseline_value(session, prov)
+        if anchor is None:
+            hist = await _history_values(session, prov.id)
+            anchor = hist[0] if hist else None
+        if anchor is not None:
+            out[prov.category.value] = anchor
+    return out
+
+
 async def _supersede_pending(
     session: AsyncSession, provider_id: int, keep_id: int | None
 ) -> None:
@@ -850,8 +867,6 @@ async def submit_meter_reading(
     """
     prov = await _provider_by_name(session, provider_name)
     settings = get_settings()
-    if read is None:
-        read = await (vision or get_vision_provider()).read_meter(image_path)
 
     # Locate/seed the row (an ambiguous-photo capture pre-creates an ocr_pending row).
     reading: MeterReading | None = None
@@ -870,15 +885,14 @@ async def submit_meter_reading(
     # Compare against earlier MONTHS only — a re-shoot of this month isn't "consumption".
     history = await _history_values(session, prov.id, exclude_cycle=reading.cycle)
     portal_prev = await _portal_baseline_value(session, prov)
-    # Anchor a context-aware re-read on the previous filed value: knowing the meter stood
-    # at ~108 lets the model resolve an ambiguous wheel (a rounded 0 misread as 4 → 148)
-    # the way a human does — far better than a blind read. Only when we both have a
-    # baseline and a vision provider to re-OCR with.
     anchor = portal_prev if portal_prev is not None else (history[0] if history else None)
-    if anchor is not None and image_path and vision is not None:
-        hinted = await vision.read_meter(image_path, hint=anchor)
-        if hinted.value is not None:
-            read = hinted  # the context-aware read supersedes the blind one
+    # OCR only if the caller didn't already hand us a read (the photo handler OCRs once,
+    # anchored, and passes it). When we do OCR here, anchor it on the previous value in
+    # the SAME pass — one round, not a blind read + a hinted re-read — so a rounded 0
+    # isn't misread as 4 (108 → 148) yet the latency stays a single vision call.
+    if read is None:
+        hints = {prov.category.value: anchor} if anchor is not None else None
+        read = await (vision or get_vision_provider()).read_meter(image_path, hints=hints)
     reading.ocr_raw = read.raw or None
 
     if read.value is None:

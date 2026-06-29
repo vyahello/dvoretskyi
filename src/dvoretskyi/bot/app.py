@@ -59,6 +59,7 @@ from dvoretskyi.agent.tools import (
     get_stats,
     get_unpaid,
     mark_meter_submitted,
+    meter_hints,
     snooze_reminder,
     submit_meter_reading,
 )
@@ -1053,59 +1054,66 @@ async def _file_reading(rid: int) -> tuple[str, InlineKeyboardMarkup | None]:
 async def on_photo(message: Message) -> None:
     path: str | None = None
     try:
-        # Vision OCR is slow — keep «друкує…» up while it runs.
+        # Keep «друкує…» up across the WHOLE turn (download + the single OCR pass +
+        # store), not just OCR — else the indicator vanishes and the reply looks frozen.
         async with _thinking(message):
             path = await _download_photo(message)
-            # One vision pass decides everything: it auto-detects the meter type by look —
-            # dark meter → water, light meter → gas — or says "other" if it isn't a meter.
-            read = await get_vision_provider().read_meter(path)
-        if read.kind == "other":
-            # Not a meter: just react to the photo with a light remark, store nothing.
-            await message.answer(
-                read.comment or "Гарне фото, але лічильника на ньому я не бачу. 🎩"
-            )
-            return
+            async with session_scope() as session:
+                meter_provs = await _meter_providers(session)
+                if not meter_provs:
+                    await message.answer("Лічильників у списку нема — нема куди вносити.")
+                    return
 
-        async with session_scope() as session:
-            meter_provs = await _meter_providers(session)
-            if not meter_provs:
-                await message.answer("Лічильників у списку нема — нема куди вносити.")
-                return
+                # ONE anchored vision pass decides everything: kind (dark→water,
+                # light→gas, else "other") AND value, with each meter's previous reading
+                # as a hint so an ambiguous wheel (108 vs 148) reads true. One round —
+                # no blind read followed by a hinted re-read — so the wait is a single
+                # vision call, not two.
+                hints = await meter_hints(session, meter_provs)
+                read = await get_vision_provider().read_meter(path, hints=hints)
+                if read.kind == "other":
+                    # Not a meter: react with a light remark, store nothing.
+                    await message.answer(
+                        read.comment
+                        or "Гарне фото, але лічильника на ньому я не бачу. 🎩"
+                    )
+                    return
 
-            # A caption can still override; otherwise route by the auto-detected kind.
-            chosen = _caption_provider(message.caption, meter_provs)
-            if chosen is None and read.kind in ("water", "gas"):
-                chosen = next(
-                    (p for p in meter_provs if p.category.value == read.kind), None
+                # A caption can still override; otherwise route by the detected kind.
+                chosen = _caption_provider(message.caption, meter_provs)
+                if chosen is None and read.kind in ("water", "gas"):
+                    chosen = next(
+                        (p for p in meter_provs if p.category.value == read.kind), None
+                    )
+
+                if chosen is None:
+                    # Couldn't tell which meter — stash the photo and ask.
+                    reading = MeterReading(
+                        cycle=clock.current_cycle(),
+                        status=MeterStatus.ocr_pending,
+                        created_at=clock.now(),
+                        photo_ref=path,
+                    )
+                    session.add(reading)
+                    await session.flush()
+                    await message.answer(
+                        "Який це лічильник?",
+                        reply_markup=keyboards.meter_route_keyboard(
+                            reading.id, meter_provs
+                        ),
+                    )
+                    path = None  # keep the file — the m: callback OCRs then deletes it
+                    return
+
+                result = await submit_meter_reading(
+                    session,
+                    chosen.name,
+                    path,
+                    read=read,  # already OCR'd (anchored) — submit won't re-read
+                    auto_submit=False,  # store now; file via the date-gated flow
                 )
-
-            if chosen is None:
-                # Couldn't tell which meter — stash the photo and ask.
-                reading = MeterReading(
-                    cycle=clock.current_cycle(),
-                    status=MeterStatus.ocr_pending,
-                    created_at=clock.now(),
-                    photo_ref=path,
-                )
-                session.add(reading)
-                await session.flush()
-                await message.answer(
-                    "Який це лічильник?",
-                    reply_markup=keyboards.meter_route_keyboard(reading.id, meter_provs),
-                )
-                path = None  # keep the file — the m: callback will OCR then delete it
-                return
-
-            result = await submit_meter_reading(
-                session,
-                chosen.name,
-                path,
-                vision=get_vision_provider(),
-                read=read,
-                auto_submit=False,  # store now; file via the date-gated flow
-            )
-        text, kb = _gated_meter_reply(result)
-        await message.answer(text, reply_markup=kb)
+            text, kb = _gated_meter_reply(result)
+            await message.answer(text, reply_markup=kb)
     except Exception:
         log.exception("on_photo failed")
         await message.answer("Не зміг обробити фото — спробуй ще раз за мить.")
