@@ -53,6 +53,8 @@ class MeterRead:
     note: str
     kind: str = ""  # "water" | "gas" | "other" (dark meter → water, light → gas)
     comment: str = ""  # witty remark when kind == "other"
+    confident: bool = True  # False → independent OCR reads disagreed; treat as uncertain
+    alt_value: Decimal | None = None  # the differing read, when confident is False
 
 
 class VisionProvider(ABC):
@@ -142,6 +144,35 @@ def _parse_meter_read(raw: str) -> MeterRead | None:
     )
 
 
+def _reconcile(reads: list[MeterRead]) -> MeterRead:
+    """Combine independent OCR reads of one photo into a single verdict.
+
+    Digit confusion is intermittent, so we trust a value only when ≥2 reads AGREE on it.
+    A disagreement keeps the first read's value but marks it not-confident (and records
+    the differing one in `alt_value`) — the pipeline then asks the user to confirm rather
+    than file a possibly-misread number the delta check can't catch (e.g. 108→148, a
+    plausible +40)."""
+    if not reads:
+        return MeterRead(value=None, raw="", note="OCR не вдалося — перепиши вручну.")
+    first = reads[0]
+    values = [r.value for r in reads if r.value is not None]
+    if len(values) < 2:
+        # Only one read produced a number (or it's "other"/None) — nothing to cross-check.
+        return first
+    if all(v == values[0] for v in values):
+        return first  # unanimous → confident
+    alt = next((v for v in values if v != first.value), None)
+    return MeterRead(
+        value=first.value,
+        raw=first.raw,
+        note=first.note,
+        kind=first.kind,
+        comment=first.comment,
+        confident=False,
+        alt_value=alt,
+    )
+
+
 class ClaudeCodeVisionProvider(VisionProvider):
     """OCR via `claude -p --allowed-tools "Read"` (CLI can open the image path)."""
 
@@ -150,6 +181,7 @@ class ClaudeCodeVisionProvider(VisionProvider):
         self.bin = settings.claude_bin
         self.timeout = settings.claude_vision_timeout_seconds
         self.max_long_side = settings.ocr_max_long_side
+        self.read_attempts = max(1, settings.ocr_read_attempts)
 
     async def _invoke(self, prompt: str) -> str | None:
         args = [
@@ -195,14 +227,22 @@ class ClaudeCodeVisionProvider(VisionProvider):
         path, is_temp = downscale(image_path, self.max_long_side)
         prompt = _OCR_PROMPT.format(path=path)
         try:
-            for attempt in (1, 2):
-                raw = await self._invoke(prompt)
-                if raw is None:
-                    break
-                parsed = _parse_meter_read(raw)
-                if parsed is not None:
-                    return parsed
-                log.info("claude vision unparseable JSON (attempt %s)", attempt)
+            # Read the photo several times in parallel (same wall-clock as one read) and
+            # only trust a value the independent reads agree on — intermittent digit
+            # misreads then surface as a disagreement instead of a silently-filed number.
+            raws = await asyncio.gather(
+                *(self._invoke(prompt) for _ in range(self.read_attempts))
+            )
+            reads = [
+                parsed
+                for raw in raws
+                if raw is not None and (parsed := _parse_meter_read(raw)) is not None
+            ]
+            if reads:
+                return _reconcile(reads)
+            log.info(
+                "claude vision: no parseable read in %s attempts", self.read_attempts
+            )
         finally:
             if is_temp and path != image_path and os.path.exists(path):
                 os.unlink(path)

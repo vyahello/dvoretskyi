@@ -117,6 +117,47 @@ async def test_pipeline_flagged_reading_is_needs_confirm_not_submitted(
     assert res["status"] == MeterStatus.needs_confirm.value
 
 
+async def test_low_confidence_ocr_is_flagged_even_when_delta_plausible(
+    session, providers
+):
+    # Independent reads disagreed (108.679 vs 148.679) — a believable +40, so the spike
+    # check passes, but the disagreement must still force needs_confirm.
+    from dvoretskyi.agent.vision import MeterRead
+
+    await _seed_prior(session, providers["Холодна вода"], "108.000")
+    read = MeterRead(
+        value=Decimal("148.679"),
+        raw="148679",
+        note="",
+        kind="water",
+        confident=False,
+        alt_value=Decimal("108.679"),
+    )
+    res = await tools.submit_meter_reading(session, "Холодна вода", "/p.png", read=read)
+    assert not res["ok"]
+    assert res["status"] == MeterStatus.needs_confirm.value
+    assert "108.679" in res["message"]  # surfaces the differing read
+
+
+def test_reconcile_agreeing_reads_are_confident():
+    from dvoretskyi.agent.vision import MeterRead, _reconcile
+
+    a = MeterRead(value=Decimal("108.679"), raw="108679", note="", kind="water")
+    b = MeterRead(value=Decimal("108.679"), raw="108679", note="", kind="water")
+    out = _reconcile([a, b])
+    assert out.confident and out.value == Decimal("108.679")
+
+
+def test_reconcile_disagreeing_reads_flag_and_record_alt():
+    from dvoretskyi.agent.vision import MeterRead, _reconcile
+
+    a = MeterRead(value=Decimal("148.679"), raw="148679", note="", kind="water")
+    b = MeterRead(value=Decimal("108.679"), raw="108679", note="", kind="water")
+    out = _reconcile([a, b])
+    assert not out.confident
+    assert out.value == Decimal("148.679") and out.alt_value == Decimal("108.679")
+
+
 # --- parser robustness (chatty / fenced model output) ----------------------
 
 

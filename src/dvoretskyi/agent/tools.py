@@ -905,7 +905,10 @@ async def submit_meter_reading(
     )
     reading.value = value
     reading.consumption_delta = verdict.consumption
-    reading.status = verdict.status
+    # Independent OCR reads disagreed → don't trust the number even if the delta looks
+    # plausible (a 108→148 misread is a believable +40 the spike check can't catch).
+    uncertain = not read.confident
+    reading.status = MeterStatus.needs_confirm if uncertain else verdict.status
     await session.flush()
     # Keep a compressed copy so the user can pull this meter's photo back later. The
     # temp download (`image_path`, set above) is deleted by the caller, so only a
@@ -916,18 +919,32 @@ async def submit_meter_reading(
     # A fresh reading for this meter supersedes any earlier un-filed draft of it.
     await _supersede_pending(session, prov.id, reading.id)
 
-    if not verdict.ok:
+    if not verdict.ok or uncertain:
+        # A real validation failure (backwards/zero/spike) explains itself; an OCR
+        # disagreement that otherwise looks fine gets its own «звір показник» reason.
+        if not verdict.ok:
+            message = verdict.reason
+        else:
+            alt = (
+                f" Друге зчитування дало {read.alt_value}."
+                if read.alt_value is not None
+                else ""
+            )
+            message = (
+                f"Не впевнений у показнику.{alt} Звір із лічильником: якщо там {value} — "
+                "підтверди; інакше перефотографуй ближче (фронтально, при світлі)."
+            )
         return {
             "ok": False,
             "reading_id": reading.id,
             "provider": prov.name,
             "kind": prov.category.value,
             "value": str(value),
-            "status": verdict.status.value,
+            "status": reading.status.value,
             "consumption": (
                 str(verdict.consumption) if verdict.consumption is not None else None
             ),
-            "message": verdict.reason,
+            "message": message,
         }
 
     if not auto_submit:

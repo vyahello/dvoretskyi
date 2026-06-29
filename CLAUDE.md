@@ -133,7 +133,14 @@ routed to the right counter by household account) when it's higher than (or abse
 our local journal — so a backwards misread is caught against what's actually filed on the
 portal even on a clean local DB, not only against local drafts (meters are monotonic → the
 highest known prior reading is the true «previous»). Best-effort: portal unreachable →
-local history alone.
+local history alone. **OCR consensus:** each photo is read **`OCR_READ_ATTEMPTS` times
+concurrently** (default 2, same wall-clock) and a value is trusted only when the
+independent reads **agree** (`vision._reconcile`); a disagreement (e.g. 108.679 vs
+148.679 — a plausible +40 the spike check can't catch) keeps the first value but marks the
+`MeterRead` **not `confident`** (the differing read rides in `alt_value`), and
+`submit_meter_reading` then forces `needs_confirm` regardless of the delta verdict, asking
+the user to verify the number against the meter or re-photograph. This is the real catch
+for intermittent single-digit misreads that land in a believable range.
 - **Which meter?** Caption hint ("показники газу") → else the single meter provider in
   its window → else ask `[Газ][Вода]` (an `ocr_pending` row holds the photo until the
   tap routes it).

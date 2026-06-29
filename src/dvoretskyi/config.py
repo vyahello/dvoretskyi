@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     )
     sms_gateway_url: str = ""  # empty → SmsChannel emits an sms: deep link, never POSTs
     ocr_max_long_side: int = 1600  # downscale photos to this long side before OCR
+    # OCR each meter photo this many times (concurrently) and only trust a value when the
+    # independent reads AGREE. Digit confusion (108 read as 148, 1890 as 2890) is
+    # intermittent, so disagreement → flag for confirmation rather than file a misread.
+    # 1 = single read (no cross-check); 2 is the sweet spot (same wall-clock, parallel).
+    ocr_read_attempts: int = 2
     # Meter-photo archive: keep ONE compressed JPEG per reading so the user can pull it
     # back later. Empty dir → ~/.dvoretskyi/meter_photos (private, 0o700).
     meter_photo_dir: str = ""
