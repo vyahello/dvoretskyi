@@ -90,6 +90,12 @@ Auth Claude Code via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
   due_day` (**default 5 days**, was 3) and carries a pay link routed by provider type
   (`agent.balance.pay_link_for`: monobank / ДАХ / Portmone), so every reminder says where
   to pay. `PendingNudge.message` names the due day and points at the button.
+  **Recipients differ by nudge kind:** payment + balance nudges go to the **owner alone**
+  (`telegram_allowed_user_id`); the **«кинь фото» meter nudge is broadcast to the whole
+  allowlist** (owner ∪ family — `settings.allowed_user_ids`) since anyone admitted may
+  submit a reading. The **static-meter approve tap** (secondary, unoccupied property)
+  files one staged row in one tap → single-actor, **owner-only** (so two people can't file
+  it twice).
 - `app.py` — FastAPI; lifespan starts bot long-polling + scheduler + notifier.
 
 ## Setup
@@ -291,11 +297,12 @@ lazily so the suite never loads it) and pass `now` explicitly to reminder/window
 
 ## Env vars (see `.env.example`)
 `MONO_TOKEN`, `MONO_WEBHOOK_SECRET`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID`
-(the **owner** — reminders + webhook payment confirmations go here alone),
+(the **owner** — payment/balance nudges + webhook payment confirmations go here alone),
 `TELEGRAM_EXTRA_ALLOWED_USER_IDS` (optional CSV of extra user IDs — family — who may
-**talk** to the bot; the owner is always allowed, these only widen the allowlist, no
-nudges sent to them; `Settings.allowed_user_ids` = owner ∪ extras feeds
-`AllowlistMiddleware`),
+**talk** to the bot; the owner is always allowed, these only widen the allowlist. They get
+**no payment/balance nudges**, but the **meter «кинь фото» nudge is broadcast to them too**
+since anyone admitted may submit a reading; `Settings.allowed_user_ids` = owner ∪ extras
+feeds `AllowlistMiddleware` and the meter-nudge fan-out),
 `DATABASE_URL`, `REDIS_URL`, `CLAUDE_BIN`, `CLAUDE_MODEL` (pins the decision turn's
 model — default `claude-sonnet-4-6`; fast yet keeps the persona witty; empty → CLI
 default), `LLM_PROVIDER` (claude_code|anthropic_api),

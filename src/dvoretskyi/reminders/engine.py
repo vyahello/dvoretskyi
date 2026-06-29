@@ -334,7 +334,11 @@ async def compute_pending_meter_nudges(
 async def run_meter_nudges(
     send: Notifier, now: datetime | None = None
 ) -> list[PendingMeterNudge]:
-    """Compute + dispatch meter nudges, recording a NudgeLog(kind=meter) for each."""
+    """Compute + dispatch meter nudges, recording a NudgeLog(kind=meter) for each.
+
+    The «кинь фото» nudge is broadcast to the whole allowlist (owner ∪ family) since
+    anyone admitted may submit a reading; the static-meter approve tap stays owner-only.
+    """
     now = now or clock.now()
     cycle = clock.cycle_of(now)
     async with session_scope() as session:
@@ -376,12 +380,23 @@ async def run_meter_nudges(
             else:
                 existing.nudged_at = now
 
+    settings = get_settings()
     for item in pending:
-        await send(
-            get_settings().telegram_allowed_user_id,
-            item.message(),
-            approve_reading_id=item.reading_id,
-        )
+        # Anyone on the allowlist may submit a meter reading (send a photo), so the
+        # «кинь фото» nudge goes to the whole family. The static-meter approve tap, by
+        # contrast, files one specific staged row in one tap (secondary, unoccupied
+        # property) — a single-actor action, kept to the owner so two people can't file
+        # it twice.
+        if item.static_value is not None:
+            recipients: list[int] = [settings.telegram_allowed_user_id]
+        else:
+            recipients = sorted(settings.allowed_user_ids)
+        for chat_id in recipients:
+            await send(
+                chat_id,
+                item.message(),
+                approve_reading_id=item.reading_id,
+            )
     return pending
 
 

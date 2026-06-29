@@ -116,6 +116,45 @@ async def test_run_meter_nudges_sends_and_logs(session, providers):
     assert all(p.provider_name != "Газ (постачання)" for p in again)
 
 
+async def test_meter_nudge_broadcasts_photo_to_family_static_stays_owner(
+    session, households, providers, monkeypatch
+):
+    """Photo «кинь фото» nudges reach the whole allowlist (anyone may submit a reading);
+    the static-meter approve tap is single-actor → owner only."""
+    from decimal import Decimal
+
+    from dvoretskyi.config import Settings
+    from dvoretskyi.db.models import Category, PayChannel, Provider
+    from dvoretskyi.reminders import engine as eng
+
+    sec_gas = Provider(
+        name="Газ (доставлення)",
+        category=Category.gas,
+        pay_channel=PayChannel.mono_communal,
+        household_id=households["secondary"].id,
+        meter_window=3,
+        meter_decimals=2,
+        static_reading=Decimal("7952.81"),
+    )
+    session.add(sec_gas)
+    await session.commit()
+
+    s = Settings(telegram_allowed_user_id=111, telegram_extra_allowed_user_ids={222, 333})
+    monkeypatch.setattr(eng, "get_settings", lambda: s)
+
+    sent: list[tuple[int, int | None]] = []  # (chat_id, approve_reading_id)
+
+    async def send(chat_id, text, approve_reading_id=None, **kw):
+        sent.append((chat_id, approve_reading_id))
+
+    await run_meter_nudges(send, now=_at(2026, 6, 28))
+
+    photo_recipients = {chat_id for chat_id, rid in sent if rid is None}
+    static_recipients = {chat_id for chat_id, rid in sent if rid is not None}
+    assert photo_recipients == {111, 222, 333}  # owner + family
+    assert static_recipients == {111}  # owner only
+
+
 async def test_static_meter_nudge_offers_one_tap_file(session, households, providers):
     """The unoccupied property's gas meter is a fixed value: the nudge stages a validated
     reading and offers the «📤 Подати» approve tap instead of asking for a photo."""
