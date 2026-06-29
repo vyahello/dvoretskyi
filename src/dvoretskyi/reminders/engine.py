@@ -390,7 +390,10 @@ async def run_meter_nudges(
         if item.static_value is not None:
             recipients: list[int] = [settings.telegram_allowed_user_id]
         else:
-            recipients = sorted(settings.allowed_user_ids)
+            # Owner is always included even if `allowed_user_ids` filters out a falsy id.
+            recipients = sorted(
+                settings.allowed_user_ids | {settings.telegram_allowed_user_id}
+            )
         for chat_id in recipients:
             await send(
                 chat_id,
