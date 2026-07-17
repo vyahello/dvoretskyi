@@ -13,12 +13,13 @@ import asyncio
 import json
 import logging
 import os
-import re
 import tempfile
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 
+from dvoretskyi.agent.jsonx import extract_json_object
 from dvoretskyi.config import get_settings
 
 log = logging.getLogger(__name__)
@@ -107,40 +108,9 @@ def downscale(image_path: str, max_long_side: int) -> tuple[str, bool]:
         return image_path, False
 
 
-_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
-
-
-def _extract_json_object(text: str) -> dict | None:
-    """Pull a JSON object out of possibly-chatty model output.
-
-    Vision turns often wrap the JSON in prose and/or a ```json fence despite the
-    'only JSON' instruction. Try, in order: whole string, a fenced block, then the
-    last balanced {...} run.
-    """
-    candidates: list[str] = [text.strip()]
-    candidates += _FENCE_RE.findall(text)
-    # Last balanced object: scan from each '{' and track brace depth.
-    starts = [m.start() for m in re.finditer(r"\{", text)]
-    for start in reversed(starts):
-        depth = 0
-        for i in range(start, len(text)):
-            if text[i] == "{":
-                depth += 1
-            elif text[i] == "}":
-                depth -= 1
-                if depth == 0:
-                    candidates.append(text[start : i + 1])
-                    break
-        if depth == 0:
-            break
-    for cand in candidates:
-        try:
-            data = json.loads(cand)
-        except (json.JSONDecodeError, TypeError):
-            continue
-        if isinstance(data, dict):
-            return data
-    return None
+# Kept as a module-level alias: the extraction now lives in `agent/jsonx.py` so the
+# decision turn gets the same robustness, and tests/imports of this name still work.
+_extract_json_object = extract_json_object
 
 
 def _parse_meter_read(raw: str) -> MeterRead | None:
@@ -168,31 +138,58 @@ def _parse_meter_read(raw: str) -> MeterRead | None:
     )
 
 
-def _reconcile(reads: list[MeterRead]) -> MeterRead:
+def _reconcile(reads: list[MeterRead], expected: int | None = None) -> MeterRead:
     """Combine independent OCR reads of one photo into a single verdict.
 
-    Digit confusion is intermittent, so we trust a value only when ≥2 reads AGREE on it.
-    A disagreement keeps the first read's value but marks it not-confident (and records
-    the differing one in `alt_value`) — the pipeline then asks the user to confirm rather
+    Digit confusion is intermittent, so we trust a value only when the reads AGREE on it.
+    A disagreement keeps the winning value but marks it not-confident (and records the
+    differing one in `alt_value`) — the pipeline then asks the user to confirm rather
     than file a possibly-misread number the delta check can't catch (e.g. 108→148, a
-    plausible +40)."""
+    plausible +40).
+
+    The verdict is picked from the reads that actually produced a NUMBER, by majority —
+    never from `reads[0]` just because it came back first. Which of the parallel CLI
+    calls misfires is random, so anchoring on slot 0 threw away a perfectly good
+    consensus whenever the flaky attempt happened to land there: a real meter photo read
+    correctly twice could still be answered with «на фото не лічильник» + a joke (the
+    null read's `kind="other"` and `comment` won), storing nothing.
+
+    `expected` is how many reads were ATTEMPTED (defaults to how many came back). It's
+    what tells a genuine single-read config apart from a 2-read attempt where one read
+    died — the survivor of the latter was never cross-checked and must not pass as
+    confident.
+    """
     if not reads:
         return MeterRead(value=None, raw="", note="OCR не вдалося — перепиши вручну.")
-    first = reads[0]
+    expected = len(reads) if expected is None else expected
     values = [r.value for r in reads if r.value is not None]
+    if not values:
+        # No read produced a number — a genuine OCR failure, or really not a meter.
+        return reads[0]
+
+    tally = Counter(values)
+    winner, votes = tally.most_common(1)[0]
+    # Take raw/kind/comment from a read that actually produced the winning number, so the
+    # verdict is internally consistent (a null read's "other"/joke can't ride along).
+    best = next(r for r in reads if r.value == winner)
+
+    # Confident requires a CROSS-CHECK. With `ocr_read_attempts` > 1, one attempt coming
+    # back without a number (a timeout, a non-zero exit) leaves the survivor unverified —
+    # exactly the case the consensus exists for — so it must not inherit `confident=True`
+    # by default. With attempts=1 there was never a cross-check to lose, so that config
+    # keeps its old single-read behaviour instead of flagging every reading.
     if len(values) < 2:
-        # Only one read produced a number (or it's "other"/None) — nothing to cross-check.
-        return first
-    if all(v == values[0] for v in values):
-        return first  # unanimous → confident
-    alt = next((v for v in values if v != first.value), None)
+        return best if expected < 2 else replace(best, confident=False)
+    if len(tally) == 1:
+        return best  # unanimous
+    alt = next(v for v in values if v != winner)
     return MeterRead(
-        value=first.value,
-        raw=first.raw,
-        note=first.note,
-        kind=first.kind,
-        comment=first.comment,
-        confident=False,
+        value=winner,
+        raw=best.raw,
+        note=best.note,
+        kind=best.kind,
+        comment=best.comment,
+        confident=votes > 1 and votes > len(values) - votes,
         alt_value=alt,
     )
 
@@ -267,7 +264,7 @@ class ClaudeCodeVisionProvider(VisionProvider):
                 if raw is not None and (parsed := _parse_meter_read(raw)) is not None
             ]
             if reads:
-                return _reconcile(reads)
+                return _reconcile(reads, expected=self.read_attempts)
             log.info(
                 "claude vision: no parseable read in %s attempts", self.read_attempts
             )

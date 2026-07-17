@@ -89,6 +89,220 @@ async def test_get_stats_breakdown_by_month(session, providers):
         os.unlink(res["chart_path"])
 
 
+async def test_by_month_is_chronological_and_zero_filled(session, providers):
+    """A by-month view is a TIME SERIES: oldest → newest, with empty months present.
+
+    It used to sort by amount (cheapest → priciest, like every other breakdown), which
+    scrambles the one axis that makes a trend readable; and a month nobody paid anything
+    was simply absent, silently closing the gap and mislabelling the shape.
+    """
+    gas = providers["Газ (постачання)"]
+    session.add_all(
+        [
+            # Jan and Apr only — Feb/Mar are real, meaningful zeros. Jan is the CHEAPEST
+            # month, so an amount-sort would put it last instead of first.
+            _payment(gas.id, "100.00", datetime(2026, 1, 5, tzinfo=clock.KYIV), tx="z1"),
+            _payment(gas.id, "900.00", datetime(2026, 4, 5, tzinfo=clock.KYIV), tx="z2"),
+        ]
+    )
+    await session.commit()
+    res = await tools.get_stats(session, period="2026", breakdown="month")
+    labels = [i["label"] for i in res["items"]]
+    assert labels[:4] == ["2026-01", "2026-02", "2026-03", "2026-04"]  # chronological
+    by_label = {i["label"]: i["total"] for i in res["items"]}
+    assert by_label["2026-02"] == "0" and by_label["2026-03"] == "0"  # gaps kept
+    if res["chart_path"]:
+        os.unlink(res["chart_path"])
+
+
+async def test_by_month_never_plots_the_future(session, providers):
+    """«📆 Цей рік» is bounded through December, which zero-filled the remaining months of
+    the year into the chart — months that cannot have a payment yet, drawn as if you'd
+    spent nothing in them."""
+    gas = providers["Газ (постачання)"]
+    session.add(_payment(gas.id, "300.00", clock.now(), tx="fut"))
+    await session.commit()
+    year = clock.current_cycle().split("-")[0]
+    res = await tools.get_stats(session, period=year, breakdown="month")
+    assert [i["label"] for i in res["items"]][-1] == clock.current_cycle()
+    if res["chart_path"]:
+        os.unlink(res["chart_path"])
+
+
+async def test_all_time_clamps_an_ancient_outlier_and_relabels(session, providers):
+    """One stray payment years before the journal proper must not zero-fill «весь час»
+    into a two-year runway of empty columns (production holds exactly such a row).
+
+    When the clamp drops months that HAD money, the caption is renamed after what's
+    actually plotted — a caption must never claim a total the chart doesn't show.
+    """
+    gas = providers["Газ (постачання)"]
+    session.add(
+        _payment(gas.id, "480.00", datetime(2024, 6, 15, tzinfo=clock.KYIV), tx="ancient")
+    )
+    session.add(_payment(gas.id, "300.00", clock.now(), tx="recent"))
+    await session.commit()
+
+    res = await tools.get_stats(session, period="all", breakdown="month")
+    labels = [i["label"] for i in res["items"]]
+    assert len(labels) <= 24  # readable, not 26 hairlines
+    assert "2024-06" not in labels  # the ancient outlier is outside the window
+    # …so the total is recomputed over exactly the columns plotted, and renamed to match.
+    assert Decimal(res["total"]) == sum(Decimal(i["total"]) for i in res["items"])
+    assert res["total"] == "300.00" and "весь час" not in res["message"]
+    if res["chart_path"]:
+        os.unlink(res["chart_path"])
+
+
+async def test_omitted_period_means_this_month_everywhere(session, providers):
+    """An omitted `period` must bound the QUERY, not just the caption.
+
+    `_period_bounds(None)` left the query unbounded while the label was substituted with
+    the current cycle — so the reply showed the LIFETIME total under «липень 2026», and
+    compared it against one real month («▲ +610% до червня»). Two fabricated numbers
+    stated as fact. Reachable: the arg is optional, and the dispatcher's drop-unknown-args
+    retry produces exactly this call from `get_stats(months=6)`.
+    """
+    gas = providers["Газ (постачання)"]
+    old = datetime(2024, 6, 15, tzinfo=clock.KYIV)
+    session.add_all(
+        [
+            _payment(gas.id, "5000.00", old, tx="ancient"),
+            _payment(gas.id, "1100.00", clock.now(), tx="thismonth"),
+        ]
+    )
+    await session.commit()
+
+    res = await tools.get_stats(session)  # no period at all
+    assert res["total"] == "1100.00"  # this month — NOT the 6100 lifetime total
+    assert res["period"] == clock.current_cycle()
+    assert clock.format_cycle(clock.current_cycle()) in res["message"]
+    if res["chart_path"]:
+        os.unlink(res["chart_path"])
+
+
+async def test_volume_trend_honours_the_provider_filter_it_advertises(session, providers):
+    """«динаміка споживання води» titled the chart «Холодна вода» and then drew a GAS
+    panel under it: the scope honoured `provider`, the query didn't."""
+    from dvoretskyi.db.models import MeterReading, MeterStatus
+
+    prev = clock.shift_cycle(clock.current_cycle(), -1)
+    for name, a, b in (
+        ("Газ (постачання)", "1880.00", "1920.50"),
+        ("Холодна вода", "100.000", "103.030"),
+    ):
+        for cycle, value in ((prev, a), (clock.current_cycle(), b)):
+            session.add(
+                MeterReading(
+                    provider_id=providers[name].id,
+                    cycle=cycle,
+                    value=Decimal(value),
+                    status=MeterStatus.submitted,
+                    created_at=clock.now(),
+                )
+            )
+    await session.commit()
+
+    res = await tools.get_stats_trend(session, mode="volume", provider="вода")
+    assert "Холодна вода" in res["message"]
+    assert "Газ" not in res["message"]  # the filter the title claims is actually applied
+    if res["chart_path"]:
+        os.unlink(res["chart_path"])
+
+
+async def test_volume_trend_skips_a_gap_rather_than_inventing_a_spike(session, providers):
+    """A month never filed makes the next difference span TWO months. Charting that
+    against the later month alone would draw a quarter's gas as one monstrous month."""
+    from dvoretskyi.db.models import MeterReading, MeterStatus
+
+    gas = providers["Газ (постачання)"]
+    # Readings two months apart — the month between was never filed.
+    for cycle, value in (
+        (clock.shift_cycle(clock.current_cycle(), -2), "1880.00"),
+        (clock.current_cycle(), "1980.00"),
+    ):
+        session.add(
+            MeterReading(
+                provider_id=gas.id,
+                cycle=cycle,
+                value=Decimal(value),
+                status=MeterStatus.submitted,
+                created_at=clock.now(),
+            )
+        )
+    await session.commit()
+    res = await tools.get_stats_trend(session, mode="volume")
+    # The only available pair is non-consecutive → nothing honest to draw.
+    assert res["chart_path"] is None and "два місяці" in res["message"]
+
+
+async def test_stats_trend_money_reports_average_and_change(session, providers):
+    gas = providers["Газ (постачання)"]
+    this_cycle = clock.current_cycle()
+    prev_cycle = clock.shift_cycle(this_cycle, -1)
+
+    def _at(cycle: str) -> datetime:
+        y, m = (int(p) for p in cycle.split("-"))
+        return datetime(y, m, 5, 12, 0, tzinfo=clock.KYIV)
+
+    session.add_all(
+        [
+            _payment(gas.id, "100.00", _at(prev_cycle), tx="t1"),
+            _payment(gas.id, "200.00", _at(this_cycle), tx="t2"),
+        ]
+    )
+    await session.commit()
+    res = await tools.get_stats_trend(session, mode="money")
+    assert res["months"] == [prev_cycle, this_cycle]  # oldest first, leading gap trimmed
+    assert res["totals"] == ["100.00", "200.00"]
+    assert res["total"] == "300.00"
+    assert "сер." in res["message"] and "+100%" in res["message"]  # doubled vs last month
+    if res["chart_path"]:
+        os.unlink(res["chart_path"])
+
+
+async def test_stats_trend_needs_two_months_before_drawing_a_trend(session, providers):
+    """One month of history is a number, not a trend — say so instead of drawing a
+    single lonely bar and calling it dynamics."""
+    gas = providers["Газ (постачання)"]
+    session.add(_payment(gas.id, "100.00", clock.now(), tx="only"))
+    await session.commit()
+    res = await tools.get_stats_trend(session, mode="money")
+    assert res["chart_path"] is None
+    assert res["months"] == []
+    assert "два місяці" in res["message"]
+
+
+async def test_stats_trend_volume_derives_consumption_from_readings(session, providers):
+    """m³ per month comes from the readings themselves, not `consumption_delta`.
+
+    That column is only filled when the validator had a previous value to hand, so on
+    real data it is mostly NULL — deriving from consecutive readings is what makes the
+    m³ axis exist at all. A meter is monotonic, so value(n) − value(n-1) IS the volume.
+    """
+    from dvoretskyi.db.models import MeterReading, MeterStatus
+
+    gas = providers["Газ (постачання)"]
+    this_cycle = clock.current_cycle()
+    prev_cycle = clock.shift_cycle(this_cycle, -1)
+    for cycle, value in ((prev_cycle, "1880.00"), (this_cycle, "1920.50")):
+        session.add(
+            MeterReading(
+                provider_id=gas.id,
+                cycle=cycle,
+                value=Decimal(value),
+                consumption_delta=None,  # exactly as production has it
+                status=MeterStatus.submitted,
+                created_at=clock.now(),
+            )
+        )
+    await session.commit()
+    res = await tools.get_stats_trend(session, mode="volume")
+    assert res["chart_path"]  # a real small-multiples panel
+    assert "40.5" in res["message"]  # 1920.50 − 1880.00, derived not stored
+    os.unlink(res["chart_path"])
+
+
 async def test_get_stats_splits_gas_into_supply_and_delivery(session, providers):
     from dvoretskyi.db.models import Category, PayChannel, Provider
 

@@ -15,6 +15,16 @@ Callback grammar:
                                  scope='all' | '<pid>' | '<pid|*>:<cycle>' (by month)
   mp:<reading_id>                send that reading's archived photo («📜 Історія» 📸 tap)
   h:<view>[:<slug>]              «📜 Історія» nav: menu | met | pay | pay:<household-slug>
+  st:m:<cycle>:<hh>              📊 stats for one month (the ◀/▶ month strip)
+  st:t:<mode>:<hh>               📈 dynamics chart: money | prov | vol
+  st:p:<hh>                      📆 period chooser
+  st:P:<period>:<hh>             📆 apply a period (cur | prev | 6m | YYYY | all)
+  st:h:<hh>:<cycle>              🏘 household chooser (keeps the month being viewed)
+  st:H:<slug|-|split>:<period>   🏘 apply a household scope ('-' = both combined)
+  st:<slug>|st:split             legacy 2-part form — still honoured so buttons on
+                                 messages sent before this deploy keep working
+`hh` is a household slug or '-' (both). Slugs, never names: an address is PII and
+would not fit Telegram's 64-byte callback budget.
 """
 
 from __future__ import annotations
@@ -28,6 +38,7 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
+from dvoretskyi import clock
 from dvoretskyi.config import get_settings
 from dvoretskyi.db.models import Provider
 
@@ -145,18 +156,117 @@ def categorize_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def stats_scope_keyboard(
-    households: list[tuple[str, str]],
+def stats_month_keyboard(
+    cycle: str,
+    hh: str = "-",
+    *,
+    prev_cycle: str | None = None,
+    next_cycle: str | None = None,
+    multi_household: bool = True,
 ) -> InlineKeyboardMarkup:
-    """Under the combined stats: a button per household to drill into it, plus a
-    «compare» button that splits the total by property. `households` = [(slug, name)]."""
+    """The month strip under a one-month stats table.
+
+        ◀ травень │ 📅 червень 2026 │ липень ▶
+        📈 Динаміка │ 🏘 Житло
+
+    `prev_cycle`/`next_cycle` are None at the edges of what we can show — before the
+    first month with data, and after the current month — so the arrow is simply absent
+    rather than walking the user into empty months forever.
+
+    The middle button opens the period chooser: a button that merely re-rendered the
+    month already on screen would make Telegram reject the edit with «message is not
+    modified», i.e. a dead button that also logs an error.
+    """
+    strip: list[InlineKeyboardButton] = []
+    if prev_cycle:
+        strip.append(
+            InlineKeyboardButton(
+                text=f"◀ {clock.format_cycle_short(prev_cycle)}",
+                callback_data=f"st:m:{prev_cycle}:{hh}",
+            )
+        )
+    strip.append(
+        InlineKeyboardButton(
+            text=f"📅 {clock.format_cycle(cycle)}", callback_data=f"st:p:{hh}"
+        )
+    )
+    if next_cycle:
+        strip.append(
+            InlineKeyboardButton(
+                text=f"{clock.format_cycle_short(next_cycle)} ▶",
+                callback_data=f"st:m:{next_cycle}:{hh}",
+            )
+        )
+    second = [InlineKeyboardButton(text="📈 Динаміка", callback_data=f"st:t:money:{hh}")]
+    if multi_household:
+        # Carry the VIEWED cycle, so picking a property while looking at a past month
+        # stays in that month instead of teleporting back to today.
+        second.append(
+            InlineKeyboardButton(text="🏘 Житло", callback_data=f"st:h:{hh}:{cycle}")
+        )
+    return InlineKeyboardMarkup(inline_keyboard=[strip, second])
+
+
+def stats_period_keyboard(hh: str = "-") -> InlineKeyboardMarkup:
+    """📆 Період — the ranges worth a tap. Seasons («за зиму») stay conversational:
+    they're rarely tapped and every extra row costs more than it earns."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📅 Цей місяць", callback_data=f"st:P:cur:{hh}"
+                ),
+                InlineKeyboardButton(text="📅 Минулий", callback_data=f"st:P:prev:{hh}"),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📈 Останні 6 міс.", callback_data=f"st:P:6m:{hh}"
+                ),
+                InlineKeyboardButton(text="📆 Цей рік", callback_data=f"st:P:year:{hh}"),
+            ],
+            [InlineKeyboardButton(text="∞ Весь час", callback_data=f"st:P:all:{hh}")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"st:P:cur:{hh}")],
+        ]
+    )
+
+
+def stats_trend_keyboard(mode: str, hh: str = "-") -> InlineKeyboardMarkup:
+    """📈 Динаміка — the three axes of "is it going up", with the active one marked.
+
+    Money and m³ are separate charts on purpose: different measures, different scales.
+    """
+    modes = (("money", "💰 Гроші"), ("prov", "🧾 По послугах"), ("vol", "💧 Обсяг м³"))
+    row = [
+        InlineKeyboardButton(
+            text=("• " + label) if key == mode else label,
+            callback_data=f"st:t:{key}:{hh}",
+        )
+        for key, label in modes
+    ]
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            row,
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"st:P:cur:{hh}")],
+        ]
+    )
+
+
+def stats_household_keyboard(
+    households: list[tuple[str, str]], cycle: str
+) -> InlineKeyboardMarkup:
+    """🏘 Житло — drill into one property, see both combined, or split the total across
+    them. `households` = [(slug, name)]."""
     rows: list[list[InlineKeyboardButton]] = [
-        [InlineKeyboardButton(text=f"📊 {name}", callback_data=f"st:{slug}")]
+        [InlineKeyboardButton(text=f"🏠 {name}", callback_data=f"st:H:{slug}:{cycle}")]
         for slug, name in households
     ]
     rows.append(
-        [InlineKeyboardButton(text="🏘 Розподіл по житлах", callback_data="st:split")]
+        [
+            InlineKeyboardButton(text="🏘 Разом", callback_data=f"st:H:-:{cycle}"),
+            InlineKeyboardButton(text="🏘 Розподіл", callback_data=f"st:H:split:{cycle}"),
+        ]
     )
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"st:m:{cycle}:-")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

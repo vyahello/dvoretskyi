@@ -16,6 +16,19 @@ from decimal import Decimal
 from dvoretskyi.db.models import MeterStatus
 
 
+def format_reading(value: Decimal) -> str:
+    """A meter value as a human reads it: '1888.140' → '1888.14', '90.000' → '90'.
+
+    Readings are stored in a Numeric(14,3) column, so SQLAlchemy hands them back padded
+    to three decimals whatever the meter's own precision. That padding is a storage
+    artifact: «показник 1888.140» reads as noise, and the voice layer would dutifully
+    spell out each trailing zero.
+    """
+    trimmed = value.normalize()
+    # normalize() renders a whole number in exponent form (90.000 → 9E+1) — undo that.
+    return f"{trimmed:f}"
+
+
 def days_until_month_end(now: datetime) -> int:
     """Whole days from `now` to the last day of its month (0 on the last day).
 

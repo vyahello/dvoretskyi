@@ -85,6 +85,54 @@ async def test_suppressed_once_reading_submitted(session, providers):
     assert all(p.provider_name != "Газ (постачання)" for p in pending)
 
 
+async def test_unfiled_draft_is_nudged_for_approval_not_silenced(session, providers):
+    """A stored-but-unfiled reading must RAISE a nudge asking for the approval tap.
+
+    This is the bug that lost readings. Nothing files a reading without the user's tap,
+    so a `validated` draft is not «done» — but the suppression check counted it as done,
+    so a user who photographed early (exactly the behaviour we want) was never reminded,
+    never tapped, and the reading was silently never filed.
+    """
+    gas = providers["Газ (постачання)"]
+    session.add(
+        MeterReading(
+            provider_id=gas.id,
+            cycle="2026-06",
+            value=Decimal("1888.14"),
+            status=MeterStatus.validated,  # photographed early, awaiting the tap
+            created_at=_at(2026, 6, 10),
+        )
+    )
+    await session.commit()
+
+    # Inside the filing window (28th+) → nudge for the tap, carrying the reading id.
+    pending = await compute_pending_meter_nudges(session, now=_at(2026, 6, 28))
+    gas_nudge = next(p for p in pending if p.provider_name == "Газ (постачання)")
+    assert gas_nudge.reading_id is not None
+    assert gas_nudge.pending_value == "1888.14"
+    msg = gas_nudge.message()
+    assert "1888.14" in msg and "подати" in msg.lower()
+    assert "фото" not in msg  # don't ask for a photo we already have
+
+
+async def test_unfiled_draft_is_quiet_before_the_filing_window(session, providers):
+    """The photo is in and the window isn't open yet — there is nothing to nag about."""
+    water = providers["Холодна вода"]
+    session.add(
+        MeterReading(
+            provider_id=water.id,
+            cycle="2026-06",
+            value=Decimal("100.500"),
+            status=MeterStatus.validated,
+            created_at=_at(2026, 6, 10),
+        )
+    )
+    await session.commit()
+    # 27th: the meter window is open (3 days left of 30) but filing starts on the 28th.
+    pending = await compute_pending_meter_nudges(session, now=_at(2026, 6, 27))
+    assert all(p.provider_name != "Холодна вода" for p in pending)
+
+
 async def test_suppressed_when_snoozed(session, providers):
     gas = providers["Газ (постачання)"]
     session.add(

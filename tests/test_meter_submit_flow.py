@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from dvoretskyi import clock
@@ -40,7 +40,10 @@ def test_gated_reply_in_window_offers_approve():
 
 def test_gated_reply_before_window_offers_early():
     text, kb = bot_app._gated_meter_reply(_validated(cons=None), now=_at(10))
-    assert "Подам у вікні" in text and "тисни нижче" in text
+    # We promise a REMINDER, not a filing: nothing files a reading without the user's
+    # tap, so «подам» would be a promise the bot cannot keep.
+    assert "Нагадаю у вікні" in text and "тисни нижче" in text
+    assert "Подам у вікні" not in text
     assert _first_cb(kb) == "se:7:1"  # «подай раніше», attempt 1
 
 
@@ -58,14 +61,19 @@ async def test_second_same_month_photo_supersedes_and_compares_to_prior_month(
     from dvoretskyi.agent.vision import MeterRead
 
     gas = providers["Газ (постачання)"]
+    # `submit_meter_reading` stamps the reading with the REAL current cycle, so the
+    # baseline must be the real previous one — a hardcoded 2026-05/2026-06 pair silently
+    # stopped matching once the calendar moved on.
+    this_cycle = clock.current_cycle()
+    prev_cycle = clock.shift_cycle(this_cycle, -1)
     # A filed reading from last month is the real baseline (1880).
     session.add(
         MeterReading(
             provider_id=gas.id,
-            cycle="2026-05",
+            cycle=prev_cycle,
             value=Decimal("1880.00"),
             status=MeterStatus.submitted,
-            created_at=_at(29, month=5),
+            created_at=clock.now() - timedelta(days=30),
         )
     )
     await session.commit()
@@ -73,7 +81,7 @@ async def test_second_same_month_photo_supersedes_and_compares_to_prior_month(
     def _read(v: str) -> MeterRead:
         return MeterRead(value=Decimal(v), raw=v, note="", kind="gas")
 
-    # First June photo, then a corrected re-shoot of the SAME month.
+    # First photo this month, then a corrected re-shoot of the SAME month.
     first = await tools.submit_meter_reading(
         session,
         "Газ (постачання)",
@@ -89,10 +97,11 @@ async def test_second_same_month_photo_supersedes_and_compares_to_prior_month(
         read=_read("1888.50"),
         auto_submit=False,
     )
-    # Compared to May (1880), NOT to the first June photo (1888) → not «0 спожито».
+    # Compared to last month (1880), NOT to the first photo (1888) → not «0 спожито».
     assert second["ok"] and second["consumption"] == "8.500"
 
-    # Only ONE June draft survives (superseded), plus the permanent May record.
+    # Only ONE draft for this month survives (superseded), plus the permanent record of
+    # the previous month — a re-shoot must never reach back and delete the journal.
     rows = (
         (
             await session.execute(
@@ -102,8 +111,9 @@ async def test_second_same_month_photo_supersedes_and_compares_to_prior_month(
         .scalars()
         .all()
     )
-    june = [r for r in rows if r.cycle == "2026-06"]
-    assert len(june) == 1 and june[0].value == Decimal("1888.50")
+    current = [r for r in rows if r.cycle == this_cycle]
+    assert len(current) == 1 and current[0].value == Decimal("1888.50")
+    assert [r.value for r in rows if r.cycle == prev_cycle] == [Decimal("1880.00")]
 
 
 async def test_below_portal_reading_flagged_without_local_history(
@@ -503,6 +513,47 @@ async def test_fresh_reading_supersedes_older_draft(engine, providers, session):
     rows = (await session.execute(select(MR))).scalars().all()
     assert len(rows) == 1  # the older draft was superseded
     assert str(rows[0].value) == "100.700"  # only the freshest is kept
+
+
+async def test_supersede_spares_previous_months_unfiled_draft(engine, providers, session):
+    """A new month's photo must not delete LAST month's un-filed draft.
+
+    `INFOLV_SUBMIT_ENABLED` is off by default, so the normal path leaves readings
+    `validated` — a user who files on the portal themselves and never taps «Відправив ✓»
+    keeps a `validated` row forever. Superseding by provider alone hard-deleted it (and
+    its archived photo) on the next month's photo, collapsing the month-by-month journal
+    to a single row per meter and disabling the delta guards.
+    """
+    from sqlalchemy import select
+
+    from dvoretskyi.agent.tools import submit_meter_reading
+    from dvoretskyi.agent.vision import MeterRead
+    from dvoretskyi.db.models import MeterReading as MR
+
+    water = providers["Холодна вода"]
+    prev_cycle = clock.shift_cycle(clock.current_cycle(), -1)
+    session.add(
+        MR(
+            provider_id=water.id,
+            cycle=prev_cycle,
+            value=Decimal("99.000"),
+            status=MeterStatus.validated,  # stored, never filed — the common case
+            created_at=clock.now() - timedelta(days=30),
+        )
+    )
+    await session.commit()
+
+    await submit_meter_reading(
+        session,
+        water.name,
+        "/tmp/fake.png",
+        read=MeterRead(value=Decimal("100.500"), raw="", note="", kind="water"),
+        auto_submit=False,
+    )
+    rows = (await session.execute(select(MR))).scalars().all()
+    by_cycle = {r.cycle: r.value for r in rows}
+    assert by_cycle[prev_cycle] == Decimal("99.000")  # last month survives
+    assert by_cycle[clock.current_cycle()] == Decimal("100.500")
 
 
 async def test_supersede_keeps_submitted_history(engine, providers, session):

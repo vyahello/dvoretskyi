@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from decimal import Decimal
 
 from dvoretskyi import clock
@@ -34,6 +35,7 @@ class FakeMessage:
         self.photos: list[tuple[object, str | None]] = []
         self.voices: list[tuple[object, object]] = []
         self.markups: list[object] = []
+        self.photo_markups: list[object] = []
 
     async def answer(self, text: str, **kw) -> None:
         self.answers.append(text)
@@ -41,6 +43,7 @@ class FakeMessage:
 
     async def answer_photo(self, photo, caption: str | None = None, **kw) -> None:
         self.photos.append((photo, caption))
+        self.photo_markups.append(kw.get("reply_markup"))
 
     async def answer_voice(self, voice, reply_markup=None, **kw) -> None:
         self.voices.append((voice, reply_markup))
@@ -395,8 +398,11 @@ async def test_cmd_stats_with_data_sends_photo(engine, providers, session):
     await cmd_stats(msg)
     assert msg.photos and not msg.answers  # chart sent as photo, no text answer
     _photo, caption = msg.photos[0]
-    # Caption now reads in words («червень 2026»), not the raw «2026-06» cycle key.
-    assert "480.00" in caption and "червень" in caption
+    # Caption reads in words («червень 2026»), not the raw «2026-06» cycle key. Derive
+    # the expected month from the clock — hardcoding one made the suite fail by itself
+    # the moment the calendar rolled into the next month.
+    assert "480.00" in caption
+    assert clock.format_cycle(clock.current_cycle()) in caption
 
     # The handler created a real PNG; clean it up.
     path = msg.photos[0][0].path
@@ -414,6 +420,135 @@ async def test_cmd_stats_empty_sends_text(engine, providers):
 def test_format_stats_empty_unit():
     out = _format_stats({"period": "2026-06", "total": "0", "items": []})
     assert "порожньо" in out
+
+
+# --- the 📊 stats surface: month strip, period, dynamics --------------------
+
+
+def _kb(msg):
+    """The keyboard that went out with the last photo/answer."""
+    return msg.photo_markups[-1] if msg.photo_markups else msg.markups[-1]
+
+
+async def test_cmd_stats_offers_the_month_strip(engine, providers, session):
+    """The headline gap this closes: every past month, «по місяцях» and the dynamics
+    charts existed in `get_stats` but NO button reached them — the whole tap surface was
+    one hardcoded view of the current month."""
+    gas = providers["Газ (постачання)"]
+    prev = clock.shift_cycle(clock.current_cycle(), -1)
+    y, m = (int(p) for p in prev.split("-"))
+    session.add(_payment(gas.id, "480.00", "nav1"))
+    session.add(
+        Payment(
+            provider_id=gas.id,
+            amount_uah=Decimal("300.00"),
+            paid_at=datetime(y, m, 10, 12, 0, tzinfo=clock.KYIV),
+            source=PaymentSource.mono_webhook,
+            mono_tx_id="nav0",
+        )
+    )
+    await session.commit()
+
+    msg = FakeMessage()
+    await cmd_stats(msg)
+    assert msg.photos  # cmd_stats sends a photo; the keyboard rides with it
+    data = [b.callback_data for row in _kb(msg).inline_keyboard for b in row]
+    assert f"st:m:{prev}:-" in data  # ◀ steps back to the month that HAS data
+    assert "st:t:money:-" in data  # 📈 Динаміка
+    assert any(d.startswith("st:p:") for d in data)  # 📅 opens the period chooser
+
+
+async def test_month_strip_stops_at_the_edges_of_the_data(engine, providers, session):
+    """No ◀ before the first month with data, no ▶ into the future — an arrow that walks
+    the user into an empty month is a dead end, not navigation."""
+    gas = providers["Газ (постачання)"]
+    session.add(_payment(gas.id, "480.00", "edge1"))  # this month only
+    await session.commit()
+
+    msg = FakeMessage()
+    await cmd_stats(msg)
+    data = [b.callback_data for row in _kb(msg).inline_keyboard for b in row]
+    assert not any(d.startswith("st:m:") for d in data)  # nowhere to go, so no arrows
+    assert any(d.startswith("st:p:") for d in data)  # …but the period chooser stays
+
+
+async def test_stats_chart_png_is_deleted_after_sending(engine, providers, session):
+    """A chart is one-shot: Telegram has its own copy the moment the upload completes.
+
+    Nothing ever deleted them — production had 68 orphaned PNGs (4.7MB) going back a
+    month. The month strip makes tapping between views the point, so the leak rate would
+    have grown with exactly the engagement we're adding.
+    """
+    gas = providers["Газ (постачання)"]
+    session.add(_payment(gas.id, "480.00", "leak1"))
+    await session.commit()
+
+    msg = FakeMessage()
+    await cmd_stats(msg)
+    path = msg.photos[0][0].path
+    assert not os.path.exists(path), "chart PNG leaked into /tmp"
+
+
+async def test_global_error_handler_answers_a_crashing_callback(monkeypatch):
+    """A raise in ANY handler must still answer the user and stop the tap spinner.
+
+    Only `_respond_to_text` had its own try/except; everywhere else aiogram just logged
+    the traceback and the user got NOTHING back — with the callback spinner turning for
+    ~30s because `callback.answer()` was never reached. Driven through a REAL aiogram
+    Dispatcher rather than by calling the handler directly, since the whole claim is that
+    aiogram's error pipeline routes to us.
+    """
+    from datetime import UTC, datetime
+
+    from aiogram import Dispatcher, F, Router
+    from aiogram.types import CallbackQuery, Chat, Update, User
+    from aiogram.types import Message as AioMessage
+
+    answered: list[str | None] = []
+
+    async def fake_answer(self, text=None, **kw):
+        answered.append(text)
+
+    monkeypatch.setattr(CallbackQuery, "answer", fake_answer, raising=False)
+
+    dp = Dispatcher()
+    router = Router()
+
+    @router.callback_query(F.data.startswith("boom:"))
+    async def _boom(callback):
+        raise RuntimeError("simulated handler explosion")
+
+    dp.include_router(router)
+    dp.errors.register(bot_app.on_error)
+
+    chat = Chat(id=1, type="private")
+    update = Update(
+        update_id=1,
+        callback_query=CallbackQuery(
+            id="1",
+            from_user=User(id=1, is_bot=False, first_name="U"),
+            chat_instance="x",
+            data="boom:1",
+            message=AioMessage(message_id=1, date=datetime.now(UTC), chat=chat),
+        ),
+    )
+    handled = await dp.feed_update(bot=type("B", (), {"id": 42})(), update=update)
+    assert handled is True  # swallowed, not re-raised into the polling loop
+    assert answered and "заклинило" in answered[0]  # …and the user actually heard back
+
+
+def test_trim_cuts_on_a_line_boundary():
+    """Telegram hard-rejects >4096 chars; a growing journal reaches that on its own."""
+    from dvoretskyi.bot.app import _cap, _trim
+
+    body = "\n".join(f"• рядок {i}" for i in range(600))
+    out = _trim(body)
+    assert len(out) <= 4096
+    assert out.endswith("…")
+    assert "рядок 0" in out  # keeps the head, drops the tail
+    assert _cap(body) is not None and len(_cap(body)) <= 1024
+    short = "усе гаразд"
+    assert _trim(short) == short and _cap(short) == short  # untouched when it fits
 
 
 # --- free-text error path: never leave the user with silence ----------------

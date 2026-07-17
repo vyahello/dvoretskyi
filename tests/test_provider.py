@@ -86,4 +86,4 @@ async def test_decide_falls_back_after_two_failures(monkeypatch):
     monkeypatch.setattr(p, "_invoke", always_none)
     decision = await p.decide("привіт", {})
     assert decision.tool is None
-    assert decision.message == provider_mod._SAFE_FALLBACK
+    assert decision.message == provider_mod.SAFE_FALLBACK

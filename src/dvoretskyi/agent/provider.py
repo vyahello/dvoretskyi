@@ -13,12 +13,13 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
+from dvoretskyi.agent.jsonx import extract_json_object
 from dvoretskyi.agent.persona import BUTLER_SYSTEM_PROMPT, TOOL_CATALOG
 from dvoretskyi.config import get_settings
 
 log = logging.getLogger(__name__)
 
-_SAFE_FALLBACK = "Щось пішло не так із моїм мисленнєвим апаратом. Спробуй ще раз за мить."
+SAFE_FALLBACK = "Щось пішло не так із моїм мисленнєвим апаратом. Спробуй ще раз за мить."
 
 
 @dataclass
@@ -33,27 +34,21 @@ class LLMProvider(ABC):
     async def decide(self, user_text: str, context: dict) -> Decision: ...
 
 
-def _strip_fences(text: str) -> str:
-    """Remove ```json ... ``` fences a model might wrap JSON in."""
-    t = text.strip()
-    if t.startswith("```"):
-        t = t.split("\n", 1)[1] if "\n" in t else t[3:]
-        if t.rstrip().endswith("```"):
-            t = t.rstrip()[:-3]
-    return t.strip()
-
-
 def parse_decision(raw: str) -> Decision | None:
-    """Parse a model text blob into a Decision; None if it isn't valid JSON."""
-    candidate = _strip_fences(raw)
-    try:
-        data = json.loads(candidate)
-    except (json.JSONDecodeError, TypeError):
-        return None
-    if not isinstance(data, dict):
+    """Parse a model text blob into a Decision; None if no JSON object is in there.
+
+    Uses the same forgiving extraction as the vision turn (`agent/jsonx`): one line of
+    preamble («Ось відповідь:») used to fail the parse outright, which cost a second
+    full `claude -p` round-trip and then a «мій мисленнєвий апарат зламався» apology —
+    for output that was perfectly good JSON with a sentence in front of it.
+    """
+    data = extract_json_object(raw)
+    if data is None:
         return None
     tool = data.get("tool")
-    if tool in ("", "null"):
+    # Guard the TYPE, not just the value: `{"tool": ["get_stats"]}` reached
+    # `TOOLS.get(decision.tool)` and raised «unhashable type: 'list'».
+    if not isinstance(tool, str) or tool in ("", "null"):
         tool = None
     args = data.get("args") or {}
     if not isinstance(args, dict):
@@ -152,7 +147,7 @@ class ClaudeCodeProvider(LLMProvider):
                 return decision
             log.info("claude returned unparseable JSON (attempt %s)", attempt)
 
-        return Decision(tool=None, args={}, message=_SAFE_FALLBACK)
+        return Decision(tool=None, args={}, message=SAFE_FALLBACK)
 
 
 class AnthropicAPIProvider(LLMProvider):

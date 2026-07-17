@@ -7,11 +7,12 @@ Amounts are Decimal internally and stringified at the dict boundary.
 
 from __future__ import annotations
 
+import asyncio
 import html
 import logging
 import random
-import tempfile
-from collections.abc import Awaitable, Callable
+import re
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
@@ -21,7 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from dvoretskyi import clock, households
-from dvoretskyi.agent import meters, photo_store
+from dvoretskyi.agent import charts, meters, photo_store
+from dvoretskyi.agent.charts import fmt_uah as _fmt_uah
 from dvoretskyi.agent.submission import channel_for
 from dvoretskyi.agent.vision import MeterRead, VisionProvider, get_vision_provider
 from dvoretskyi.config import get_settings
@@ -48,9 +50,19 @@ class ToolError(Exception):
 
 
 def _cycle_bounds(cycle: str) -> tuple[datetime, datetime]:
-    """[start, end) tz-aware bounds for a 'YYYY-MM' cycle, in Kyiv tz."""
-    year, month = (int(p) for p in cycle.split("-"))
-    start = datetime(year, month, 1, tzinfo=clock.KYIV)
+    """[start, end) tz-aware bounds for a 'YYYY-MM' cycle, in Kyiv tz.
+
+    Raises ToolError (never a bare ValueError) on anything that isn't a real month —
+    the dispatcher surfaces ToolError to the user, while a ValueError would kill the
+    whole turn.
+    """
+    try:
+        year, month = (int(p) for p in str(cycle).split("-"))
+        if not 1 <= month <= 12:
+            raise ValueError(f"month out of range: {month}")
+        start = datetime(year, month, 1, tzinfo=clock.KYIV)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ToolError(f"Не зрозумів період: {cycle!r}") from exc
     if month == 12:
         end = datetime(year + 1, 1, 1, tzinfo=clock.KYIV)
     else:
@@ -101,12 +113,44 @@ def _season_bounds(season: str, year: int) -> tuple[datetime, datetime]:
     )
 
 
+# A rolling window the user asks for in words: «за пів року», «останні 6 місяців», «6m».
+# Without this the model had no way to express a relative range, so it invented free text
+# that crashed the turn on int() — «динаміка за пів року» being the owner's own example.
+_REL_MONTHS_RE = re.compile(r"(?:^|\D)(\d{1,2})\s*(?:m\b|міс)", re.IGNORECASE)
+_HALF_YEAR_RE = re.compile(r"пів\s*року|півроку|half.?year", re.IGNORECASE)
+
+
+def _relative_months(period: str) -> int | None:
+    """Months in a rolling window, or None if `period` isn't one."""
+    if _HALF_YEAR_RE.search(period):
+        return 6
+    match = _REL_MONTHS_RE.search(period)
+    if match:
+        return max(1, min(24, int(match.group(1))))
+    return None
+
+
+def _rolling_bounds(months: int) -> tuple[datetime, datetime]:
+    """[start of the month `months-1` back, start of next month) — a window that ends
+    with the CURRENT month included, which is what «останні N місяців» means."""
+    now = clock.now()
+    start, _ = _cycle_bounds(clock.shift_cycle(clock.cycle_of(now), -(months - 1)))
+    _, end = _cycle_bounds(clock.cycle_of(now))
+    return start, end
+
+
 def _period_bounds(period: str | None) -> tuple[datetime | None, datetime | None]:
     """Resolve a stats period to [start, end) bounds. None ends = open.
 
-    Accepts 'all', 'YYYY', 'YYYY-MM', and a season (зима/літо/весна/осінь, optional year)
-    so the agent can answer «скільки за зиму» as a real 3-month range."""
-    if not period or period == "all":
+    Accepts 'all', 'YYYY', 'YYYY-MM', a season (зима/літо/весна/осінь, optional year) so
+    «скільки за зиму» is a real 3-month range, and a rolling window («пів року»,
+    «останні 6 місяців», '6m'). Anything else raises ToolError rather than ValueError,
+    so a period the model invents costs the user a sentence, not the whole turn.
+    """
+    if period is None:
+        return None, None
+    period = str(period).strip()
+    if not period or period.casefold() in ("all", "весь час", "завжди"):
         return None, None
     parts = _season_parts(period)
     if parts is not None:
@@ -117,12 +161,19 @@ def _period_bounds(period: str | None) -> tuple[datetime | None, datetime | None
             datetime(year, 1, 1, tzinfo=clock.KYIV),
             datetime(year + 1, 1, 1, tzinfo=clock.KYIV),
         )
-    return _cycle_bounds(period)  # "YYYY-MM"
+    rel = _relative_months(period)
+    if rel is not None:
+        return _rolling_bounds(rel)
+    return _cycle_bounds(period)  # "YYYY-MM" (raises ToolError if it isn't)
 
 
 def _period_label(period: str | None) -> str:
-    """Ukrainian label: 'весь час' / '2026 рік' / 'зима 2026' / 'травень 2026'."""
-    if not period or period == "all":
+    """Ukrainian label: 'весь час' / '2026 рік' / 'зима 2026' / 'травень 2026' /
+    'останні 6 міс.'."""
+    if period is None:
+        return "весь час"
+    period = str(period).strip()
+    if not period or period.casefold() in ("all", "весь час", "завжди"):
         return "весь час"
     parts = _season_parts(period)
     if parts is not None:
@@ -130,6 +181,9 @@ def _period_label(period: str | None) -> str:
         return f"{season} {year}"
     if len(period) == 4 and period.isdigit():
         return f"{period} рік"
+    rel = _relative_months(period)
+    if rel is not None:
+        return f"останні {rel} міс."
     return clock.format_cycle(period)
 
 
@@ -290,12 +344,109 @@ async def get_unpaid(session: AsyncSession, cycle: str | None = None) -> dict:
     }
 
 
-def _fmt_uah(amount: Decimal) -> str:
-    """'2391.39' → '2 391.39' (space-grouped thousands, always 2 decimals)."""
-    cents = int(amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) * 100)
-    sign = "-" if cents < 0 else ""
-    whole, frac = divmod(abs(cents), 100)
-    return f"{sign}{whole:,}".replace(",", " ") + f".{frac:02d}"
+# The widest by-month chart that still reads on a phone. Past this the bars are hairlines
+# and the month labels collide, so an over-long window is clamped to the recent end.
+_MAX_MONTH_COLUMNS = 24
+
+
+def _month_ticks(cycles: list[str]) -> list[str]:
+    """Axis labels for a month series: «чер», or «чер 26» once the window crosses a year.
+
+    A bare month name repeats every 12 months, so a 24-month window drew «чер» twice and
+    the reader had no way to tell which year a column belonged to.
+    """
+    multi_year = len({c.split("-")[0] for c in cycles}) > 1
+    return [clock.format_cycle_short(c, with_year=multi_year) for c in cycles]
+
+
+def _cycles_between(
+    buckets: dict[str, Decimal], start: datetime | None, end: datetime | None
+) -> list[str]:
+    """Every cycle key the by-month view should show.
+
+    Bounded by the requested period where it has bounds; for an open-ended period
+    ('all') we span the data itself, so an empty month between two paid ones still
+    appears as a zero without inventing a runway of months before the journal begins.
+
+    The window never runs past the CURRENT month. «Цей рік» has bounds through December,
+    which zero-filled five months of future into the chart — months that cannot have a
+    payment yet, drawn as if they were months you spent nothing. (A future-dated payment,
+    should one ever exist, still extends the window: `max(buckets)` wins.)
+    """
+    if not buckets:
+        return []
+    first = clock.cycle_of(start) if start is not None else min(buckets)
+    # `end` is exclusive (the 1st of the next month) → step back a day for its cycle.
+    last = clock.cycle_of(end - timedelta(days=1)) if end is not None else max(buckets)
+    last = min(last, clock.current_cycle())
+    first, last = min(first, min(buckets)), max(last, max(buckets))
+    span = clock.months_between(first, last)
+    return [clock.shift_cycle(first, i) for i in range(span + 1)]
+
+
+# Category → its first colour slot in `charts._SLOTS`. Gas owns TWO (постачання +
+# доставлення are separate bills the user reads separately), everything else owns one.
+# This is a FIXED map, not a running counter: the counter made a service's colour depend
+# on which other providers happened to exist, so water was blue in production and aqua in
+# a 4-provider test. Anchoring to the category means water is blue, always. The resulting
+# order is the one validated for colour-vision separation — see `charts._SLOTS`.
+_CATEGORY_SLOT = {
+    "gas": 0,  # + 1 for the second gas name
+    "water": 2,
+    "electricity": 3,
+    "housing": 4,
+    "internet": 5,
+    "mobile": 6,
+}
+_CATEGORY_SLOT_SPAN = {"gas": 2}  # how many slots a category may claim
+
+
+def _series_slots(provs: Sequence[Provider]) -> dict[str, int]:
+    """Service name → stable colour slot.
+
+    Keyed by NAME rather than provider id on purpose: the same service at either
+    property wears one colour, so a household filter never repaints the chart. The slot
+    comes from the service's CATEGORY — a property of the entity, never of its spend —
+    so re-sorting a table by amount can't change which colour a service wears.
+    """
+    slots: dict[str, int] = {}
+    seen: dict[str, int] = {}
+    for prov in sorted(
+        provs, key=lambda p: (_CATEGORY_ORDER.get(p.category.value, 99), p.name)
+    ):
+        if prov.name in slots:
+            continue
+        cat = prov.category.value
+        nth = seen.get(cat, 0)
+        seen[cat] = nth + 1
+        base = _CATEGORY_SLOT.get(cat)
+        if base is None or nth >= _CATEGORY_SLOT_SPAN.get(cat, 1):
+            # An unforeseen category, or more services in one than the palette budgets
+            # for → the neutral «Інші» colour rather than a hue stolen from a neighbour.
+            slots[prov.name] = charts.SLOT_COUNT
+        else:
+            slots[prov.name] = base + nth
+    return slots
+
+
+def _delta_note(total: Decimal, previous: Decimal | None, prev_cycle: str) -> str | None:
+    """'▲ +8% до травня' — the month-over-month line under the grand total.
+
+    None when there's nothing honest to compare against: no previous month, or it was
+    empty. A percentage change off a zero base is undefined, not infinite — so we say
+    nothing rather than print '+∞%'.
+
+    Takes the CYCLE, not a pre-formatted label, because the two phrasings need different
+    cases: «до» governs the genitive (до травня), «у» the locative (як у травні). One
+    label for both produced «≈ як у червня».
+    """
+    if previous is None or previous <= 0 or total <= 0:
+        return None
+    pct = (total - previous) / previous * 100
+    if abs(pct) < 1:
+        return f"≈ як у {clock.format_cycle_locative(prev_cycle)}"
+    arrow = "▲" if pct > 0 else "▼"
+    return f"{arrow} {pct:+.0f}% до {clock.format_cycle_genitive(prev_cycle)}"
 
 
 def _stats_caption(label: str, total: Decimal) -> str:
@@ -334,7 +485,18 @@ async def get_stats(
     «газ»/«вода»/«інтернет») narrows to the matching provider(s) — «газ» catches both
     постачання + доставлення — and combines with `household` so «скільки за газ на
     Зеленій 151» answers only that property's gas. No household + provider/month
-    breakdown = combined across both (the default, unchanged)."""
+    breakdown = combined across both (the default, unchanged).
+
+    An omitted `period` means THIS MONTH — and it has to mean that everywhere, not just
+    in the caption. It used to be substituted only for the label (`period or
+    current_cycle()`) while `_period_bounds(None)` left the query unbounded: the reply
+    then showed the LIFETIME total under the heading «липень 2026», and (once the
+    month-over-month line existed) compared that lifetime total against one real month —
+    «▲ +610% до червня». Two fabricated numbers stated as fact. The model omitting
+    `period` is not hypothetical: the arg is optional in the catalogue, and the
+    dispatcher's own drop-unknown-args retry produces exactly this call.
+    """
+    period = period if period is not None else clock.current_cycle()
     start, end = _period_bounds(period)
 
     # provider → (name, household_id); household id → display name (env-seeded).
@@ -374,10 +536,35 @@ async def get_stats(
     total = sum((p.amount_uah for p in payments), Decimal("0"))
 
     buckets: dict[str, Decimal] = {}
+    month_label: str | None = None
     if breakdown == "month":
         for p in payments:
             key = clock.cycle_of(p.paid_at)
             buckets[key] = buckets.get(key, Decimal("0")) + p.amount_uah
+        # A month nobody paid anything is a real, meaningful zero INSIDE the series —
+        # dropping it would close the gap and make the trend lie about which month is
+        # which. Two things are not real, though: a runway of empty months before the
+        # journal begins, and a span too wide to read.
+        cycles = _cycles_between(buckets, start, end)
+        lost_data = False
+        if len(cycles) > _MAX_MONTH_COLUMNS:
+            # An open-ended «весь час» can span years: production holds one stray 2024-06
+            # payment two years before the journal proper, which zero-filled into a
+            # 26-column chart with 23 empties — hairline bars and no story. Keep the
+            # readable recent window; note if that dropped a month that had money in it.
+            lost_data = any(buckets.get(c) for c in cycles[:-_MAX_MONTH_COLUMNS])
+            cycles = cycles[-_MAX_MONTH_COLUMNS:]
+        # Leading empties are just "before the bot existed" — trim them (costs no data).
+        cycles = _trim_leading_empty(cycles, buckets) or cycles
+        buckets = {c: buckets.get(c, Decimal("0")) for c in cycles}
+        if lost_data:
+            # We dropped months that had payments, so the requested period's total is no
+            # longer what's plotted. Recompute over exactly the columns shown and rename
+            # the view after them — a caption must never claim a total the chart lacks.
+            total = sum(buckets.values(), Decimal("0"))
+            month_label = (
+                f"{clock.format_cycle(cycles[0])} – {clock.format_cycle(cycles[-1])}"
+            )
     elif breakdown == "household":  # split the total across properties
         for p in payments:
             hid = prov_hid.get(p.provider_id) if p.provider_id is not None else None
@@ -389,13 +576,21 @@ async def get_stats(
             key = prov_name.get(p.provider_id, "?") if p.provider_id else "?"
             buckets[key] = buckets.get(key, Decimal("0")) + p.amount_uah
 
+    # A by-month view is a TIME SERIES: it sorts chronologically, oldest first. Ranking
+    # months cheapest-to-priciest (as every other breakdown is ranked) scrambles the very
+    # axis that makes a trend readable. Cycle keys are zero-padded 'YYYY-MM', so
+    # lexicographic order is chronological order.
+    if breakdown == "month":
+        ordered = sorted(buckets.items())
+    else:
+        ordered = sorted(buckets.items(), key=lambda kv: kv[1], reverse=True)
     items = [
         {
             "label": label,
             "total": str(amount),
             "share": (float(amount / total) if total else 0.0),
         }
-        for label, amount in sorted(buckets.items(), key=lambda kv: kv[1], reverse=True)
+        for label, amount in ordered
     ]
 
     period_key = period or clock.current_cycle()
@@ -411,20 +606,50 @@ async def get_stats(
     scope_parts = [
         part for part in (prov_scope, want.name if want is not None else None) if part
     ]
-    label = " · ".join([*scope_parts, _period_label(period_key)])
+    # `month_label` is set only when a by-month view had to clamp its window — then it,
+    # not the requested period, is what the chart actually shows.
+    label = " · ".join([*scope_parts, month_label or _period_label(period_key)])
 
-    # The renderer wants human row labels (by-month buckets are cycles → words).
-    rows: list[tuple[str, Decimal, float]] = [
-        (
-            clock.format_cycle(str(it["label"]))
-            if breakdown == "month"
-            else str(it["label"]),
-            Decimal(str(it["total"])),
-            float(it.get("share") or 0.0),  # type: ignore[arg-type]
+    # Month-over-month: the same scope one cycle back. Only for a real "YYYY-MM" view —
+    # comparing «весь час» or a season to "the previous one" isn't a thing anyone asked.
+    delta_note: str | None = None
+    if _is_cycle(period_key):
+        prev_cycle = clock.shift_cycle(period_key, -1)
+        prev_total = await _period_total(session, prev_cycle, allowed)
+        delta_note = _delta_note(total, prev_total, prev_cycle)
+
+    # Pick the FORM by the data's job. A by-month view's job is trend-over-time → a
+    # column chart on a time axis. Everything else compares magnitudes across a handful
+    # of named things → the table. Rendering months as table rows was why «по місяцях»
+    # never actually showed a trend.
+    # matplotlib is CPU-bound and the box has 2 shared cores: rendering on the event
+    # loop would stall every other Telegram turn for the ~300-600ms it takes.
+    if not items:
+        chart_path = None
+    elif breakdown == "month":
+        ticks = _month_ticks([str(it["label"]) for it in items])
+        chart_path = await _render(
+            charts.render_trend,
+            [
+                (tick, Decimal(str(it["total"])))
+                for tick, it in zip(ticks, items, strict=False)
+            ],
+            label,
         )
-        for it in items
-    ]
-    chart_path = _render_table(rows, label, total) if rows else None
+    else:
+        # Only a by-provider row carries provider identity — a household row gets
+        # slot=None (no chip), since a colour there would imply an identity it lacks.
+        slots = _series_slots(provs) if breakdown == "provider" else {}
+        rows: list[tuple[str, Decimal, float, int | None]] = [
+            (
+                str(it["label"]),
+                Decimal(str(it["total"])),
+                float(it.get("share") or 0.0),  # type: ignore[arg-type]
+                slots.get(str(it["label"])) if breakdown == "provider" else None,
+            )
+            for it in items
+        ]
+        chart_path = await _render(charts.render_table, rows, label, total, delta_note)
 
     if not items:
         # Empty period (e.g. a month with no payments) must still answer — never hang.
@@ -432,6 +657,8 @@ async def get_stats(
     elif chart_path:
         # Table image carries the breakdown → caption is just the period + total.
         message = _stats_caption(label, total)
+        if delta_note:
+            message += f"\n{delta_note}"
     else:
         # No image (matplotlib missing) → the text must carry the full breakdown.
         message = _stats_summary(label, total, items, breakdown)
@@ -448,155 +675,409 @@ async def get_stats(
     }
 
 
-# Distinct colour per group, cycled if there are more groups than colours.
-_CHART_PALETTE = (
-    "#2a9d8f",
-    "#e76f51",
-    "#e9c46a",
-    "#264653",
-    "#8ab17d",
-    "#f4a261",
-    "#5b8e7d",
-    "#bc4749",
-    "#457b9d",
-    "#9d4edd",
-)
+def _is_cycle(period: str) -> bool:
+    """True for a real 'YYYY-MM' month key (not 'all' / 'YYYY' / a season)."""
+    parts = period.split("-")
+    return (
+        len(parts) == 2
+        and len(parts[0]) == 4
+        and parts[0].isdigit()
+        and parts[1].isdigit()
+        and 1 <= int(parts[1]) <= 12
+    )
 
 
-# Modern-table palette (one accent per row; a flat, calm UI look — not 90s bar-chart).
-_INK = "#1f2933"  # primary text
-_MUTED = "#7b8794"  # secondary text / column headers
-_STRIPE = "#f4f6f8"  # zebra row background
-_TRACK = "#e4e7eb"  # empty share-bar track
+async def _period_total(
+    session: AsyncSession, cycle: str, allowed: set[int] | None
+) -> Decimal | None:
+    """Total spend in `cycle` under the same scope, for the month-over-month delta.
+    None when the month holds no payments at all (→ no honest % to show)."""
+    start, end = _cycle_bounds(cycle)
+    conds: list[ColumnElement[bool]] = [
+        Payment.provider_id.is_not(None),
+        Payment.paid_at >= start,
+        Payment.paid_at < end,
+    ]
+    if allowed is not None:
+        conds.append(Payment.provider_id.in_(list(allowed) or [-1]))
+    rows = (await session.execute(select(Payment.amount_uah).where(*conds))).scalars()
+    amounts = list(rows)
+    return sum(amounts, Decimal("0")) if amounts else None
 
 
-def _render_table(
-    rows: list[tuple[str, Decimal, float]], title: str, total: Decimal
-) -> str:
-    """Render the breakdown as a clean, modern data table (PNG).
+async def _render(fn: Callable[..., str], *args: Any) -> str | None:
+    """Run a chart renderer off the event loop, and never let a rendering problem cost
+    the user their answer: matplotlib missing, a font gap or a degenerate figure all
+    degrade to a text reply (the caller falls back to `_stats_summary`)."""
+    try:
+        return await asyncio.to_thread(fn, *args)
+    except Exception:  # noqa: BLE001 — a chart is a nicety; the numbers are the answer
+        log.exception("chart render failed; falling back to text")
+        return None
 
-    rows: (label, amount, share) sorted biggest-first. Columns: service · mini share-bar
-    · amount · share%. Zebra striping, a header band with the grand total, no axes — it
-    reads like a card in a finance app, not a matplotlib bar chart.
+
+# --- dynamics (month-over-month trend) --------------------------------------
+
+TREND_MODES = ("money", "provider", "volume")
+_TREND_DEFAULT_MONTHS = 12
+# Below two months there is no "dynamic" to show — one bar is a number, not a trend.
+_TREND_MIN_MONTHS = 2
+
+
+def _window(months: int, end_cycle: str | None = None) -> list[str]:
+    """The last `months` cycles ending at `end_cycle` (default: this month), oldest
+    first."""
+    end = end_cycle or clock.current_cycle()
+    return [clock.shift_cycle(end, -i) for i in range(months - 1, -1, -1)]
+
+
+def _trim_leading_empty(cycles: list[str], totals: dict[str, Decimal]) -> list[str]:
+    """Drop months before the first one with data.
+
+    Leading zeros are just "before the bot existed" (the journal starts mid-2026) and
+    would render as a runway of empty columns. Zeros INSIDE the range are kept — a
+    month where nothing was paid is real information, not padding.
     """
-    import matplotlib
+    first = next((i for i, c in enumerate(cycles) if totals.get(c)), None)
+    return [] if first is None else cycles[first:]
 
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from matplotlib.patches import FancyBboxPatch, Rectangle
 
-    n = len(rows)
-    # Vertical layout in row-units (top → bottom): title band, column header, then rows.
-    title_h, header_h, row_h, pad = 1.5, 0.8, 1.0, 0.4
-    units = title_h + header_h + n * row_h + pad
-    fig, ax = plt.subplots(figsize=(8.6, 0.52 * units + 0.4))
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, units)
-    ax.axis("off")
+async def _payments_in_window(
+    session: AsyncSession, cycles: list[str], allowed: set[int] | None
+) -> list[Payment]:
+    if not cycles:
+        return []
+    start, _ = _cycle_bounds(cycles[0])
+    _, end = _cycle_bounds(cycles[-1])
+    conds: list[ColumnElement[bool]] = [
+        Payment.provider_id.is_not(None),
+        Payment.paid_at >= start,
+        Payment.paid_at < end,
+    ]
+    if allowed is not None:
+        conds.append(Payment.provider_id.in_(list(allowed) or [-1]))
+    return list((await session.execute(select(Payment).where(*conds))).scalars())
 
-    # Column anchors (x in 0..1).
-    x_name = 0.045
-    x_bar0, x_bar1 = 0.45, 0.70
-    x_amount = 0.875  # right-aligned
-    x_share = 0.965  # right-aligned
 
-    top = units - pad
-    # --- title band: «Комуналка · <період>» left, grand total right ---
-    ax.text(x_name, top - 0.55, "Комуналка", fontsize=20, fontweight="bold", color=_INK)
-    ax.text(x_name, top - 1.12, title, fontsize=13, color=_MUTED)
-    ax.text(
-        x_share,
-        top - 0.62,
-        f"{_fmt_uah(total)} ₴",
-        fontsize=20,
-        fontweight="bold",
-        color=_INK,
-        ha="right",
+def _trend_stats_line(totals: list[Decimal], cycles: list[str]) -> str:
+    """«сер. 4 210 ₴ · пік січень 6 890 ₴ · ▲ +8% до травня» — the numbers a bar chart
+    can only approximate."""
+    if not totals:
+        return ""
+    avg = sum(totals, Decimal("0")) / len(totals)
+    peak_i = max(range(len(totals)), key=lambda i: totals[i])
+    parts = [
+        f"сер. {_fmt_uah(avg)} ₴",
+        f"пік {clock.format_cycle_genitive(cycles[peak_i])} — "
+        f"{_fmt_uah(totals[peak_i])} ₴",
+    ]
+    if len(totals) >= 2:
+        note = _delta_note(totals[-1], totals[-2], cycles[-2])
+        if note:
+            parts.append(note)
+    return " · ".join(parts)
+
+
+async def get_stats_trend(
+    session: AsyncSession,
+    mode: str = "money",
+    months: object = _TREND_DEFAULT_MONTHS,
+    household: str | None = None,
+    provider: str | None = None,
+) -> dict:
+    """Month-over-month DYNAMICS — how spending (or consumption) moves over time.
+
+    Distinct from `get_stats`, which answers "what did one period cost, split by
+    service". This answers "is it going up, and since when".
+
+    `mode`:
+      * "money"    — total ₴ per month (columns + average line);
+      * "provider" — the same months split per service (stacked columns), so you can
+        see WHICH service moved;
+      * "volume"   — m³ per meter from the readings journal, as small multiples (gas
+        runs ~40 m³/month and water ~3 m³ — one shared axis would flatten water, and a
+        second y-axis is never the answer).
+
+    Money and volume are deliberately separate charts: they are different measures and
+    would need two scales on one plot.
+    """
+    mode = (mode or "money").strip().casefold()
+    if mode not in TREND_MODES:
+        mode = "money"
+    span = _parse_months(months)
+
+    provs = (await session.execute(select(Provider))).scalars().all()
+    want = await households.resolve(session, household) if household else None
+    allowed = _allowed_pids(provs, want, provider)
+    scope = " · ".join(
+        part
+        for part in (_provider_scope(provs, provider), getattr(want, "name", None))
+        if part
     )
-    ax.text(x_share, top - 1.16, "разом", fontsize=12, color=_MUTED, ha="right")
 
-    # --- column header ---
-    hy = top - title_h - header_h / 2
-    ax.text(x_name, hy, "ПОСЛУГА", fontsize=10.5, color=_MUTED, va="center")
-    ax.text(x_amount, hy, "СУМА", fontsize=10.5, color=_MUTED, va="center", ha="right")
-    ax.text(x_share, hy, "ЧАСТКА", fontsize=10.5, color=_MUTED, va="center", ha="right")
+    if mode == "volume":
+        # `allowed` matters here as much as it does for money: «динаміка споживання води»
+        # resolves scope to «Холодна вода» and TITLES the chart that — so dropping the
+        # filter drew a gas panel under a heading that said water.
+        return await _trend_volume(session, provs, span, want, scope, allowed)
+    return await _trend_money(session, provs, span, allowed, scope, mode)
 
-    # --- data rows ---
-    max_share = max((s for _, _, s in rows), default=0.0) or 1.0
-    body_top = top - title_h - header_h
-    for i, (label, amount, share) in enumerate(rows):
-        ry = body_top - i * row_h  # row top edge
-        cy = ry - row_h / 2  # row centre
-        if i % 2 == 0:
-            ax.add_patch(
-                Rectangle(
-                    (0.02, ry - row_h),
-                    0.96,
-                    row_h,
-                    facecolor=_STRIPE,
-                    edgecolor="none",
-                    zorder=0,
+
+def _parse_months(months: object) -> int:
+    """Clamp the window the model (or a button) asked for: 2..24 months. A wider window
+    than the journal holds is harmless — empty leading months get trimmed."""
+    try:
+        span = int(str(months))
+    except (TypeError, ValueError):
+        span = _TREND_DEFAULT_MONTHS
+    return max(_TREND_MIN_MONTHS, min(24, span))
+
+
+def _allowed_pids(
+    provs: Sequence[Provider], want: Any, provider: str | None
+) -> set[int] | None:
+    """Provider ids surviving the household ∩ provider filters (None = no filter)."""
+    allowed: set[int] | None = None
+    if want is not None:
+        allowed = {p.id for p in provs if p.household_id == want.id}
+    needle = (provider or "").strip().casefold()
+    if needle:
+        matched = {p.id for p in provs if needle in p.name.casefold()}
+        allowed = matched if allowed is None else allowed & matched
+    return allowed
+
+
+def _provider_scope(provs: Sequence[Provider], provider: str | None) -> str | None:
+    needle = (provider or "").strip().casefold()
+    if not needle:
+        return None
+    names = [p.name for p in provs if needle in p.name.casefold()]
+    return names[0] if len(names) == 1 else needle[:1].upper() + needle[1:]
+
+
+async def _trend_money(
+    session: AsyncSession,
+    provs: Sequence[Provider],
+    span: int,
+    allowed: set[int] | None,
+    scope: str,
+    mode: str,
+) -> dict:
+    cycles = _window(span)
+    payments = await _payments_in_window(session, cycles, allowed)
+
+    totals: dict[str, Decimal] = {c: Decimal("0") for c in cycles}
+    for p in payments:
+        key = clock.cycle_of(p.paid_at)
+        if key in totals:
+            totals[key] += p.amount_uah
+    cycles = _trim_leading_empty(cycles, totals)
+
+    if len(cycles) < _TREND_MIN_MONTHS:
+        return _trend_too_short(mode, scope)
+
+    labels = _month_ticks(cycles)
+    what = "витрати по послугах" if mode == "provider" else "динаміка витрат"
+    title = " · ".join(part for part in (scope, what) if part)
+
+    if mode == "provider":
+        prov_name = {p.id: p.name for p in provs}
+        slots = _series_slots(provs)
+        per: dict[str, dict[str, Decimal]] = {}
+        for p in payments:
+            key = clock.cycle_of(p.paid_at)
+            if key not in totals:
+                continue
+            name = prov_name.get(p.provider_id, "?") if p.provider_id else "?"
+            per.setdefault(name, {})[key] = (
+                per.setdefault(name, {}).get(key, Decimal("0")) + p.amount_uah
+            )
+        series = _fold_series(per, cycles, slots)
+        chart = await _render(charts.render_stacked, labels, series, title)
+    else:
+        chart = await _render(
+            charts.render_trend,
+            [(lbl, totals[c]) for lbl, c in zip(labels, cycles, strict=False)],
+            title,
+        )
+
+    ordered = [totals[c] for c in cycles]
+    grand = sum(ordered, Decimal("0"))
+    prefix = f"{scope} · " if scope else ""
+    # Name the view: «💰 Гроші» and «🧾 По послугах» cover the same months and the same
+    # total, so an identical caption made the two taps look like one broken button.
+    view = "по послугах" if mode == "provider" else "по місяцях"
+    head = f"📈 {prefix}{len(cycles)} міс. {view} — разом {_fmt_uah(grand)} ₴"
+    message = f"{head}\n{_trend_stats_line(ordered, cycles)}".strip()
+    return {
+        "mode": mode,
+        "months": cycles,
+        "totals": [str(v) for v in ordered],
+        "total": str(grand),
+        "chart_path": chart,
+        "message": message,
+    }
+
+
+def _fold_series(
+    per: dict[str, dict[str, Decimal]],
+    cycles: list[str],
+    slots: dict[str, int],
+) -> list[tuple[str, list[Decimal], int]]:
+    """Per-service rows for the stacked chart, biggest first, folded to 6 + «Інші».
+
+    Past the palette's slots a 7th hue would be indistinguishable under CVD from one
+    already in use, so the tail folds into a single neutral «Інші» rather than
+    generating colours. `slot` still comes from the service's stable display order, so
+    a service keeps its colour whatever its rank this month.
+    """
+    # Keep as many series as the palette has validated slots (7) — not 6. The real setup
+    # has exactly 7 distinct service names, so a hardcoded 6 folded one genuine service
+    # into «Інші» when there was a colour sitting free for it.
+    ranked = sorted(per.items(), key=lambda kv: sum(kv[1].values()), reverse=True)
+    keep, tail = ranked[: charts.SLOT_COUNT], ranked[charts.SLOT_COUNT :]
+    series = [
+        (name, [buckets.get(c, Decimal("0")) for c in cycles], slots.get(name, 0))
+        for name, buckets in keep
+    ]
+    if tail:
+        merged = [
+            sum((b.get(c, Decimal("0")) for _, b in tail), Decimal("0")) for c in cycles
+        ]
+        series.append(("Інші", merged, charts.SLOT_COUNT))  # → the neutral fold
+    return series
+
+
+def _trend_too_short(mode: str, scope: str) -> dict:
+    """One month of history is a number, not a trend — say so plainly instead of
+    rendering a single lonely bar and calling it dynamics."""
+    what = "показників" if mode == "volume" else "витрат"
+    return {
+        "mode": mode,
+        "months": [],
+        "totals": [],
+        "total": "0",
+        "chart_path": None,
+        "message": (
+            f"Для динаміки {what} треба хоча б два місяці, а в мене поки менше. "
+            "Ще трохи — і намалюю."
+        ),
+    }
+
+
+async def _trend_volume(
+    session: AsyncSession,
+    provs: Sequence[Provider],
+    span: int,
+    want: Any,
+    scope: str,
+    allowed: set[int] | None = None,
+) -> dict:
+    """m³ per meter per month, from our own readings journal.
+
+    Consumption is DERIVED from consecutive readings rather than read out of
+    `MeterReading.consumption_delta`: that column is only filled when the delta
+    validator had a previous value to hand, so on real data it is mostly NULL. The
+    readings themselves are the source of truth — a meter is monotonic, so
+    value(this month) − value(previous month) is the volume.
+    """
+    cycles = _window(span)
+    slots = _series_slots(provs)
+    hh_names = {
+        h.id: h.name for h in (await session.execute(select(Household))).scalars()
+    }
+    meter_provs = [p for p in provs if p.meter_window is not None or p.static_reading]
+    if want is not None:
+        meter_provs = [p for p in meter_provs if p.household_id == want.id]
+    if allowed is not None:  # the провайдер filter the scope/title already claims
+        meter_provs = [p for p in meter_provs if p.id in allowed]
+    # Two properties own identically-named meters (Газ (доставлення)) — without the
+    # household the two panels are indistinguishable.
+    shared = {
+        p.name for p in meter_provs if [q.name for q in meter_provs].count(p.name) > 1
+    }
+
+    panels: list[tuple[str, list[str], list[Decimal], int]] = []
+    for prov in sorted(meter_provs, key=_provider_order_key):
+        readings = await _readings_by_cycle(session, prov.id)
+        used = [c for c in cycles if c in readings]
+        if len(used) < _TREND_MIN_MONTHS:
+            continue
+        drawn: list[str] = []
+        values: list[Decimal] = []
+        for prev, cur in zip(used, used[1:], strict=False):
+            # ONLY consecutive months. With a gap (a month never filed) the difference
+            # spans several months, and charting it against `cur` alone invents a spike:
+            # a quarter of gas would be drawn as one monstrous month. We can't split it
+            # across the missing months honestly, so we don't draw it at all.
+            if clock.months_between(prev, cur) != 1:
+                continue
+            delta = readings[cur] - readings[prev]
+            if delta < 0:  # a meter rolled over or a value was mis-entered — skip it
+                continue
+            drawn.append(cur)
+            values.append(delta)
+        labels = _month_ticks(drawn)
+        if values:
+            name = prov.name
+            if name in shared and prov.household_id in hh_names:
+                name = f"{name} · {hh_names[prov.household_id]}"
+            panels.append((name, labels, values, slots.get(prov.name, 0)))
+
+    if not panels:
+        return _trend_too_short("volume", scope)
+
+    title = " · ".join(part for part in (scope, "спожито по місяцях") if part)
+    chart = await _render(charts.render_volume, panels, title)
+    lines = [f"📈 {title or 'Спожито по місяцях'}"]
+    for name, _labels, values, _slot in panels:
+        # Quantize, then trim: «41.20» is read «сорок один кома двадцять» (i.e. 41.20,
+        # not 41.2) — a trailing zero the screen doesn't need and the voice mispronounces.
+        avg = (sum(values, Decimal("0")) / len(values)).quantize(Decimal("0.01"))
+        lines.append(
+            f"• {name}: сер. {meters.format_reading(avg)} м³/міс, "
+            f"останнє {meters.format_reading(values[-1])} м³"
+        )
+    return {
+        "mode": "volume",
+        "months": cycles,
+        "totals": [],
+        "total": "0",
+        "chart_path": chart,
+        "message": "\n".join(lines),
+    }
+
+
+async def _readings_by_cycle(
+    session: AsyncSession, provider_id: int
+) -> dict[str, Decimal]:
+    """cycle → the authoritative reading for that month. A `submitted` reading wins over
+    a later un-filed re-photo of the same month (same rule as the journal)."""
+    rows = (
+        (
+            await session.execute(
+                select(MeterReading)
+                .where(
+                    MeterReading.provider_id == provider_id,
+                    MeterReading.value.is_not(None),
+                    MeterReading.status.in_(
+                        (MeterStatus.validated, MeterStatus.submitted)
+                    ),
                 )
-            )
-        accent = _CHART_PALETTE[i % len(_CHART_PALETTE)]
-        ax.text(x_name, cy, label, fontsize=13.5, color=_INK, va="center", zorder=2)
-        # share mini-bar: full track + accent fill scaled to the biggest share.
-        bar_h = row_h * 0.26
-        ax.add_patch(
-            FancyBboxPatch(
-                (x_bar0, cy - bar_h / 2),
-                x_bar1 - x_bar0,
-                bar_h,
-                boxstyle="round,pad=0,rounding_size=0.07",
-                facecolor=_TRACK,
-                edgecolor="none",
-                mutation_aspect=0.4,
-                zorder=1,
+                .order_by(MeterReading.created_at)
             )
         )
-        fill_w = (x_bar1 - x_bar0) * (share / max_share)
-        if fill_w > 0.004:
-            ax.add_patch(
-                FancyBboxPatch(
-                    (x_bar0, cy - bar_h / 2),
-                    fill_w,
-                    bar_h,
-                    boxstyle="round,pad=0,rounding_size=0.07",
-                    facecolor=accent,
-                    edgecolor="none",
-                    mutation_aspect=0.4,
-                    zorder=2,
-                )
-            )
-        ax.text(
-            x_amount,
-            cy,
-            f"{_fmt_uah(amount)}",
-            fontsize=13.5,
-            fontweight="bold",
-            color=_INK,
-            va="center",
-            ha="right",
-            zorder=2,
-        )
-        ax.text(
-            x_share,
-            cy,
-            f"{share:.0%}",
-            fontsize=12.5,
-            color=_MUTED,
-            va="center",
-            ha="right",
-            zorder=2,
-        )
-
-    fig.subplots_adjust(left=0.01, right=0.99, top=0.99, bottom=0.01)
-    tmp = tempfile.NamedTemporaryFile(
-        prefix="dvoretskyi_stats_", suffix=".png", delete=False
+        .scalars()
+        .all()
     )
-    fig.savefig(tmp.name, dpi=150)
-    plt.close(fig)
-    return tmp.name
+    out: dict[str, Decimal] = {}
+    for r in rows:
+        if r.value is None:
+            continue
+        existing = out.get(r.cycle)
+        if existing is None or r.status == MeterStatus.submitted:
+            out[r.cycle] = r.value
+    return out
 
 
 async def log_payment_manual(
@@ -770,19 +1251,28 @@ async def meter_hints(
 
 
 async def _supersede_pending(
-    session: AsyncSession, provider_id: int, keep_id: int | None
+    session: AsyncSession, provider_id: int, keep_id: int | None, cycle: str
 ) -> None:
-    """Drop this meter's older un-filed readings — we keep & submit only the freshest.
+    """Drop this meter's older un-filed readings **for this month** — we keep & submit
+    only the freshest.
 
-    A fresh photo of a meter replaces any earlier draft of the SAME meter that hasn't
-    been filed yet, so the journal never accumulates stale duplicates (that confused the
-    user: «виглядає як 3 фото»). Submitted readings are the permanent record — untouched.
+    A fresh photo of a meter replaces an earlier draft of the SAME meter in the SAME
+    month, so the journal never accumulates stale duplicates (that confused the user:
+    «виглядає як 3 фото»). Submitted readings are the permanent record — untouched.
+
+    The `cycle` scope is load-bearing. Without it this hard-deleted every un-filed
+    reading of the meter ever taken: since `INFOLV_SUBMIT_ENABLED` defaults off, the
+    normal path leaves readings `validated`, so July's photo silently destroyed June's
+    row and its archived photo. That collapsed the month-by-month journal to one line
+    per meter, left `consumption` uncomputable, and disabled the backwards/spike guards
+    (every reading became «Перший показник — узяв за відлік»).
     """
     rows = (
         (
             await session.execute(
                 select(MeterReading).where(
                     MeterReading.provider_id == provider_id,
+                    MeterReading.cycle == cycle,
                     MeterReading.id != keep_id,
                     MeterReading.status != MeterStatus.submitted,
                 )
@@ -940,8 +1430,9 @@ async def submit_meter_reading(
     # rather than dangle the soon-deleted temp path (which would later 404 as a phantom
     # «📸» that points at nothing).
     reading.photo_ref = photo_store.archive(image_path, reading.id)
-    # A fresh reading for this meter supersedes any earlier un-filed draft of it.
-    await _supersede_pending(session, prov.id, reading.id)
+    # A fresh reading supersedes an earlier un-filed draft of this meter THIS MONTH.
+    # Earlier months are the journal — never collateral of a new photo.
+    await _supersede_pending(session, prov.id, reading.id, reading.cycle)
 
     if not verdict.ok or uncertain:
         # A real validation failure (backwards/zero/spike) explains itself; an OCR
@@ -1398,6 +1889,19 @@ async def _photo_result(session: AsyncSession, reading: MeterReading) -> dict:
 
 _METER_EMOJI = {"water": "💧", "gas": "🔥"}
 
+# Months of journal shown per meter before folding the tail into «…і ще N міс.». A year
+# is what anyone actually reads, and it keeps the reply well inside Telegram's limits
+# however long the journal grows.
+_JOURNAL_MONTHS = 12
+
+
+def _parse_limit(value: object, default: int) -> int:
+    """A caller- or model-supplied row cap, clamped to something sane."""
+    try:
+        return max(1, min(60, int(str(value))))
+    except (TypeError, ValueError):
+        return default
+
 
 def _meter_journal_message(sections: list[dict]) -> str:
     """Render the local journal newest-first: month → reading (consumption) → when it was
@@ -1426,6 +1930,8 @@ def _meter_journal_message(sections: list[dict]) -> str:
             lines.append(
                 f"• {clock.format_cycle(r['cycle'])} — {r['value']}{cons} · {when}{mark}"
             )
+        if sec.get("more"):
+            lines.append(f"  …і ще {sec['more']} міс. — спитай, покажу.")
         blocks.append("\n".join(lines))
     if not blocks:
         return (
@@ -1441,12 +1947,20 @@ def _meter_journal_message(sections: list[dict]) -> str:
 async def get_meter_journal(
     session: AsyncSession,
     provider_name: str | None = None,
+    limit: object = _JOURNAL_MONTHS,
 ) -> dict:
     """Month-by-month meter journal from **our own records** — the only place with the
     full history AND **when each reading was filed** (the infolviv portal returns just
     the latest factor). Covers every meter we track across both households (the secondary
     static gas included), newest-first, marking which months still have a saved photo.
-    Optional `provider_name` narrows to one meter («історія газу»)."""
+    Optional `provider_name` narrows to one meter («історія газу»).
+
+    `limit` caps the months shown PER METER (the rest are counted in «…і ще N місяців»).
+    Without it the reply grew ~180 chars a month forever and crossed Telegram's 4096-char
+    ceiling after roughly two years — at which point the send raised and the «📜 Історія»
+    view was permanently broken, exactly when the history had become worth reading.
+    """
+    months = _parse_limit(limit, _JOURNAL_MONTHS)
     prov_stmt = select(Provider).where(Provider.meter_window.is_not(None))
     if provider_name:
         prov = await _provider_by_name(session, provider_name)
@@ -1486,7 +2000,9 @@ async def get_meter_journal(
         for r in rows:
             by_cycle.setdefault(r.cycle, []).append(r)
         readings = []
-        for cycle in sorted(by_cycle, reverse=True):
+        shown = sorted(by_cycle, reverse=True)
+        more = max(0, len(shown) - months)
+        for cycle in shown[:months]:
             group = by_cycle[cycle]
             # The line shows the filed (submitted) reading when there is one — it's the
             # authoritative value + date; otherwise the freshest draft.
@@ -1536,6 +2052,7 @@ async def get_meter_journal(
                 "household": hh_name,
                 "category": prov.category.value,
                 "readings": readings,
+                "more": more,
             }
         )
     return {"sections": sections, "message": _meter_journal_message(sections)}
@@ -1901,6 +2418,7 @@ Tool = Callable[..., Awaitable[dict[str, Any]]]
 TOOLS: dict[str, Tool] = {
     "get_unpaid": get_unpaid,
     "get_stats": get_stats,
+    "get_stats_trend": get_stats_trend,
     "get_payment_journal": get_payment_journal,
     "get_payment_plan": get_payment_plan,
     "log_payment_manual": log_payment_manual,

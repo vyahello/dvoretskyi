@@ -20,12 +20,24 @@ from dvoretskyi.reminders.engine import (
 
 
 def _now() -> datetime:
-    return datetime(2026, 6, 14, 11, 0, tzinfo=clock.KYIV)
+    """Mid-month, in the CURRENT cycle.
+
+    Fixed day (deterministic) but never a fixed month: `snooze_reminder` stamps its
+    NudgeLog with the real `clock.current_cycle()`, so a hardcoded 2026-06 «now» stopped
+    matching the moment the calendar rolled into July and the suite began failing on its
+    own. Nudge state is keyed per cycle — the frozen `now` must live in the same one.
+    """
+    today = clock.now()
+    return datetime(today.year, today.month, 14, 11, 0, tzinfo=clock.KYIV)
+
+
+def _cycle() -> str:
+    return clock.cycle_of(_now())
 
 
 def _fetch(balance, ok=True):
     async def fake():
-        return Balance(balance, "2026-06-14", ok=ok)
+        return Balance(balance, _now().date().isoformat(), ok=ok)
 
     return fake
 
@@ -77,7 +89,7 @@ async def test_suppressed_when_snoozed(session, providers):
     session.add(
         NudgeLog(
             provider_id=gig.id,
-            cycle="2026-06",
+            cycle=_cycle(),
             kind=NudgeKind.balance,
             nudged_at=_now(),
             snoozed_until=_now() + timedelta(days=3),

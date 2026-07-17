@@ -7,6 +7,7 @@ fabricate tool *results*.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import random
 import re
@@ -18,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from dvoretskyi import clock
 from dvoretskyi.agent import tools as tools_mod
-from dvoretskyi.agent.provider import Decision, LLMProvider
+from dvoretskyi.agent.provider import SAFE_FALLBACK, Decision, LLMProvider
 from dvoretskyi.agent.tools import ToolError
 from dvoretskyi.config import get_settings
 from dvoretskyi.db.models import MeterReading, MeterStatus, Payment, Provider
@@ -29,8 +30,12 @@ log = logging.getLogger(__name__)
 # «секунду») but carries no tool is a dead-end — the bot can't call back, so the user
 # is left with a preamble and no data. When we see this shape we re-ask the model once
 # (below), telling it to actually call the tool or answer in full without promises.
+# Future-tense FETCH verbs only. «пораху», «за мить», «секунд», «момент», «хвилин» were
+# dropped: they appear in perfectly good non-promise copy (the persona's own «розкажи як
+# ти працюєш» answer says «порахую й відповім»), so they bought a wasted second LLM turn
+# — seconds of extra latency — on replies that were never stalled.
 _ACTION_PROMISE_RE = re.compile(
-    r"гля[нм]|підні[мж]|підтягн|пораху|зведу|за мить|секунд|хвилин|зачекай|момент",
+    r"гля[нм]|підні[мж]|підтягн|зведу|зачекай",
     re.IGNORECASE,
 )
 _RETRY_NUDGE = (
@@ -42,8 +47,17 @@ _RETRY_NUDGE = (
 
 
 def _promises_action(message: str) -> bool:
-    """True if the persona line promises a fetch it never delivered (no tool)."""
-    return bool(_ACTION_PROMISE_RE.search(message or ""))
+    """True if the persona line promises a fetch it never delivered (no tool).
+
+    `SAFE_FALLBACK` is excluded explicitly: it's what `decide` returns when the LLM
+    call itself failed (two timeouts, an outage). Retrying THAT is guaranteed waste —
+    it means a second doomed round of `claude -p` calls, and the fallback's own wording
+    used to match the regex, so an outage cost up to ~240s of «друкує…» before the user
+    saw the error line.
+    """
+    if not message or message == SAFE_FALLBACK:
+        return False
+    return bool(_ACTION_PROMISE_RE.search(message))
 
 
 def _topic_gen(args: dict) -> str:
@@ -126,6 +140,22 @@ def _progress_line(tool: str, args: dict) -> str:
                 "Гортаю витрати по полицях…",
             ]
         )
+    if tool == "get_stats_trend":
+        if (args or {}).get("mode") == "volume":
+            return random.choice(
+                [
+                    "Дивлюся, скільки намотало по місяцях…",
+                    "Зводжу споживання по місяцях…",
+                ]
+            )
+        return random.choice(
+            [
+                "Малюю динаміку по місяцях…",
+                "Дивлюся, як воно мінялося…",
+                "Вибудовую місяці в ряд…",
+                "Зводжу помісячну картину…",
+            ]
+        )
     if tool == "get_payment_journal":
         return random.choice(
             [
@@ -159,6 +189,40 @@ def _progress_line(tool: str, args: dict) -> str:
     return random.choice(["Хвилинку…", "Зараз гляну…", "Момент…", "Уже беруся…"])
 
 
+async def _retry_without_unknown_args(
+    tool_fn: Callable, session: AsyncSession, decision: Decision, exc: TypeError
+) -> dict | None:
+    """Re-run a tool with only the kwargs it actually accepts. None if that can't help.
+
+    The model occasionally invents an argument name. Everything else it chose — the
+    tool, the period, the provider — is usually right, so dropping the unknown key
+    rescues the turn instead of spending it on an apology.
+    """
+    try:
+        accepted = set(inspect.signature(tool_fn).parameters)
+    except (TypeError, ValueError):
+        return None
+    # `session` is ours to pass positionally — a model naming it as a kwarg would make
+    # the retry a "multiple values for argument 'session'" TypeError, so treat it as
+    # unknown however much the signature declares it.
+    accepted.discard("session")
+    known = {k: v for k, v in decision.args.items() if k in accepted}
+    dropped = sorted(set(decision.args) - accepted)
+    if not dropped:
+        return None  # the TypeError was about something else — don't loop
+    log.warning("tool %r: dropping unknown args %s (%s)", decision.tool, dropped, exc)
+    try:
+        return await tool_fn(session, **known)
+    except TypeError as retry_exc:
+        log.warning(
+            "tool %r still failed after dropping args: %s", decision.tool, retry_exc
+        )
+        return None
+    # ToolError / NotImplementedError deliberately propagate: the caller's own branches
+    # phrase them properly («⚠️ <причина>» / «⏳ Це вміння — для наступної фази»), and
+    # swallowing them here flattened both into a generic «не зрозумів параметри».
+
+
 @dataclass
 class Reply:
     text: str
@@ -178,9 +242,10 @@ async def build_context(session: AsyncSession) -> dict:
         .scalars()
         .all()
     )
-    prov_names = {
-        p.id: p.name for p in (await session.execute(select(Provider))).scalars()
-    }
+    # ONE providers query, used for both the name lookup and the catalogue below. It ran
+    # twice before, on the path that precedes every single LLM call.
+    provs = list((await session.execute(select(Provider))).scalars())
+    prov_names = {p.id: p.name for p in provs}
     recent = [
         {
             "provider": prov_names.get(p.provider_id) if p.provider_id else None,
@@ -200,7 +265,7 @@ async def build_context(session: AsyncSession) -> dict:
             "category": prov.category.value,
             "due_day": prov.due_day,
         }
-        for prov in (await session.execute(select(Provider))).scalars()
+        for prov in provs
     ]
 
     meter_rows = (
@@ -275,24 +340,44 @@ async def handle_message(
     if on_progress is not None:
         await on_progress(_progress_line(decision.tool, decision.args))
 
-    try:
-        result = await tool_fn(session, **decision.args)
-    except ToolError as exc:
-        # User-correctable; surface alongside the persona line.
+    def _tool_error(exc: Exception) -> Reply:
+        """The user-facing phrasing for a tool that refused the call."""
+        if isinstance(exc, NotImplementedError):
+            return Reply(
+                text=f"{decision.message}\n\n⏳ Це вміння — для наступної фази.".strip(),
+                tool=decision.tool,
+                error=str(exc),
+            )
+        # ToolError is user-correctable — surface its reason alongside the persona line.
         return Reply(
             text=f"{decision.message}\n\n⚠️ {exc}".strip(),
             tool=decision.tool,
             error=str(exc),
         )
-    except NotImplementedError as exc:
-        return Reply(
-            text=f"{decision.message}\n\n⏳ Це вміння — для наступної фази.".strip(),
-            tool=decision.tool,
-            error=str(exc),
-        )
+
+    try:
+        result = await tool_fn(session, **decision.args)
+    except (ToolError, NotImplementedError) as exc:
+        return _tool_error(exc)
     except TypeError as exc:  # bad/missing args from the model
-        log.warning("tool %r bad args %r: %s", decision.tool, decision.args, exc)
-        return Reply(text=decision.message, tool=decision.tool, error=str(exc))
+        # A hallucinated arg name (get_stats(months=6)) used to end here silently: the
+        # user got the persona preamble and NO data, with no way to tell a failure from a
+        # stalled bot. Drop the args the tool doesn't take and run it once more — the
+        # remaining args usually carry the intent. Only if that fails do we say so.
+        try:
+            retried = await _retry_without_unknown_args(tool_fn, session, decision, exc)
+        except (ToolError, NotImplementedError) as retry_exc:
+            # The retry reached the tool and IT objected — that reason is worth more to
+            # the user than a generic «не зрозумів параметри».
+            return _tool_error(retry_exc)
+        if retried is None:
+            return Reply(
+                text=f"{decision.message}\n\n⚠️ Не зрозумів параметри запиту — "
+                "переформулюй, будь ласка.".strip(),
+                tool=decision.tool,
+                error=str(exc),
+            )
+        result = retried
 
     # Surface the tool's own answer. Some tools compute data the LLM didn't have when
     # it wrote `message` (e.g. a scraped balance, a stored meter reading) and return it

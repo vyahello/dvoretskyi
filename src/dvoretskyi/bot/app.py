@@ -13,25 +13,28 @@ import os
 import random
 import re
 import tempfile
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     BotCommand,
     CallbackQuery,
+    ErrorEvent,
     FSInputFile,
     InlineKeyboardMarkup,
+    InputMediaPhoto,
     Message,
     TelegramObject,
 )
 from aiogram.utils.chat_action import ChatActionSender
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from dvoretskyi import clock, households
 from dvoretskyi.agent import dispatcher as agent_dispatcher
@@ -57,6 +60,7 @@ from dvoretskyi.agent.tools import (
     get_payment_plan,
     get_provider_balance,
     get_stats,
+    get_stats_trend,
     get_unpaid,
     mark_meter_submitted,
     meter_hints,
@@ -225,56 +229,186 @@ async def cmd_unpaid(message: Message) -> None:
     await message.answer(_format_unpaid(result))
 
 
+async def _households_list(session) -> list[tuple[str, str]]:
+    return [
+        (h.slug, h.name)
+        for h in (
+            await session.execute(select(Household).order_by(Household.is_primary.desc()))
+        ).scalars()
+    ]
+
+
+async def _data_cycle_range(session) -> tuple[str, str]:
+    """(first, last) cycle we have payments for. The month strip is bounded by this, so
+    ◀ stops at the first month with data instead of walking back through empty months to
+    the dawn of time. Empty journal → the current month at both ends."""
+    stmt = select(func.min(Payment.paid_at), func.max(Payment.paid_at)).where(
+        Payment.provider_id.is_not(None)
+    )
+    lo, hi = (await session.execute(stmt)).one()
+    now_cycle = clock.current_cycle()
+    if lo is None or hi is None:
+        return now_cycle, now_cycle
+    return clock.cycle_of(clock.ensure_aware(lo)), clock.cycle_of(clock.ensure_aware(hi))
+
+
+async def _month_view(
+    session, cycle: str, hh: str
+) -> tuple[str, InlineKeyboardMarkup, dict]:
+    """One month's table + the ◀/▶ strip. `hh` is a slug or '-' (both households).
+    Returns (caption, keyboard, the raw get_stats result — it carries the chart path)."""
+    household = None if hh == "-" else hh
+    result = await get_stats(
+        session, period=cycle, breakdown="provider", household=household
+    )
+    first, _last = await _data_cycle_range(session)
+    now_cycle = clock.current_cycle()
+    # Never offer a month we can't show anything for: nothing before the first payment,
+    # nothing in the future. An arrow into an empty month is a dead end, not navigation.
+    prev_cycle = clock.shift_cycle(cycle, -1)
+    next_cycle = clock.shift_cycle(cycle, 1)
+    households_list = await _households_list(session)
+    kb = keyboards.stats_month_keyboard(
+        cycle,
+        hh,
+        prev_cycle=prev_cycle if clock.months_between(first, prev_cycle) >= 0 else None,
+        next_cycle=(
+            next_cycle if clock.months_between(next_cycle, now_cycle) >= 0 else None
+        ),
+        multi_household=len(households_list) > 1,
+    )
+    return _format_stats(result), kb, result
+
+
 @router.message(Command("stats"))
 async def cmd_stats(message: Message) -> None:
-    async with session_scope() as session:
-        result = await get_stats(
-            session, period=clock.current_cycle(), breakdown="provider"
-        )
-        households_list = [
-            (h.slug, h.name)
-            for h in (
-                await session.execute(
-                    select(Household).order_by(Household.is_primary.desc())
-                )
-            ).scalars()
-        ]
-    text = _format_stats(result)
-    # >1 household → offer per-property drill-down + a compare button under the total.
-    kb = (
-        keyboards.stats_scope_keyboard(households_list)
-        if len(households_list) > 1
-        else None
-    )
-    if result.get("chart_path"):
-        await message.answer_photo(
-            FSInputFile(result["chart_path"]), caption=text, reply_markup=kb
-        )
+    async with _thinking(message), session_scope() as session:
+        text, kb, result = await _month_view(session, clock.current_cycle(), "-")
+    await _send_stats(message, text, kb, result)
+
+
+async def _send_stats(
+    message: Message, text: str, kb: InlineKeyboardMarkup | None, result: dict
+) -> None:
+    """Send a stats view as photo+caption (or text when there's no chart), deleting the
+    rendered PNG once it's on its way — see `_send_chart`."""
+    path = result.get("chart_path")
+    if path:
+        await _send_chart(message, path, caption=text, reply_markup=kb)
     else:
-        await message.answer(text, reply_markup=kb)
+        await message.answer(_trim(text), reply_markup=kb)
+
+
+_PERIOD_TAPS = {"cur", "prev", "6m", "year", "all"}
+
+
+def _decode_period(token: str) -> str:
+    """A period button → a `get_stats` period. Total by construction: an unknown token
+    falls back to the current month rather than reaching the parser as garbage."""
+    now = clock.current_cycle()
+    if token == "prev":
+        return clock.shift_cycle(now, -1)
+    if token == "6m":
+        return "6m"
+    if token == "year":
+        return now.split("-")[0]
+    if token == "all":
+        return "all"
+    return now  # "cur" and anything unrecognised
 
 
 @router.callback_query(F.data.startswith("st:"))
-async def on_stats_scope(callback: CallbackQuery) -> None:
-    """«📊 <житло>» → that property's breakdown; «🏘 Розподіл по житлах» → split."""
-    if not callback.data:
+async def on_stats_nav(callback: CallbackQuery) -> None:
+    """The 📊 stats surface: month strip, period chooser, dynamics, household scope.
+
+    Every view EDITS THE MESSAGE IN PLACE (like `on_history_nav`), so tapping through
+    months doesn't bury the chat under a stack of near-identical charts.
+    """
+    data = callback.data or ""
+    if not isinstance(callback.message, Message):
         await callback.answer()
         return
-    _, scope = callback.data.split(":", 1)
-    cycle = clock.current_cycle()
+    parts = data.split(":")
+    verb = parts[1] if len(parts) > 1 else ""
+
+    # Legacy 2-part form (st:<slug> / st:split) still sitting on messages sent before
+    # this deploy — keep them working rather than dying on a stale tap.
+    if len(parts) == 2 and verb not in ("m", "t", "p", "P", "h", "H"):
+        verb, parts = "H", ["st", "H", verb, clock.current_cycle()]
+
+    def _arg(i: int, default: str = "-") -> str:
+        """A callback field, tolerating a truncated/stale payload."""
+        return parts[i] if len(parts) > i and parts[i] else default
+
     async with session_scope() as session:
-        if scope == "split":
-            result = await get_stats(session, period=cycle, breakdown="household")
-        else:
-            result = await get_stats(session, period=cycle, household=scope)
-    text = _format_stats(result)
-    if isinstance(callback.message, Message):
-        if result.get("chart_path"):
-            await callback.message.answer_photo(
-                FSInputFile(result["chart_path"]), caption=text
+        if verb == "m":  # month view
+            text, kb, result = await _month_view(
+                session, _arg(2, clock.current_cycle()), _arg(3)
             )
-        else:
-            await callback.message.answer(text)
+            await _replace_stats(callback, text, kb, result)
+        elif verb == "p":  # period chooser
+            await _edit_caption(
+                callback, "📆 За який період?", keyboards.stats_period_keyboard(_arg(2))
+            )
+        elif verb == "P":  # apply a period
+            token, hh = _arg(2, "cur"), _arg(3)
+            period = _decode_period(token if token in _PERIOD_TAPS else "cur")
+            if token in ("cur", "prev"):
+                text, kb, result = await _month_view(session, period, hh)
+            else:
+                # A multi-month period is a trend by nature → show it by month.
+                result = await get_stats(
+                    session,
+                    period=period,
+                    breakdown="month",
+                    household=None if hh == "-" else hh,
+                )
+                text = _format_stats(result)
+                kb = keyboards.stats_month_keyboard(
+                    clock.current_cycle(),
+                    hh,
+                    multi_household=len(await _households_list(session)) > 1,
+                )
+            await _replace_stats(callback, text, kb, result)
+        elif verb == "t":  # dynamics
+            mode, hh = _arg(2, "money"), _arg(3)
+            result = await get_stats_trend(
+                session,
+                mode={"money": "money", "prov": "provider", "vol": "volume"}.get(
+                    mode, "money"
+                ),
+                household=None if hh == "-" else hh,
+            )
+            await _replace_stats(
+                callback,
+                result.get("message") or "…",
+                keyboards.stats_trend_keyboard(mode, hh),
+                result,
+            )
+        elif verb == "h":  # household chooser
+            # Carry the month being VIEWED into the chooser (`st:h:<hh>:<cycle>`), so
+            # picking a property from a past month stays in that month. Hardcoding the
+            # current cycle silently teleported the user back to today.
+            await _edit_caption(
+                callback,
+                "🏘 Яке житло?",
+                keyboards.stats_household_keyboard(
+                    await _households_list(session), _arg(3, clock.current_cycle())
+                ),
+            )
+        elif verb == "H":  # apply a household scope
+            slug, cycle = _arg(2), _arg(3, clock.current_cycle())
+            if slug == "split":
+                result = await get_stats(session, period=cycle, breakdown="household")
+                await _replace_stats(
+                    callback,
+                    _format_stats(result),
+                    keyboards.stats_month_keyboard(cycle, "-"),
+                    result,
+                )
+            else:
+                text, kb, result = await _month_view(session, cycle, slug)
+                await _replace_stats(callback, text, kb, result)
     await callback.answer()
 
 
@@ -303,13 +437,16 @@ async def menu_help(message: Message) -> None:
 
 @router.message(F.text == keyboards.MENU_BALANCE)
 async def menu_balance(message: Message) -> None:
-    async with session_scope() as session:
+    # On a cold cache this logs into the Gigabit+ cabinet — four sequential HTTP
+    # round-trips. Without the indicator the chat just sat there, indistinguishable from
+    # a dead bot.
+    async with _thinking(message), session_scope() as session:
         res = await get_provider_balance(session, "Інтернет (Gigabit+)")
     pay_link = res.get("pay_link")
     markup = (
         keyboards.pay_keyboard(pay_link, label=res.get("pay_label")) if pay_link else None
     )
-    await message.answer(res.get("message") or "…", reply_markup=markup)
+    await message.answer(_trim(res.get("message") or "…"), reply_markup=markup)
 
 
 def _format_cycle(cycle: str) -> str:
@@ -482,36 +619,52 @@ async def _drafts_block(portal: list[InfolvivReading] | None = None) -> str | No
 
 @router.message(F.text == keyboards.MENU_METERS)
 async def menu_meters(message: Message) -> None:
-    try:
-        readings = await fetch_infolviv_readings()
-    except Exception:
-        log.exception("infolviv fetch raised")
-        readings = []
-    if readings:
-        # Portal record (authoritative) + any photo drafts I'm still holding.
-        account_names, primary_name = await _household_naming()
-        blocks = [_format_infolviv_readings(readings, account_names, primary_name)]
-        drafts = await _drafts_block(readings)
-        if drafts:
-            blocks.append(drafts)
-        await message.answer("\n\n".join(blocks), parse_mode="HTML")
-    else:
-        # Portal not configured / unreachable → show what I've saved from photos.
-        await message.answer(await _local_journal())
+    # On a cold cache this authenticates against the infolviv portal and fetches — keep
+    # «друкує…» up for the whole thing, so the button never looks like it did nothing.
+    async with _thinking(message):
+        try:
+            readings = await fetch_infolviv_readings()
+        except Exception:
+            log.exception("infolviv fetch raised")
+            readings = []
+        if readings:
+            # Portal record (authoritative) + any photo drafts I'm still holding.
+            account_names, primary_name = await _household_naming()
+            blocks = [_format_infolviv_readings(readings, account_names, primary_name)]
+            drafts = await _drafts_block(readings)
+            if drafts:
+                blocks.append(drafts)
+            text, parse_mode = "\n\n".join(blocks), "HTML"
+        else:
+            # Portal not configured / unreachable → show what I've saved from photos.
+            text, parse_mode = await _local_journal(), None
+    await message.answer(_trim(text), parse_mode=parse_mode)
+
+
+# One button per row here, and Telegram limits a keyboard's total size — an unbounded
+# list would eventually make the whole «📜 Історія» send fail. The newest photos are the
+# ones anyone reaches for; older ones stay reachable by asking.
+_PHOTO_BUTTONS = 8
 
 
 def _journal_photo_buttons(sections: list[dict]) -> list[tuple[int, str]]:
     """One «📸 Фото» button per journal reading that still has an archived photo —
-    label names the meter + month so a tap pulls back exactly that month's image."""
-    items: list[tuple[int, str]] = []
+    label names the meter + month so a tap pulls back exactly that month's image.
+
+    Capped at the newest `_PHOTO_BUTTONS` ACROSS ALL METERS. The cap has to sort by month
+    first: taking it in provider order meant that once gas had 8 photos, water's buttons
+    vanished entirely — including this month's — while eight old gas ones stayed.
+    """
+    items: list[tuple[str, int, str]] = []
     for sec in sections:
         for r in sec["readings"]:
             # photo_id is the reading whose archived file actually survives (may differ
             # from the displayed row), so the tap always lands on a real photo.
             if r.get("has_photo") and r.get("photo_id") is not None:
                 label = f"📸 {sec['provider']} · {_format_cycle(r['cycle'])}"
-                items.append((r["photo_id"], label))
-    return items
+                items.append((str(r["cycle"]), r["photo_id"], label))
+    items.sort(key=lambda it: it[0], reverse=True)  # newest month first, any meter
+    return [(pid, label) for _cycle, pid, label in items[:_PHOTO_BUTTONS]]
 
 
 @router.message(F.text == keyboards.MENU_HISTORY)
@@ -632,9 +785,27 @@ async def _thinking(message: Message, action: str = "typing") -> AsyncIterator[N
         yield
 
 
-# Rolling free-text dialogue (single user, single process) so the agent can resolve
-# short replies («давай», «а за травень?») against its own previous line. Kept short.
-_DIALOGUE: deque[dict[str, str]] = deque(maxlen=6)
+# Rolling free-text dialogue PER CHAT, so the agent can resolve short replies («давай»,
+# «а за травень?») against its own previous line in THAT conversation.
+#
+# Per chat, not per process: the allowlist admits the owner AND family, and one shared
+# deque meant a family member's two messages evicted the owner's context entirely — then
+# the owner's «давай» resolved against whatever someone else had just asked. The allowlist
+# is tiny, so this is capped only so a stray id can't grow it without bound.
+_DIALOGUE_TURNS = 6
+_DIALOGUE_CHATS = 16
+_DIALOGUE: OrderedDict[int, deque[dict[str, str]]] = OrderedDict()
+
+
+def _dialogue(chat_id: int) -> deque[dict[str, str]]:
+    hist = _DIALOGUE.get(chat_id)
+    if hist is None:
+        hist = deque(maxlen=_DIALOGUE_TURNS)
+        _DIALOGUE[chat_id] = hist
+        while len(_DIALOGUE) > _DIALOGUE_CHATS:
+            _DIALOGUE.popitem(last=False)  # evict the least-recently-used chat
+    _DIALOGUE.move_to_end(chat_id)
+    return hist
 
 
 async def _try_voice(
@@ -680,13 +851,15 @@ async def _respond_to_text(
 
     # A voice turn signals «записує аудіо…»; a typed/photo turn «друкує…».
     work_action = "record_voice" if voice_reply else "typing"
+    chat = getattr(message, "chat", None)
+    history = _dialogue(chat.id) if chat is not None else deque(maxlen=_DIALOGUE_TURNS)
     try:
         async with _thinking(message, work_action), session_scope() as session:
             reply = await agent_dispatcher.handle_message(
                 user_text,
                 session,
                 get_provider(),
-                history=list(_DIALOGUE),
+                history=list(history),
                 on_progress=_say_progress,
             )
     except Exception:
@@ -694,11 +867,11 @@ async def _respond_to_text(
         # Log the traceback (otherwise it's swallowed → silent Telegram) and still
         # reply, so the user never faces dead air.
         log.exception("agent turn failed for %r", user_text)
-        await message.answer("Щось у моїх паперах заклинило — спробуйте ще раз за мить.")
+        await message.answer(_OOPS)
         return
     # Record the turn so the next message has this exchange as context.
-    _DIALOGUE.append({"role": "user", "text": user_text})
-    _DIALOGUE.append({"role": "assistant", "text": reply.text or ""})
+    history.append({"role": "user", "text": user_text})
+    history.append({"role": "assistant", "text": reply.text or ""})
 
     # Voice in → voice out: synthesize the spoken reply locally (still showing «записує
     # аудіо…»). None (synth disabled, no model, too long, or an error) → send text, so the
@@ -737,9 +910,9 @@ async def _respond_to_text(
         # The voice note is the reply (buttons ride on it). If Telegram refuses it (e.g.
         # recipient forbids voice messages), fall back to the text reply — never dead air.
         if not (voice_ogg and await _try_voice(message, voice_ogg, reply_markup=markup)):
-            await message.answer(reply.text or "…", reply_markup=markup)
+            await message.answer(_trim(reply.text or "…"), reply_markup=markup)
         if reply.chart_path:
-            await message.answer_photo(FSInputFile(reply.chart_path))
+            await _send_chart(message, reply.chart_path)
     finally:
         if voice_ogg and os.path.exists(voice_ogg):
             os.unlink(voice_ogg)  # transient — never linger on disk
@@ -750,6 +923,142 @@ async def on_text(message: Message) -> None:
     await _respond_to_text(message, message.text or "")
 
 
+_OOPS = "Щось у моїх паперах заклинило — спробуйте ще раз за мить."
+
+# Telegram hard-rejects a message over 4096 chars and a photo caption over 1024 — with
+# TelegramBadRequest, not a truncation. A growing journal reaches these on its own, and a
+# rejected edit meant the view was simply broken from then on.
+_MAX_TEXT = 4096
+_MAX_CAPTION = 1024
+_ELLIPSIS = "\n…"
+
+
+def _trim(text: str, limit: int = _MAX_TEXT) -> str:
+    """Cut `text` to `limit` chars, on a line boundary.
+
+    Line boundaries are not just cosmetic: some of these messages carry HTML (`<code>`
+    around an account number), and every tag opens and closes within one line — so
+    cutting at a newline can never split a tag. A mid-tag cut would make Telegram reject
+    the whole message with «can't parse entities», which is worse than the length problem
+    we're solving. With no newline to cut at, fall back to the last '<' so a partial tag
+    still can't survive.
+    """
+    if len(text) <= limit:
+        return text
+    head = text[: limit - len(_ELLIPSIS)]
+    cut = head.rfind("\n")
+    if cut <= 0:
+        tag = head.rfind("<")
+        cut = tag if tag > 0 else len(head)
+    return head[:cut].rstrip() + _ELLIPSIS
+
+
+def _cap(text: str | None) -> str | None:
+    """Trim to the photo-caption limit (1024) — a quarter of the text limit."""
+    return _trim(text, _MAX_CAPTION) if text else text
+
+
+_CHART_PREFIX = "dvoretskyi_stats_"
+
+
+def _drop_chart(path: str | None) -> None:
+    """Delete a rendered chart once it's been sent.
+
+    Charts are one-shot: Telegram has its own copy the moment the upload completes, so a
+    PNG left behind is pure litter (production had 68 of them, 4.7MB, going back a month
+    — nothing ever reaped them). Guarded to our own temp prefix, the way
+    `photo_store.remove` guards to the archive dir, so a stray path can never make this
+    delete something that matters.
+    """
+    if not path or not os.path.basename(path).startswith(_CHART_PREFIX):
+        return
+    try:
+        if os.path.exists(path):
+            os.unlink(path)
+    except OSError as exc:  # a leaked temp file must never cost the user their reply
+        log.warning("could not remove chart %s: %s", path, exc)
+
+
+async def _send_chart(
+    message: Message,
+    path: str,
+    *,
+    caption: str | None = None,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> None:
+    """Send a chart PNG and delete it, whatever happens to the send."""
+    try:
+        await message.answer_photo(
+            FSInputFile(path), caption=_cap(caption), reply_markup=reply_markup
+        )
+    finally:
+        _drop_chart(path)
+
+
+async def _replace_stats(
+    callback: CallbackQuery,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None,
+    result: dict,
+) -> None:
+    """Swap a stats view in place — new chart, new caption, new buttons, same message.
+
+    Editing beats sending: tapping ◀/▶ through a year should leave ONE chart on screen,
+    not twelve. Falls back to a fresh message when the original can't be edited (e.g. a
+    text-only view being replaced by a chart, or a message too old to edit).
+    """
+    path = result.get("chart_path")
+    msg = callback.message
+    if not isinstance(msg, Message):
+        _drop_chart(path)
+        return
+    try:
+        if path and msg.photo:
+            await msg.edit_media(
+                InputMediaPhoto(media=FSInputFile(path), caption=_cap(text)),
+                reply_markup=reply_markup,
+            )
+        elif path:  # a text message can't become a photo by editing — send a new one
+            await _send_chart(msg, path, caption=text, reply_markup=reply_markup)
+            return
+        elif msg.photo:
+            # The new view has NO chart (an empty month, or a render that failed) while a
+            # chart is on screen. Editing only the caption would leave the PREVIOUS
+            # month's chart above text about a different month — a picture that lies.
+            # Drop the message and send the text fresh instead.
+            with suppress(TelegramBadRequest):
+                await msg.delete()
+            await msg.answer(_trim(text), reply_markup=reply_markup)
+        else:
+            await msg.edit_text(_trim(text), reply_markup=reply_markup)
+    except TelegramBadRequest as exc:
+        # «message is not modified» = the user re-tapped the view they're already on.
+        # Nothing to do, and certainly not an error worth showing them.
+        if "not modified" not in str(exc).casefold():
+            log.warning("stats edit failed (%s) — sending a fresh view", exc)
+            await msg.answer(_trim(text), reply_markup=reply_markup)
+    finally:
+        _drop_chart(path)
+
+
+async def _edit_caption(
+    callback: CallbackQuery, text: str, reply_markup: InlineKeyboardMarkup | None = None
+) -> None:
+    """Swap just the caption/buttons of the current view (the chooser menus), keeping
+    whatever image is already there."""
+    msg = callback.message
+    if not isinstance(msg, Message):
+        return
+    try:
+        if msg.photo:
+            await msg.edit_caption(caption=_cap(text), reply_markup=reply_markup)
+        else:
+            await msg.edit_text(_trim(text), reply_markup=reply_markup)
+    except TelegramBadRequest as exc:
+        if "not modified" not in str(exc).casefold():
+            log.warning("caption edit failed: %s", exc)
+
+
 async def _edit(
     callback: CallbackQuery,
     text: str,
@@ -757,10 +1066,10 @@ async def _edit(
 ) -> None:
     """Edit the originating message if it's still accessible; else send a fresh one."""
     if isinstance(callback.message, Message):
-        await callback.message.edit_text(text, reply_markup=reply_markup)
+        await callback.message.edit_text(_trim(text), reply_markup=reply_markup)
     elif callback.bot is not None and callback.message is not None:
         await callback.bot.send_message(
-            callback.message.chat.id, text, reply_markup=reply_markup
+            callback.message.chat.id, _trim(text), reply_markup=reply_markup
         )
 
 
@@ -990,9 +1299,13 @@ def _gated_meter_reply(
     if now.day >= get_settings().meter_submit_from_day:
         text = f"{stored}\n🗓 Вікно подачі відкрите ({window}). Подати на портал?"
         return text, keyboards.meter_approve_keyboard(rid)
+    # NOT «подам» — nothing files a reading without the user's tap, by design. Promising
+    # to file it was a lie the bot couldn't keep: the draft sat unfiled and unmentioned.
+    # We promise the reminder we actually send (engine.compute_pending_meter_nudges
+    # raises this draft again once the window opens, with the one-tap approve button).
     text = (
-        f"{stored}\n🗓 Подам у вікні {window} — наприкінці місяця показник "
-        "найактуальніший.\nЯкщо дуже треба раніше — тисни нижче."
+        f"{stored}\n🗓 Нагадаю у вікні {window} — подаси одним дотиком; наприкінці "
+        "місяця показник найактуальніший.\nЯкщо дуже треба раніше — тисни нижче."
     )
     return text, keyboards.meter_early_keyboard(rid, 1)
 
@@ -1013,6 +1326,14 @@ async def _file_reading(rid: int) -> tuple[str, InlineKeyboardMarkup | None]:
         if reading is None or reading.value is None or reading.provider_id is None:
             return "Показник зник — надішли фото ще раз.", None
         provider = await session.get(Provider, reading.provider_id)
+        if reading.status is MeterStatus.submitted:
+            # Already filed. A second tap is ordinary impatience — the POST is a live
+            # HTTP call, so the button looks unresponsive for a second. Without this the
+            # second call re-POSTed, the portal refused it («value not greater»), and the
+            # error branch below reset a SUCCESSFULLY filed reading back to `validated`
+            # — leaving it an outstanding draft that nudges forever.
+            meter_name = provider.name if provider else "показник"
+            return f"Уже подав — {meter_name}: {reading.value}.", None
         kind = provider.category.value if provider else ""
         # Name the meter in every reply — «Подав: 107.695» alone left the user guessing
         # whether it was gas or water (a photo turn can file either).
@@ -1353,11 +1674,32 @@ async def on_meter_snooze(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+async def on_error(event: ErrorEvent) -> bool:
+    """Last line of defence: never leave a tap unanswered.
+
+    Only `_respond_to_text` had its own try/except, so a raise anywhere else (a chart
+    failure, a portal timeout, a TelegramBadRequest) was swallowed by aiogram's logger:
+    the user tapped 📊 / 🗓 / 📜 and got NOTHING back — and on a callback the tap spinner
+    kept turning for ~30s because `callback.answer()` was never reached. Here we log the
+    traceback and always close the loop with one honest line.
+    """
+    log.exception("unhandled error in update: %s", event.exception)
+    callback = event.update.callback_query
+    message = event.update.message
+    with suppress(Exception):  # the fallback must never raise a second time
+        if callback is not None:
+            await callback.answer(_OOPS, show_alert=False)
+        elif message is not None:
+            await message.answer(_OOPS)
+    return True  # handled — don't re-raise into the polling loop
+
+
 def build_dispatcher() -> Dispatcher:
     settings = get_settings()
     dp = Dispatcher()
     dp.update.outer_middleware(AllowlistMiddleware(settings.allowed_user_ids))
     dp.include_router(router)
+    dp.errors.register(on_error)
     return dp
 
 

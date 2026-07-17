@@ -232,6 +232,10 @@ class PendingMeterNudge:
     # run_meter_nudges once the stored row exists.
     static_value: str | None = None
     reading_id: int | None = None
+    # Set when a photo reading is already stored but NOT yet filed and the submission
+    # window has opened: the nudge then asks for the one tap that files it, instead of
+    # asking for a photo we already have.
+    pending_value: str | None = None
 
     def _when(self) -> str:
         if self.days_left == 0:
@@ -241,6 +245,11 @@ class PendingMeterNudge:
         return f"До кінця місяця лишилось {self.days_left} дн."
 
     def message(self) -> str:
+        if self.pending_value is not None:
+            return (
+                f"{self._when()} — показник «{self.provider_name}» готовий: "
+                f"{self.pending_value}. Вікно подачі відкрите — подати на портал?"
+            )
         if self.static_value is not None:
             return (
                 f"{self._when()} — показник для «{self.provider_name}» фіксований: "
@@ -255,19 +264,49 @@ class PendingMeterNudge:
         return f"{self._when()} — час подати {what}. Кинь фото лічильника, зчитаю сам."
 
 
-async def _reading_done_this_cycle(
+async def _reading_filed_this_cycle(
     session: AsyncSession, provider_id: int, cycle: str
 ) -> bool:
+    """Has this meter actually been FILED this cycle?
+
+    Filed-ness is `submitted`, never `validated`. A `validated` row is a stored draft
+    still awaiting the user's approval tap — treating it as done was what silenced the
+    very nudge that would have got it approved, so a reading photographed before the
+    window was stored, never filed, and never mentioned again.
+    """
     row = (
         await session.execute(
             select(MeterReading.id).where(
                 MeterReading.provider_id == provider_id,
                 MeterReading.cycle == cycle,
-                MeterReading.status.in_((MeterStatus.validated, MeterStatus.submitted)),
+                MeterReading.status == MeterStatus.submitted,
             )
         )
     ).first()
     return row is not None
+
+
+async def _pending_draft(
+    session: AsyncSession, provider_id: int, cycle: str
+) -> MeterReading | None:
+    """The stored-but-unfiled reading for this meter/cycle, newest first (there is at
+    most one — `_supersede_pending` keeps a single draft per meter per month)."""
+    return (
+        (
+            await session.execute(
+                select(MeterReading)
+                .where(
+                    MeterReading.provider_id == provider_id,
+                    MeterReading.cycle == cycle,
+                    MeterReading.status == MeterStatus.validated,
+                    MeterReading.value.is_not(None),
+                )
+                .order_by(MeterReading.created_at.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
 
 
 async def compute_pending_meter_nudges(
@@ -290,13 +329,27 @@ async def compute_pending_meter_nudges(
         .all()
     )
 
+    submit_from = get_settings().meter_submit_from_day
     pending: list[PendingMeterNudge] = []
     for prov in providers:
         window = prov.meter_window
         if window is None or not meters.window_open(window, now):
             continue
-        if await _reading_done_this_cycle(session, prov.id, cycle):
+        if await _reading_filed_this_cycle(session, prov.id, cycle):
             continue
+
+        # A reading may already be sitting here, stored and validated, waiting for the
+        # approval tap (the user photographed early — exactly the behaviour we want to
+        # encourage). Don't ask for a photo we already have: once the filing window is
+        # open, ask for the one tap that files it.
+        draft = await _pending_draft(session, prov.id, cycle)
+        pending_value: str | None = None
+        draft_id: int | None = None
+        if draft is not None and draft.value is not None:
+            if not meters.submit_now(now, attempt=0, submit_from_day=submit_from):
+                continue  # photo is in, window not open yet — nothing to nag about
+            pending_value = meters.format_reading(draft.value)
+            draft_id = draft.id
 
         nudge = (
             await session.execute(
@@ -324,8 +377,14 @@ async def compute_pending_meter_nudges(
                 days_left=days_left,
                 category=prov.category.value,
                 static_value=(
-                    str(prov.static_reading) if prov.static_reading is not None else None
+                    # `format_reading`, not str(): the column is Numeric(14,3), so the
+                    # raw value reads «7952.810» — and the voice spells the zero out.
+                    meters.format_reading(prov.static_reading)
+                    if prov.static_reading is not None
+                    else None
                 ),
+                pending_value=pending_value,
+                reading_id=draft_id,
             )
         )
     return pending
@@ -345,9 +404,11 @@ async def run_meter_nudges(
         pending = await compute_pending_meter_nudges(session, now)
         for item in pending:
             # A static-meter property files a fixed value with no photo: stage a
-            # `validated` reading now so the «📤 Подати на портал» tap can file it (and
-            # so `_reading_done_this_cycle` stops the daily re-nudge until it's filed).
-            if item.static_value is not None:
+            # `validated` reading now so the «📤 Подати на портал» tap can file it.
+            # Only when there ISN'T already a staged draft (`reading_id` set by
+            # `compute_…`) — otherwise a daily re-nudge would stage a duplicate row
+            # every day until the user taps.
+            if item.static_value is not None and item.reading_id is None:
                 reading = MeterReading(
                     provider_id=item.provider_id,
                     cycle=cycle,
@@ -383,11 +444,11 @@ async def run_meter_nudges(
     settings = get_settings()
     for item in pending:
         # Anyone on the allowlist may submit a meter reading (send a photo), so the
-        # «кинь фото» nudge goes to the whole family. The static-meter approve tap, by
-        # contrast, files one specific staged row in one tap (secondary, unoccupied
-        # property) — a single-actor action, kept to the owner so two people can't file
-        # it twice.
-        if item.static_value is not None:
+        # «кинь фото» nudge goes to the whole family. A nudge carrying an APPROVE TAP is
+        # different: it files one specific staged row in one tap — a single-actor
+        # action, kept to the owner so two people can't file it twice. That covers both
+        # the static-meter row and a photo draft waiting on approval.
+        if item.reading_id is not None:
             recipients: list[int] = [settings.telegram_allowed_user_id]
         else:
             # Owner is always included even if `allowed_user_ids` filters out a falsy id.

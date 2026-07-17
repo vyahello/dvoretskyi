@@ -26,16 +26,48 @@ Auth Claude Code via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
   provider's **`due_day`** (day of month due; null = no scheduled payment) + the
   **`autopay_day`**, so «коли треба платити» is answered from real data (the model used to
   wrongly say it «не зберігає дат» — it had no such field in context). **Tool replies must surface data:**
-  tools that compute numbers return a `message` the dispatcher appends — `get_stats`
-  renders a **modern data table** PNG (`_render_table`: header band with period + grand
-  total, zebra rows, a mini share-bar per row, right-aligned СУМА/ЧАСТКА columns; amounts
-  space-grouped via `_fmt_uah`). The `message` is then **just a one-line caption**
-  (`_stats_caption`: «📊 <період у словах> — разом X ₴») — the per-provider breakdown lives
-  in the table, never duplicated in text. `_stats_summary` (itemised bullets) survives only
-  as the chartless fallback (no matplotlib). The two **gas providers stay split**
+  tools that compute numbers return a `message` the dispatcher appends.
+- `charts.py` — **every renderer lives here, none in `tools.py`**. All are sync + CPU-bound;
+  callers MUST go through `tools._render` (`asyncio.to_thread` + a try/except that degrades
+  to a text reply). Two rules that are load-bearing, not style: (1) the **object-oriented
+  `Figure` API, never `pyplot`** — pyplot's global figure manager isn't thread-safe and we
+  render on worker threads; (2) **colour follows the entity, never its rank** —
+  `tools._series_slots` maps a service NAME → a slot via its CATEGORY (`_CATEGORY_SLOT`),
+  so re-sorting a table or filtering a household never repaints a service, and the same
+  service wears one colour in every chart. The palette ORDER was validated for
+  colour-vision deficiency (worst adjacent ΔE 9.2 protan/deutan, 24.0 normal-vision);
+  the previous rank-cycled palette put two hues **3.7 apart under protanopia** — i.e.
+  identical to a red-green colourblind reader. **Re-validate before reordering.**
+  Renderers: `render_table` (one period, by service/household), `render_trend` (columns
+  over months + average line), `render_stacked` (composition per month), `render_volume`
+  (**small multiples** — gas ~40 m³/mo vs water ~3 m³ can never share an axis, and a
+  second y-axis is never the answer). `_fit_text` MEASURES the rendered label and trims
+  it to the column (a household row's label is an address; matplotlib doesn't clip, so a
+  long one drew straight through the bar).
+- **Stats — the form follows the data's job.** `get_stats(period?, breakdown?, household?,
+  provider?)` picks the renderer by `breakdown`: `month` → `render_trend` (a TIME SERIES:
+  sorted chronologically, oldest first, with **gap months zero-filled**); everything else →
+  `render_table`. Months used to sort by amount like every other breakdown, which scrambles
+  the one axis that makes a trend readable. The caption is one line (`_stats_caption`) plus
+  a **month-over-month `_delta_note`** («▲ +8% до травня»; None off a zero base — a % change
+  off zero is undefined, not infinite). Note the Ukrainian case: «до» takes the genitive
+  (`clock.format_cycle_genitive`), «як у» the locative (`format_cycle_locative`).
+  `_stats_summary` (itemised bullets) is the chartless fallback — now genuinely reachable,
+  since `_render` catches render failures. The two **gas providers stay split**
   (постачання vs доставлення — no merged «Газ» block).
-  It also answers seasons «зима/літо» as 3-month ranges via `_period_bounds`/`_period_label`,
-  so a conversational stats ask never dead-ends on a «зараз гляну» preamble.
+  `period` accepts `YYYY-MM` | `YYYY` | `all` | a season (зима/літо/весна/осінь ± year,
+  a real 3-month range) | a **rolling window** (`6m`, «пів року», «останні 6 місяців»).
+  Anything else raises **ToolError, never ValueError** — the dispatcher shows a ToolError
+  to the user, while a ValueError killed the whole turn (and «динаміка за пів року» was
+  exactly that path).
+- `get_stats_trend(mode?, months?, household?, provider?)` — **DYNAMICS**, distinct from
+  `get_stats` (one period's total): several months on a time axis. `mode="money"` (₴/month
+  + average + % change), `"provider"` (the same months stacked per service — WHICH one
+  moved), `"volume"` (**m³ from the readings journal** — the second statistics axis).
+  Volume is DERIVED from consecutive readings, not from `MeterReading.consumption_delta`:
+  that column is only filled when the validator had a previous value, so on real data it's
+  mostly NULL. A meter is monotonic → value(n) − value(n−1) IS the volume. Below two months
+  it says so instead of drawing one lonely bar and calling it a trend.
   **Payments — dates & plan (distinct from stats):** `get_payment_journal(provider_name?,
   household?, period?)` is the dated per-payment timeline (each `Payment.paid_at` newest-
   first, grouped by provider, capped at 6/provider) — «коли я платив за газ», the data
@@ -71,7 +103,21 @@ Auth Claude Code via `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`.
   (`keyboards.main_keyboard`) is seven buttons: 💸 Що сплатити · 📊 Статистика /
   🔢 Мої показники · 📜 Історія / 🗓 Як платити · 🌐 Баланс інтернету / ❓ Довідка (the
   low-value «🎩 Привіт» greeting button was dropped — a typed «привіт» is just handled by
-  the LLM). **«📜 Історія» (`menu_history`) is a chooser, not a wall of text:** it sends a
+  the LLM). **«📊 Статистика» (`cmd_stats` → `on_stats_nav`) is a navigable surface, not one
+  hardcoded view.** It used to reach exactly 3 views (this month, per household, split) —
+  every past month, every other period and `breakdown="month"` existed in `get_stats` but
+  NO button reached them. Now: a **month strip** (`◀ травень │ 📅 червень 2026 │ липень ▶`)
+  plus 📈 Динаміка and 🏘 Житло. Callback grammar `st:<verb>:…` (see `keyboards.py`);
+  `hh` is a household **slug** or `-` (both) — never a name (an address is PII and wouldn't
+  fit the 64-byte budget; worst case is 22B). Every view **edits in place**
+  (`_replace_stats` → `edit_media`), so tapping through a year leaves ONE chart on screen,
+  not twelve. The arrows are **omitted at the edges of the data** (nothing before the first
+  payment, nothing in the future) — an arrow into an empty month is a dead end. The middle
+  button opens the period chooser rather than re-rendering the month already on screen:
+  Telegram rejects an identical edit with «message is not modified», so a refresh button is
+  a dead button that also logs an error. A legacy 2-part `st:<slug>`/`st:split` from a
+  message sent before the deploy still resolves.
+  **«📜 Історія» (`menu_history`) is a chooser, not a wall of text:** it sends a
   2-button inline menu (🔢 Показники · 💸 Платежі); `on_history_nav` (`h:<view>[:<slug>]`
   callbacks) edits the message in place between the root menu, the readings journal
   (`get_meter_journal` + 📸 photo buttons), and payments (`get_payment_journal`) — payments
@@ -133,14 +179,32 @@ routed to the right counter by household account) when it's higher than (or abse
 our local journal — so a backwards misread is caught against what's actually filed on the
 portal even on a clean local DB, not only against local drafts (meters are monotonic → the
 highest known prior reading is the true «previous»). Best-effort: portal unreachable →
-local history alone. **OCR consensus:** each photo is read **`OCR_READ_ATTEMPTS` times
+local history alone. **`DELTA_ABS_CAP` is a FLOOR on the spike threshold, so it must be
+sized to the meters we actually read** — gas/water in m³, single digits in summer and ~100
+at worst in deep winter. Its old default of 1000 silently disabled the whole spike check:
+with a real typical of ~2.5 m³/month the gate was `max(1000, 3×2.5) = 1000`, so a
+leading-digit misread (1890 → 2890, i.e. **+999 m³ of gas in one month**) filed as
+`validated` without a question — only a +8000 jump was caught. At **50** a misread of that
+shape is flagged. Measured over a modelled Lviv gas year (summer ~3 m³ → січень 96 m³):
+the cost is **2 «підтвердь» taps a year** (грудень + січень, the heating ramp — after
+which winter deltas enter the median and lift the threshold above them on their own),
+while the +1000 m³ misread is caught at 10/10 history depths. Asking twice a year is
+cheap; a wrong filed reading is what you get billed on.
+**OCR consensus:** each photo is read **`OCR_READ_ATTEMPTS` times
 concurrently** (default 2, same wall-clock) and a value is trusted only when the
 independent reads **agree** (`vision._reconcile`); a disagreement (e.g. 108.679 vs
-148.679 — a plausible +40 the spike check can't catch) keeps the first value but marks the
-`MeterRead` **not `confident`** (the differing read rides in `alt_value`), and
+148.679 — a plausible +40 the spike check can't catch) keeps the winning value but marks
+the `MeterRead` **not `confident`** (the differing read rides in `alt_value`), and
 `submit_meter_reading` then forces `needs_confirm` regardless of the delta verdict, asking
 the user to verify the number against the meter or re-photograph. This is the real catch
-for intermittent single-digit misreads that land in a believable range. **Hint-anchored
+for intermittent single-digit misreads that land in a believable range.
+**`_reconcile` votes among the reads that produced a NUMBER — never `reads[0]`** just
+because it came back first. Which of the parallel CLI calls misfires is random, so
+anchoring on slot 0 threw the consensus away whenever the flaky read landed there: a real
+meter photo read correctly twice could still be answered «на фото не лічильник» + a joke
+(the null read's `kind="other"`/`comment` won) and stored nothing. The verdict now takes
+the modal value and pulls `raw`/`kind`/`comment` from a read that actually saw it, so a
+dud can't ride along; `confident` needs the winner seen ≥2× AND outvoting the rest. **Hint-anchored
 read (one pass, not two):** the OCR is given the previous value as context — knowing the
 meter stood at ~108 lets the model resolve an ambiguous wheel (a rounded 0 misread as 4 →
 148) the way a human does. The prompt forbids forcing a clearly-different digit, so a
@@ -168,6 +232,25 @@ unaffected).
   is a **kill-switch** — when off the call raises `InfolvivSubmitDisabled` and the bot
   **falls back to manual filing** (hand back the value + «Відправив ✓» `ms:` tap). The
   window label is `28–{last-day}` computed from the calendar (handles 28/29/30/31).
+  `_file_reading` **refuses a double-tap** (`status is submitted` → «Уже подав»): the POST
+  is a live HTTP call, so an impatient second tap re-POSTed, the portal refused it, and the
+  error branch reset a SUCCESSFULLY filed reading back to `validated` — an outstanding
+  draft that nudges forever.
+- **The bot promises a REMINDER, never a filing** (`_gated_meter_reply`). Nothing files a
+  reading without the user's tap — that's the design («подам… з вашого "так"»). The
+  pre-window copy used to say «🗓 Подам у вікні 28–31», which **nothing kept**: no code path
+  ever filed it. Three bugs compounded into silent data loss — the draft was never filed,
+  the nudge that would have prompted the tap was suppressed by the very draft awaiting it
+  (`_reading_done_this_cycle` counted `validated` as done), and the next month's photo
+  hard-deleted the row (`_supersede_pending` had no cycle filter). A user who photographed
+  early — exactly the behaviour the feature wants — got «записав», then nothing, ever.
+  Now: the copy says «🗓 Нагадаю у вікні … — подаси одним дотиком»; filed-ness is
+  `submitted` ONLY (`_reading_filed_this_cycle`); and once the window opens
+  `compute_pending_meter_nudges` raises the draft again as an **approve nudge**
+  (`pending_value` + `reading_id` → the existing `meter_approve_keyboard`) instead of
+  asking for a photo it already has. Any nudge carrying an approve tap is **owner-only**
+  (single-actor: two people mustn't file it twice); the «кинь фото» nudge still broadcasts
+  to the family.
 - **«Мої показники» (`menu_meters`) merges two sources:** the infolviv portal record
   (authoritative, filed) **and** `_drafts_block` — photo readings stored but not yet
   filed (`validated`/`needs_confirm`). `_drafts_block(portal)` shows a draft **only when
@@ -175,11 +258,16 @@ unaffected).
   portal for that meter (matched by `(kind, household)`, with the gas account → household
   map + primary fallback) — a draft equal to what's filed is just noise. Portal
   unreachable → fall back to `_local_journal`.
-- **One draft per meter:** a fresh photo of a meter **supersedes** that meter's previous
-  un-filed draft (`_supersede_pending` hard-deletes earlier non-`submitted` readings of
-  the same provider when a new one is stored). So the journal never piles up duplicates,
-  and the freshest is what gets submitted. `submitted` readings are the permanent record
-  — never superseded. `delete_meter_reading(provider_name?, cycle?)` is **precisely
+- **One draft per meter PER MONTH:** a fresh photo supersedes that meter's previous un-filed
+  draft **of the same cycle** (`_supersede_pending(provider_id, keep_id, cycle)`). So the
+  journal never piles up duplicates, and the freshest is what gets submitted. The `cycle`
+  scope is load-bearing: without it the query hard-deleted every un-filed reading of the
+  meter EVER — and since `INFOLV_SUBMIT_ENABLED` defaults off, the normal path leaves
+  readings `validated`, so July's photo silently destroyed June's row **and its archived
+  photo**. That collapsed the month-by-month journal to one line per meter, left
+  consumption uncomputable, and disabled the backwards/spike guards (every reading became
+  «Перший показник — узяв за відлік»). `submitted` readings are the permanent record —
+  never superseded. `delete_meter_reading(provider_name?, cycle?)` is **precisely
   scopeable**: «видали всі» → no scope (wipe all drafts); «видали показник газу» →
   provider; «видали газ за минулий місяць» → provider + `cycle="YYYY-MM"`. It always
   confirms first; `confirm_scope` is packed by `_encode_scope` ('all'|'<pid>'|'<pid|*>:
@@ -272,7 +360,21 @@ a long run as a grouped cardinal and voices the thousands separators as «кра
 («100000 гривень» stays a number); **Latin brand/jargon** → a spoken Ukrainian
 form (`_SPOKEN_TERMS`: «monobank» → «монобанк», else espeak says «монобайк»; «autopay»,
 «Gigabit+»); dashes → pauses; lines folded into sentences.
-(Numerals stay as digits — espeak-ng voices them.) **Stress — fixed via an espeak
+**Numerals voiceify OWNS are spelled out in words — do NOT hand them to espeak.** The old
+assumption («numerals stay as digits — espeak-ng voices them») was verified FALSE: espeak
+says «два ти́сяча три́ста дев'яно́стооде́н гри́вня» for 2391 ₴ (wrong gender, undeclined
+«тисяча», fused words, dialectal «оден»), «сто тисяча» for 100000 — and for 1000000 it
+drops the millions entirely and voices **the wrong number**. None of this is
+dictionary-fixable: gender and case depend on the counted noun. So `_int_words` spells out
+money (feminine — «одна гривня»/«дві гривні»), volume (masculine — «один кубометр»),
+percent and decimals, and hands espeak plain words the dictionary then stresses correctly.
+Digits voiceify does NOT own (a day, a bare count) still go to espeak, whose number words
+are patched as far as a dictionary can (`_1`/`_4X`/`_8X`/`_9X`/`_0M1`: «оден»→«один»,
+со́рок, вісімдеся́т, дев'яно́сто). Trade-off: spelled-out numerals make replies longer, so a
+long multi-amount reply is likelier to pass `TTS_MAX_CHARS` (600) and fall back to text —
+graceful, and the knob can be raised. A `/` between Cyrillic words → «або» (espeak read
+«газу/води» as «газу КОСА РИСКА води»); scoped so `24/7` and paths are untouched.
+**Stress — fixed via an espeak
 pronunciation dictionary, NOT via the text.** espeak's `uk` rules mis-stress some words
 (verified on the box: `подано → подА́но`, `баланс → бА́ланс`; both wrong). Nothing in the
 text fed to Piper can correct it — tested through Piper's own phonemizer: a U+0301 accent
@@ -311,7 +413,7 @@ The mono webhook must be reachable over public HTTPS at
 
 ## Test, lint, types
 ```bash
-pytest -q                       # 242 tests, in-memory SQLite, no network, no API key
+pytest -q                       # 271 tests, in-memory SQLite, no network, no API key
 ruff check src tests            # lint (E,W,F,I,UP,B)
 ruff format src tests           # format (black-compatible; the project standard)
 mypy                            # type-check src/ (config in pyproject)
@@ -319,7 +421,13 @@ mypy                            # type-check src/ (config in pyproject)
 Tests use a fake `LLMProvider`, a fake `VisionProvider` **and a fake
 `TranscriptionProvider`** (no real `claude`/Whisper calls; faster-whisper is imported
 lazily so the suite never loads it) and pass `now` explicitly to reminder/window logic
-(no time-freezing dependency). Formatting/linting is **Ruff**
+(no time-freezing dependency). **Never hardcode the current month.** A frozen `now` is fine
+(and preferred) for pure window logic, but any test whose code path calls
+`clock.current_cycle()` — `submit_meter_reading`, `snooze_reminder`, `cmd_stats` — must
+derive its dates from the clock (`clock.current_cycle()` / `clock.shift_cycle(...)`).
+Three tests pinned «2026-06»/«червень» and silently began failing on their own the moment
+the calendar rolled into July: they were asserting against a month the code no longer
+stamped. Formatting/linting is **Ruff**
 (`ruff format` replaces black); type-checking is **mypy** with `ignore_missing_imports`
 (aiogram/apscheduler ship partial/no stubs).
 
@@ -338,7 +446,8 @@ default), `LLM_PROVIDER` (claude_code|anthropic_api),
 `INFOLV_SUBMIT_ENABLED` (default false — live POST stays off until the body is verified).
 **Meters:** `CLAUDE_VISION_TIMEOUT_SECONDS` (vision is slower than text),
 `SUBMISSION_CHANNELS=gas:manual,water:manual`, `SMS_GATEWAY_URL` (empty → deep link only),
-`OCR_MAX_LONG_SIDE`, `DELTA_SPIKE_K`, `DELTA_ABS_CAP`, `METER_WINDOW_DAYS`,
+`OCR_MAX_LONG_SIDE`, `DELTA_SPIKE_K` (3), `DELTA_ABS_CAP` (**50** — a floor on the spike
+threshold, in m³; at the old 1000 the spike check was dead, see Meters), `METER_WINDOW_DAYS`,
 `METER_SUBMIT_FROM_DAY` (28), `METER_EARLY_SUBMIT_ATTEMPTS` (3),
 `METER_PHOTO_DIR` (empty → `~/.dvoretskyi/meter_photos`), `METER_PHOTO_MAX_LONG_SIDE`
 (1000), `METER_PHOTO_QUALITY` (55).

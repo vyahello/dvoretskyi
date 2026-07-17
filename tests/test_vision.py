@@ -203,6 +203,44 @@ def test_reconcile_disagreeing_reads_flag_and_record_alt():
     assert out.value == Decimal("148.679") and out.alt_value == Decimal("108.679")
 
 
+def test_reconcile_ignores_a_failed_read_and_keeps_the_real_one():
+    """A null/«other» read must not outvote a read that produced a number.
+
+    Which of the parallel CLI calls misfires is random. Anchoring the verdict on
+    reads[0] meant that when the flaky one landed first, a genuine meter photo was
+    answered with «на фото не лічильник» + a joke and nothing was stored.
+    """
+    from dvoretskyi.agent.vision import MeterRead, _reconcile
+
+    dud = MeterRead(value=None, raw="", note="", kind="other", comment="жарт")
+    good = MeterRead(value=Decimal("108.679"), raw="108679", note="", kind="water")
+    out = _reconcile([dud, good])
+    assert out.value == Decimal("108.679")
+    assert out.kind == "water"  # the verdict's kind comes from the read that saw a number
+    assert not out.comment  # …and the dud's joke never rides along
+
+
+def test_reconcile_majority_wins_over_a_single_outlier():
+    """Two reads agreeing beat one that doesn't, whichever order they arrive in."""
+    from dvoretskyi.agent.vision import MeterRead, _reconcile
+
+    odd = MeterRead(value=Decimal("148.679"), raw="148679", note="", kind="water")
+    a = MeterRead(value=Decimal("108.679"), raw="108679", note="", kind="water")
+    b = MeterRead(value=Decimal("108.679"), raw="108679", note="", kind="water")
+    out = _reconcile([odd, a, b])
+    assert out.value == Decimal("108.679")  # 2:1 majority, not "whoever was first"
+    assert out.confident and out.alt_value == Decimal("148.679")
+
+
+def test_reconcile_all_failed_reads_stay_a_failure():
+    """No read produced a number → a genuine OCR failure; never invent one."""
+    from dvoretskyi.agent.vision import MeterRead, _reconcile
+
+    dud = MeterRead(value=None, raw="", note="", kind="other", comment="жарт")
+    out = _reconcile([dud, MeterRead(value=None, raw="", note="", kind="other")])
+    assert out.value is None and out.kind == "other"
+
+
 # --- parser robustness (chatty / fenced model output) ----------------------
 
 
@@ -219,6 +257,46 @@ def test_parser_null_value_and_garbage():
     assert _parse_meter_read('{"value": null, "raw": "", "note": "x"}').value is None
     assert _parse_meter_read("totally not json") is None
     assert _extract_json_object("no object here") is None
+
+
+def test_parser_takes_the_LAST_object_when_prose_holds_several():
+    """The answer comes last. A model that shows an example first must not have the
+    example win — «Наприклад: {…}. Відповідь: {…}» has to resolve to the ANSWER.
+
+    Scanning the braces forward instead of in reverse silently inverts this: the meter
+    photo then reads as `kind=other` and the bot answers a real reading with a joke.
+    Nothing else in the suite pins the ordering, so it lives here.
+    """
+    prose = (
+        'Наприклад: {"kind": "other", "value": null}. '
+        'Ось відповідь: {"kind": "gas", "value": "1888.14"}'
+    )
+    assert _extract_json_object(prose) == {"kind": "gas", "value": "1888.14"}
+    read = _parse_meter_read(prose)
+    assert read is not None and read.value == Decimal("1888.14") and read.kind == "gas"
+
+
+def test_decision_parser_survives_a_line_of_preamble():
+    """The decision turn gets the same forgiving extraction as the vision turn: one line
+    of prose used to fail the parse outright, costing a second full 60s `claude -p` call
+    and then a «мій мисленнєвий апарат зламався» apology — for good JSON with a sentence
+    in front of it."""
+    from dvoretskyi.agent.provider import parse_decision
+
+    d = parse_decision(
+        'Ось відповідь:\n{"tool": "get_stats", "args": {"period": "2026-05"}, '
+        '"message": "Зараз"}'
+    )
+    assert d is not None and d.tool == "get_stats" and d.args == {"period": "2026-05"}
+
+
+def test_decision_parser_guards_a_non_string_tool():
+    """`{"tool": ["get_stats"]}` reached `TOOLS.get(decision.tool)` and raised
+    «unhashable type: 'list'» past the arg-error handler."""
+    from dvoretskyi.agent.provider import parse_decision
+
+    d = parse_decision('{"tool": ["get_stats"], "args": {}, "message": "х"}')
+    assert d is not None and d.tool is None  # treated as "no tool", never a crash
 
 
 def test_parser_reads_kind_and_comment():

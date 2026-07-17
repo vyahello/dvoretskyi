@@ -82,7 +82,17 @@ class Settings(BaseSettings):
     meter_photo_max_long_side: int = 1000  # archive copies are downscaled to this
     meter_photo_quality: int = 55  # JPEG quality for the archived copy
     delta_spike_k: int = 3  # flag consumption > k × median(history)
-    delta_abs_cap: Decimal = Decimal("1000")  # …but never flag below this absolute jump
+    # …but never flag below this absolute jump. This is a FLOOR on the spike threshold,
+    # so it must be sized to the meters we actually read — gas and water, in m³, where a
+    # month is single digits in summer and ~100 at worst in deep winter. The old default
+    # of 1000 silently disabled the whole spike check: with a typical 2.5 m³/month, the
+    # threshold was max(1000, 3×2.5) = 1000, so a leading-digit misread (1890 → 2890,
+    # i.e. +999 m³ of gas in one month) filed as `validated` without a question. At 50 a
+    # misread of that shape is caught, at the cost of one «підтвердь» tap in the first
+    # month or two of the heating season — until winter deltas enter the median and
+    # lift the threshold above them on their own. Asking is cheap; a wrong filed
+    # reading is what you get billed on.
+    delta_abs_cap: Decimal = Decimal("50")
     # Meter-reading nudge lead time: how many days before month end to start nudging
     # (readings are due by the last day of the month). Seeds Provider.meter_window.
     meter_window_days: int = 3
