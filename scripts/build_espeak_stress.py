@@ -181,7 +181,18 @@ def _validate(piper_bin: str, voice: str, out_data: Path) -> None:
         )
         return m.group(1).strip() if m else "(no phonemes)"
 
-    samples = ["подано", "баланс", "чіпав", "за червень уже все подано", "баланс не чіпав"]
+    samples = [
+        "подано",
+        "баланс",
+        "чіпав",
+        "за червень уже все подано",
+        "баланс не чіпав",
+        # One per family the overrides cover, so a broken entry shows up here:
+        "показники води за минулий місяць",  # показникИ/водИ/мІсяць
+        "дві тисячі триста дев'яносто одна гривня",  # числівники, які пише voiceify
+        "шостого червня подав показники",  # порядкові в датах + подАв
+        "усе сплачено, боргів нема",  # -но форми + боргІв
+    ]
     for t in samples:
         b, o = phon(t, False), phon(t, True)
         tag = " <- stress moved" if b != o else ""
@@ -190,7 +201,9 @@ def _validate(piper_bin: str, voice: str, out_data: Path) -> None:
         print(f"        override: {o}{tag}")
     # Regression guard: a phrase with NO override word must phonemize identically — if it
     # differs, the dictsource drifted from the bundle and the whole voice would change.
-    control = "вода газ світло інтернет"
+    # Keep every word here OUT of uk_stress_overrides.txt (тому «вода» тут більше нема —
+    # вона тепер має свій запис, і контроль хибно кричав би про дрейф).
+    control = "газ світло тепло квартира"
     cb, co = phon(control, False), phon(control, True)
     print(
         f"    regression control {control!r}: "

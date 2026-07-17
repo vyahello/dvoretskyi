@@ -12,6 +12,15 @@
 # Add a word here ONLY after hearing espeak stress it wrong — a needless entry can make a
 # currently-correct word wrong. Re-run build_espeak_stress.py after editing.
 #
+# Mnemonics (the safe subset — these render identically under espeak 1.51's data and the
+# master/Piper bundle): vowels o a e u i, и = I; ж = Z, ш = S, ч = tS, х = x, г = h.
+# Avoid the palatalisation mark `;` except after t — `s;` renders as ʂ in the master
+# table but sʲ in 1.51, so it is NOT portable. Where espeak's own rules already drop a ь
+# (восьмого → v'osmoho), keep its consonants and move only the stress.
+#
+# Only inflected forms the bot actually SAYS are listed — Ukrainian stress is per-form
+# (показни́к is right, but пока́зники is not), so each form needs its own entry.
+#
 # word      phonemes (’ = primary stress)
 подано	p'odano
 баланс	bal'ans
@@ -22,3 +31,153 @@
 зберігає	zberih'aje
 зберігаємо	zberih'ajemo
 зберігати	zberih'atI
+
+# --- лічильники / показники -------------------------------------------------
+# показни́к espeak reads right, but every oblique form it stem-stresses: «покАзники»,
+# «покАзника», «показнИків» → показники́, показника́, показникі́в.
+показника	pokaznIk'a
+показники	pokaznIk'I
+показників	pokaznik'iv
+# Mirror image: espeak says «лічильнИк»/«лічильнИків» → лічи́льник, лічи́льників
+# (it gets лічи́льника/лічи́льники right on its own — no entry for those).
+лічильник	litS'IlnIk
+лічильників	litS'IlnIkiv
+# espeak: «спожИвання» → спожива́ння. (Воно ж каже «спожи́то» правильно — не чіпаємо.)
+споживання	spoZIv'annja
+
+# --- комуналка: провайдери, платежі, гроші ----------------------------------
+# espeak: «вОда»/«вОди» → вода́/води́ (акузатив «во́ду» воно вже каже правильно).
+вода	vod'a
+води	vod'I
+# espeak: «жИтло»/«жИтлом» → житло́/житло́м (множину «жи́тлах» воно каже правильно).
+житло	ZItl'o
+житлом	ZItl'om
+число	tSIsl'o
+# espeak: «рахунОк» → раху́нок (раху́нку/раху́нки/раху́нках воно каже правильно).
+рахунок	rax'unok
+# espeak: «пОртал» → порта́л (але «порта́лу» — правильно).
+портал	port'al
+журнал	Zurn'al
+# espeak: «плАтіж», «платЕжі» → платі́ж, платежі́, платежі́в.
+платіж	plat'iZ
+платежі	plateZ'i
+платежів	plateZ'iv
+комуналка	komun'alka
+комуналку	komun'alku
+# espeak: «абОнплата» → абонпла́та.
+абонплата	abonpl'ata
+абонплату	abonpl'atu
+# espeak: «послУга» → по́слуга.
+послуга	p'osluha
+послуги	p'osluhI
+послугу	p'osluhu
+# espeak: «тАриф» → тари́ф (але «тари́фу» — правильно).
+тариф	tar'If
+# espeak: «інтЕрнету» → інтерне́ту (називний «інтерне́т» — правильно).
+інтернету	intern'etu
+# espeak: «бОрги»/«бОргів» → борги́/боргі́в.
+борги	borh'I
+боргів	borh'iv
+# espeak: «витрАта» → ви́трата.
+витрата	v'Itrata
+витрати	v'ItratI
+витрат	v'Itrat
+# espeak: «місЯця» → мі́сяця (називний «мі́сяць» — правильно).
+місяця	m'isjatsja
+місяці	m'isjatsi
+місяців	m'isjatsiv
+# espeak: «копійОк» → копі́йок (копі́йка/копі́йки — правильно). Гривня — правильно.
+копійок	kop'ijok
+# espeak: «відсотОк» → відсо́ток (відсо́тки/відсо́тків — правильно).
+відсоток	vids'otok
+
+# --- дієслова ---------------------------------------------------------------
+# espeak: «пОдав»/«пОдай»/«подАвав» → пода́в/пода́й/подава́в («пода́ти» — правильно).
+подав	pod'av
+подай	pod'aj
+подавав	podav'av
+# espeak: «сплАтив»/«плАтив» → сплати́в/плати́в («сплати́ти»/«плати́ти» — правильно).
+сплатив	splat'Iv
+платив	plat'Iv
+# espeak: «платИмо» → пла́тимо (у теперішньому часі наголос на основі).
+платимо	pl'atImo
+записав	zapIs'av
+знайшов	znajS'ov
+# -но/-то форми беруть наголос дієприкметника: зна́йдений → зна́йдено, спла́чений →
+# спла́чено. espeak каже «знайдЕно»/«сплачЕно». (Збере́жено/опла́чено/спожи́то воно
+# вже каже правильно — тому їх тут нема.)
+знайдено	zn'ajdeno
+сплачено	spl'atSeno
+нагадаю	nahad'aju
+намотало	namot'alo
+спишеться	sp'ISetsja
+перефотографуй	perefotohraf'uj
+# ви-перфективи: espeak «витЯгни»/«видАлити» → ви́тягни/ви́далити.
+витягни	v'Itjahni
+видалити	v'IdalItI
+підтвердь	pidtv'erd
+надішли	nadiSl'I
+напиши	napIS'I
+скажи	skaZ'I
+кажи	kaZ'I
+покажи	pokaZ'I
+
+# --- прислівники ------------------------------------------------------------
+вручну	vrutSn'u
+гаразд	har'azd
+сюди	sjud'I
+
+# --- пори року / місяці -----------------------------------------------------
+# espeak: «зИма»/«вЕсна» → зима́/весна́ (акузатив «зи́му» — правильно; лі́то/о́сінь теж).
+зима	zIm'a
+весна	vesn'a
+# Родові форми місяців для дат: espeak «лютОго»/«листОпада» → лю́того/листопа́да
+# (решту одинадцять воно наголошує правильно).
+лютого	l'jutoho
+листопада	lIstop'ada
+датою	d'atoju
+датами	d'atamI
+кнопкою	kn'opkoju
+
+# --- числівники, які пише voiceify ------------------------------------------
+# tts.voiceify тепер сама розписує числа словами (рід + відмінок espeak не вміє),
+# тож ці слова бот вимовляє постійно. espeak: «Один»/«Одна»/«сорОк»/«вісімдЕсят»/
+# «дев'Яносто»/«тисЯча» → оди́н/одна́/со́рок/вісімдеся́т/дев'яно́сто/ти́сяча.
+один	od'in
+одна	odn'a
+сорок	s'orok
+вісімдесят	visimdes'jat
+дев'яносто	devjan'osto
+тисяча	t'IsjatSa
+тисячі	t'IsjatSi
+тисяч	t'IsjatS
+мільйон	milj'on
+# Порядкові (дати: «шостого червня»). espeak тягне наголос на закінчення —
+# «першОго», «шостОго», «дванадцятОго». Правильно: пе́ршого … двана́дцятого.
+# (Четве́ртого/дев'я́того/деся́того/одина́дцятого/чотирна́дцятого/вісімна́дцятого/
+# дев'ятна́дцятого/двадця́того/тридця́того і далі воно вже каже правильно.)
+першого	p'erSoho
+другого	dr'uhoho
+третього	tr'et;oho
+п'ятого	pj'atoho
+шостого	S'ostoho
+сьомого	sj'omoho
+восьмого	v'osmoho
+дванадцятого	dvan'adtsjatoho
+тринадцятого	trIn'adtsjatoho
+п'ятнадцятого	pjatn'adtsjatoho
+шістнадцятого	Sistn'adtsjatoho
+сімнадцятого	simn'adtsjatoho
+вісімдесятого	visimdes'jatoho
+
+# --- espeak's own number words (`_N` pseudo-entries) -------------------------
+# Digits that voiceify leaves as digits (день, лічені дні, рік) are voiced by espeak's
+# built-in number builder, which uses these uk_list entries — NOT the words above, so
+# both are needed. Verified: espeak says «одЕн» for 1 (діалектне; літературне — оди́н),
+# і «сорОк»/«вісімдЕсят»/«дев'Яносто»/«тисЯча». Наголос — все, що тут можна полагодити:
+# рід («два тисяча») і форму («сто тисяча») словник не виправить — це й робить voiceify.
+_1	od'in
+_4X	s'orok
+_8X	visimdes'jat
+_9X	devjan'osto
+_0M1	t'IsjatSa

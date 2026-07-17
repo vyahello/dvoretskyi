@@ -47,10 +47,27 @@ _EMOJI_RE = re.compile(
     "[\U0001f000-\U0001faff"  # pictographs, transport, supplemental, flags (1F1E6–1F1FF)
     "←-⇿"  # arrows (e.g. ↪ «Це інше житло»)
     "⌀-⏿"  # misc technical (⏳ ⏰)
+    "─-◿"  # box drawing + geometric shapes (▲ ▼ ◀ ▶ — the stats delta/nav marks)
     "☀-➿"  # misc symbols + dingbats (✅ ✂)
     "⬀-⯿"  # extra arrows/stars
     "️‍]"  # variation selector + zero-width joiner
 )
+# «·» separates fields on screen («Житло 2 · липень 2026», «… · подано 28.06»). A voice
+# must not read it — and must not silently weld the fields together either, so it becomes
+# a pause, like a dash.
+_MIDDOT_RE = re.compile(r"\s*·\s*")
+
+# Decorative lead-in/trail on a line («• Газ», «— разом»). A blunt
+# `ln.strip(" -–—·•")` ate the MINUS of a «▼ -13%» delta line (the arrow beside it is a
+# pictograph and had already been stripped), so a DECREASE was voiced as a bare
+# «тринадцять відсотків» — direction lost, meaning inverted half the time. A leading '-'
+# is only decoration when a digit does NOT follow it.
+_LINE_LEAD_RE = re.compile(r"^(?:[\s·•–—]+|-(?!\s*\d))+")
+_LINE_TAIL_RE = re.compile(r"[\s·•–—-]+$")
+
+# «41.2 м³/міс» — the slash means «per», not «or». Must run BEFORE the generic
+# Cyrillic-slash-Cyrillic rule, which turned «м³/міс» into «кубометра АБО міс».
+_PER_MONTH_RE = re.compile(r"\s*/\s*міс\.?(?!\w)", re.IGNORECASE)
 # Quotes/brackets a voice reads aloud («відкрити лапки», «дужки») — drop them.
 _STRIP_RE = re.compile('[«»„“”"‟‘’‚‛‹›`´()\\[\\]{}]')
 # Markdown-ish punctuation the persona avoids but might still slip in.
@@ -149,9 +166,48 @@ def _year_ord_gen(y: int) -> str:
     return str(y)
 
 
+# Cardinals 0–19, so voiceify can spell a numeral out itself rather than leave it to
+# espeak's own number builder, which is broken — see `_int_words`.
+_CARD_0_19: tuple[str, ...] = (
+    "нуль",
+    "один",
+    "два",
+    "три",
+    "чотири",
+    "п'ять",
+    "шість",
+    "сім",
+    "вісім",
+    "дев'ять",
+    "десять",
+    "одинадцять",
+    "дванадцять",
+    "тринадцять",
+    "чотирнадцять",
+    "п'ятнадцять",
+    "шістнадцять",
+    "сімнадцять",
+    "вісімнадцять",
+    "дев'ятнадцять",
+)
+# Only 1 and 2 decline for gender: «одна гривня»/«дві гривні» vs «один кубометр».
+_CARD_FEM: dict[int, str] = {1: "одна", 2: "дві"}
+_HUNDREDS: dict[int, str] = {
+    1: "сто",
+    2: "двісті",
+    3: "триста",
+    4: "чотириста",
+    5: "п'ятсот",
+    6: "шістсот",
+    7: "сімсот",
+    8: "вісімсот",
+    9: "дев'ятсот",
+}
+
+
 def _ua_plural(n: int, one: str, few: str, many: str) -> str:
     """Ukrainian plural agreement: 1 гривня / 2-4 гривні / 5+ гривень (with the 11-14
-    exception). The numeral stays as digits — espeak-ng voices them in Ukrainian."""
+    exception)."""
     n = abs(n)
     if 11 <= n % 100 <= 14:
         return many
@@ -163,21 +219,78 @@ def _ua_plural(n: int, one: str, few: str, many: str) -> str:
     return many
 
 
+def _under_1000(n: int, fem: bool) -> list[str]:
+    """1–999 as words: 391 → ['триста', 'дев'яносто', 'одна'] when `fem`."""
+    words: list[str] = []
+    if n >= 100:
+        words.append(_HUNDREDS[n // 100])
+        n %= 100
+    if n >= 20:
+        words.append(_TENS_CARD[(n // 10) * 10])
+        n %= 10
+    if n:  # 1–19 (the teens carry no gender, so `fem` only ever hits 1 and 2)
+        words.append(_CARD_FEM[n] if fem and n in _CARD_FEM else _CARD_0_19[n])
+    return words
+
+
+def _int_words(n: int, *, fem: bool = False) -> str:
+    """A non-negative integer as Ukrainian words, agreeing with the unit it counts.
+
+    espeak's uk number builder cannot be trusted with digits — all verified on the box:
+    it voices 1 as the dialectal «оден», ignores gender («2026» → «два тисяча»), never
+    declines «тисяча» («100000» → «сто тисяча»), runs the parts together («39» →
+    «тридцятьдев'ять») and silently DROPS the millions («1000000» → «оден тисяча», i.e.
+    the wrong number). None of that is fixable from a pronunciation dictionary — gender
+    and case depend on the counted noun, which only we know. So we spell the numeral out
+    here and hand espeak plain words, whose stress the dictionary does fix.
+    """
+    if n < 0 or n >= 1_000_000_000:
+        return str(n)  # outside any amount this bot deals in — leave espeak to it
+    if n == 0:
+        return "нуль"
+    words: list[str] = []
+    millions, rest = divmod(n, 1_000_000)
+    if millions:
+        words += _under_1000(millions, False)
+        words.append(_ua_plural(millions, "мільйон", "мільйони", "мільйонів"))
+    thousands, rest = divmod(rest, 1_000)
+    if thousands:
+        # «тисяча» is feminine: одна тисяча / дві тисячі / п'ять тисяч.
+        words += _under_1000(thousands, True)
+        words.append(_ua_plural(thousands, "тисяча", "тисячі", "тисяч"))
+    if rest:
+        words += _under_1000(rest, fem)
+    return " ".join(words)
+
+
 def _money_words(whole: str, frac: str | None) -> str:
-    """'510','00' → '510 гривень'; '510','10' → '510 гривень 10 копійок'. Digits are kept
-    (espeak reads them); we attach the correctly-declined currency word and drop a .00."""
+    """'510','00' → 'п'ятсот десять гривень'; '510','10' → '… десять копійок'. The
+    numeral is spelled out (espeak's own is broken — see `_int_words`) and agrees with
+    the currency word, which is FEMININE: «одна гривня», «двадцять одна копійка». A
+    .00 is dropped."""
     hr = int(whole)
     kop = int(frac.ljust(2, "0")[:2]) if frac else 0
     parts: list[str] = []
     if hr or not kop:
-        parts.append(f"{hr} {_ua_plural(hr, 'гривня', 'гривні', 'гривень')}")
+        hryvnia = _ua_plural(hr, "гривня", "гривні", "гривень")
+        parts.append(f"{_int_words(hr, fem=True)} {hryvnia}")
     if kop:
-        parts.append(f"{kop} {_ua_plural(kop, 'копійка', 'копійки', 'копійок')}")
+        kopiyka = _ua_plural(kop, "копійка", "копійки", "копійок")
+        parts.append(f"{_int_words(kop, fem=True)} {kopiyka}")
     return " ".join(parts)
 
 
 _GROUP_RE = re.compile(r"(?<=\d)[   ](?=\d{3}\b)")  # "2 391" → "2391"
 _DATE_DMY_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")  # 2026-06-06
+# The dotted forms the BOT ITSELF writes: «06.06.2026» (payment journal) and «подано
+# 28.06» (meter journal). Both must run before `_CODE_RE`/`_DECIMAL_RE`, which would
+# otherwise claim the digits and read a date as a contract number or a decimal.
+_DATE_DOT_DMY_RE = re.compile(r"\b(\d{1,2})\.(\d{2})\.(\d{4})\b")  # 06.06.2026
+# No trailing-dot lookahead: lines are folded into sentences with ". ", so «подано 28.06»
+# is followed by a '.' on every journal line except the last — a `(?!\.)` guard silently
+# let all but the final line fall through to the decimal pass («двадцять вісім кома нуль
+# шість»). Guarding against dd.mm.yyyy is `_DATE_DOT_DMY_RE`'s job, and it runs first.
+_DATE_FILED_DM_RE = re.compile(r"\bподано\s+(\d{1,2})\.(\d{2})\b")  # подано 28.06
 _DATE_MY_RE = re.compile(r"\b(\d{4})-(\d{2})\b")  # 2026-06
 _ORD_GO_RE = re.compile(r"\b(\d{1,2})-го\b")  # «до 20-го» → «до двадцятого»
 _MONEY_RE = re.compile(
@@ -186,6 +299,10 @@ _MONEY_RE = re.compile(
 _DROP_ZEROS_RE = re.compile(r"(\d)[.,]0{1,2}(?!\d)")  # "510.00" → "510"
 _RANGE_RE = re.compile(r"(\d)\s*[–—]\s*(\d)")  # "28–30" → "28 до 30"
 _SP_DASH_RE = re.compile(r"\s[-–—]+\s")  # « Світло — 420 » → « Світло, 420 »
+# A slash between two Ukrainian words is spoken «або» — espeak otherwise reads the glyph
+# out loud: «показники газу/води» → «показники газу КОСА РИСКА води» (verified). Scoped
+# to Cyrillic on BOTH sides, so «24/7», «км/год» and any path/URL are left untouched.
+_SLASH_RE = re.compile(r"(?<=[а-яїієґА-ЯЇІЄҐ])\s*/\s*(?=[а-яїієґА-ЯЇІЄҐ])")
 _DECIMAL_RE = re.compile(r"(\d+)[.,](\d+)")  # "1888.14" → "1888 кома 14"
 # A dotted identifier — a login/contract number like «00.28.00.36» (≥3 groups, so a plain
 # decimal «1888.14» with its single dot is left to the decimal pass). espeak would read
@@ -201,7 +318,25 @@ _CODE_RE = re.compile(r"\b\d+(?:\.\d+){2,}\b")
 # skips a run already worded as money/percent/volume (e.g. «100000 гривень»). Runs LAST.
 _DIGIT_ID_RE = re.compile(r"\b\d{6,}\b")
 _UNIT_WORD_AHEAD = re.compile(r"\s*(?:грив|копій|відсот|кубометр)")
-_PERCENT_RE = re.compile(r"(\d+)\s*%")
+# A SIGNED percent — «▲ +8%» / «▼ -13%» in the stats delta line. The sign carries the
+# direction (the arrow beside it is stripped as a pictograph), so it has to be voiced;
+# left bare, espeak said «вісім відсотків» for both +8% and -8% — the exact opposite
+# meaning half the time.
+# The sign and its space live INSIDE the optional group: a bare `([+-])?\s*` would eat
+# the space before an unsigned number too, welding «частка 21%» into «часткадвадцять…».
+_PERCENT_RE = re.compile(r"(?:([+\-−])\s*)?(\d+)\s*%")
+
+# Screen abbreviations the bot writes to save a caption line — a voice reads «сер.» as
+# the word «сер». «міс.» is NOT in here: it is handled by `_MONTHS_COUNT_RE` (which needs
+# the preceding number to pick the plural) and by `_PER_MONTH_RE` («м³/міс» = per month).
+# Expanding it blindly here ran before both and produced «кубометра/місяців».
+_ABBREVS = {"сер.": "середнє", "грн.": "гривень"}
+_ABBREV_RE = re.compile(
+    r"(" + "|".join(re.escape(a) for a in _ABBREVS) + r")(?!\w)", re.IGNORECASE
+)
+# «8 міс.» → «8 місяців», «2 міс.» → «2 місяці». Ukrainian plural agreement depends on the
+# number, so the count has to be part of the match.
+_MONTHS_COUNT_RE = re.compile(r"\b(\d+)\s*міс\.?(?!\w)", re.IGNORECASE)
 # Meter readings/usage: "3.03 м³" → spoken «… кубометр(а/и/ів)», so a voiced reading names
 # its unit, not a bare number («спожито 3.03» → «спожито чого?»). Owns its decimal so
 # leading zeros are voiced (see `_spoken_frac`); runs BEFORE the generic decimal pass.
@@ -232,6 +367,52 @@ def _date_dmy(m: re.Match[str]) -> str:
     return f"{_two_ord_gen(d)} {_MONTHS_GEN[mo]} {_year_ord_gen(y)} року"
 
 
+def _percent_words(m: re.Match[str]) -> str:
+    """'+8%' → «більше на вісім відсотків»; '-13%' → «менше на тринадцять відсотків».
+
+    The stats delta line is «▲ +8% до травня». The arrow is a pictograph and gets
+    stripped, so the SIGN is the only thing left carrying the direction — and a bare
+    «вісім відсотків до травня» says nothing about which way. Words beat «плюс/мінус»
+    here: this is a butler reading a comparison aloud, not a calculator.
+    """
+    sign, digits = m[1], int(m[2])
+    unit = _ua_plural(digits, "відсоток", "відсотки", "відсотків")
+    words = f"{_int_words(digits)} {unit}"
+    if sign in ("-", "−"):
+        return f"менше на {words}"
+    if sign == "+":
+        return f"більше на {words}"
+    return words
+
+
+def _date_dot_dmy(m: re.Match[str]) -> str:
+    """'06.06.2026' → «шостого червня дві тисячі двадцять шостого року».
+
+    This is the form the bot itself writes — `get_payment_journal` renders every payment
+    date with `strftime('%d.%m.%Y')`. Without this the dotted-code pass claimed it first
+    and «коли я платив за газ» came back as «нуль шість, нуль шість, дві тисячі двадцять
+    шість» — a date read aloud as a contract number.
+    """
+    d, mo, y = int(m[1]), int(m[2]), int(m[3])
+    if not (1 <= mo <= 12 and 1 <= d <= 31):
+        return m.group(0)
+    return f"{_two_ord_gen(d)} {_MONTHS_GEN[mo]} {_year_ord_gen(y)} року"
+
+
+def _date_filed_dm(m: re.Match[str]) -> str:
+    """'подано 28.06' → «подано двадцять восьмого червня».
+
+    Anchored on «подано» ON PURPOSE. A bare dd.mm is ambiguous with a decimal — a meter
+    volume «3.03» is a perfectly good «day 3, month 03» — so matching dd.mm anywhere
+    would turn readings into dates. `_meter_journal_message` is the only place that emits
+    this form, and it always writes «подано <dd.mm>».
+    """
+    d, mo = int(m[1]), int(m[2])
+    if not (1 <= mo <= 12 and 1 <= d <= 31):
+        return m.group(0)
+    return f"подано {_two_ord_gen(d)} {_MONTHS_GEN[mo]}"
+
+
 def _date_my(m: re.Match[str]) -> str:
     y, mo = int(m[1]), int(m[2])
     return f"{_MONTHS_NOM[mo]} {y}" if 1 <= mo <= 12 else m.group(0)
@@ -243,25 +424,26 @@ def _month_year(m: re.Match[str]) -> str:
 
 def _spoken_frac(frac: str) -> str:
     """Fractional digits as read aloud, KEEPING leading zeros — «03» → «нуль три», not
-    «три» (which espeak would voice as .3). All-zero «00» → «нуль»."""
+    «три» (which would be heard as .3). All-zero «00» → «нуль»."""
     stripped = frac.lstrip("0")
     if not stripped:
         return "нуль"
-    return "нуль " * (len(frac) - len(stripped)) + stripped
+    return "нуль " * (len(frac) - len(stripped)) + _int_words(int(stripped))
 
 
 def _decimal_words(m: re.Match[str]) -> str:
-    return f"{m[1]} кома {_spoken_frac(m[2])}"
+    return f"{_int_words(int(m[1]))} кома {_spoken_frac(m[2])}"
 
 
 def _volume_words(m: re.Match[str]) -> str:
-    """'3.03 м³' → '3 кома нуль три кубометра'; '5 м³' → '5 кубометрів'. After a decimal
-    the unit is genitive singular (кубометра); a whole number gets plural agreement."""
+    """'3.03 м³' → 'три кома нуль три кубометра'; '5 м³' → 'п'ять кубометрів'. After a
+    decimal the unit is genitive singular (кубометра); a whole number gets plural
+    agreement. «кубометр» is masculine, so the numeral stays «один»/«два»."""
     whole, frac = m[1], m[2]
     if frac and int(frac) != 0:
-        return f"{whole} кома {_spoken_frac(frac)} кубометра"
+        return f"{_int_words(int(whole))} кома {_spoken_frac(frac)} кубометра"
     n = int(whole)
-    return f"{n} {_ua_plural(n, 'кубометр', 'кубометри', 'кубометрів')}"
+    return f"{_int_words(n)} {_ua_plural(n, 'кубометр', 'кубометри', 'кубометрів')}"
 
 
 def _digit_id_words(m: re.Match[str]) -> str:
@@ -276,30 +458,40 @@ def _digit_id_words(m: re.Match[str]) -> str:
 def voiceify(text: str) -> str:
     """Turn a screen-oriented reply into natural spoken Ukrainian, so the butler sounds
     like a person, not a screen-reader. Drops emoji/quotes/brackets/markup; reads money as
-    «510 гривень [10 копійок]» (declined), dates as «шостого червня дві тисячі двадцять
-    шостого року», a period «червень 2026» with the year in full + «року», meter volumes
-    «3.03 м³» as «3 кома нуль три кубометра», «20-го» as «двадцятого», decimals as «1888
-    кома 14» (leading zeros voiced: «03» → «нуль 3»); a dotted code «00.28.00.36» as
-    pause-separated groups (not «крапка крапка»); a bare ≥6-digit identifier (login
-    «00280036») digit-by-digit (else espeak groups it «00 крапка 280 крапка 036»); gives
-    Latin brand/jargon terms a
-    spoken Ukrainian form («monobank» → «монобанк», else espeak says «монобайк»); turns
-    dashes into pauses and folds newlines/bullets into sentences. '' if empty.
+    «п'ятсот десять гривень [десять копійок]» (declined, feminine), dates as «шостого
+    червня дві тисячі двадцять шостого року», a period «червень 2026» with the year in
+    full + «року», meter volumes «3.03 м³» as «три кома нуль три кубометра», «20-го» as
+    «двадцятого», decimals as «… кома чотирнадцять» (leading zeros voiced: «03» → «нуль
+    три»); a dotted code «00.28.00.36» as pause-separated groups (not «крапка крапка»); a
+    bare ≥6-digit identifier (login «00280036») digit-by-digit (else espeak groups it «00
+    крапка 280 крапка 036»); gives Latin brand/jargon terms a spoken Ukrainian form
+    («monobank» → «монобанк», else espeak says «монобайк»); turns dashes into pauses and
+    folds newlines/bullets into sentences. '' if empty.
 
-    Note: Ukrainian lexical stress is left to espeak's own guess — espeak-ng has no
-    handling for an explicit stress mark (U+0301), so we don't try to inject one."""
+    Numerals we OWN (money, volume, percent, decimals) are spelled out as words by
+    `_int_words` — espeak's own uk number builder gets the gender, the declension of
+    «тисяча», the word spacing and even the value wrong. Digits we don't own (a day, a
+    count, a bare year) are still left to espeak; `scripts/uk_stress_overrides.txt`
+    patches its number words (`_1`, `_4X`, …) as far as a dictionary can.
+
+    Note: Ukrainian lexical stress is left to espeak's rules plus that dictionary —
+    espeak-ng ignores an explicit stress mark (U+0301), so we never inject one."""
     if not text:
         return ""
     out = _EMOJI_RE.sub("", text)
     out = _STRIP_RE.sub(" ", out)
     out = _MARKUP_RE.sub(" ", out)
     # Fold each line into a sentence so the voice breathes between them.
-    lines = [ln.strip(" -–—·•\t") for ln in out.splitlines()]
+    lines = [_LINE_TAIL_RE.sub("", _LINE_LEAD_RE.sub("", ln)) for ln in out.splitlines()]
     out = ". ".join(ln for ln in lines if ln)
     # Numbers & dates → spoken forms (order matters: ungroup → dates → money → volume →
     # decimals, so the wider patterns claim their digits before the bare-decimal pass).
     out = _GROUP_RE.sub("", out)
+    out = _ABBREV_RE.sub(lambda m: _ABBREVS[m[1].casefold()], out)
     out = _DATE_DMY_RE.sub(_date_dmy, out)
+    # Our own dotted dates, BEFORE _CODE_RE claims their dots as a contract number.
+    out = _DATE_DOT_DMY_RE.sub(_date_dot_dmy, out)
+    out = _DATE_FILED_DM_RE.sub(_date_filed_dm, out)
     out = _DATE_MY_RE.sub(_date_my, out)
     out = _MONTH_YEAR_RE.sub(_month_year, out)  # «червень 2026» → «… шостого року»
     out = _ORD_GO_RE.sub(lambda m: _two_ord_gen(int(m[1])), out)
@@ -311,11 +503,15 @@ def voiceify(text: str) -> str:
     out = _DROP_ZEROS_RE.sub(r"\1", out)
     out = _RANGE_RE.sub(r"\1 до \2", out)
     out = _SP_DASH_RE.sub(", ", out)
-    out = _DECIMAL_RE.sub(_decimal_words, out)
-    out = _PERCENT_RE.sub(
-        lambda m: f"{m[1]} {_ua_plural(int(m[1]), 'відсоток', 'відсотки', 'відсотків')}",
-        out,
+    out = _MIDDOT_RE.sub(", ", out)  # «Житло 2 · липень» → a pause, never «крапка»
+    out = _PER_MONTH_RE.sub(" на місяць", out)  # «м³/міс» — «за», not «або»
+    out = _SLASH_RE.sub(" або ", out)  # «газу/води» → «газу або води», not «коса риска»
+    # After _PER_MONTH_RE has claimed «/міс», a remaining «8 міс.» is a COUNT of months.
+    out = _MONTHS_COUNT_RE.sub(
+        lambda m: f"{m[1]} {_ua_plural(int(m[1]), 'місяць', 'місяці', 'місяців')}", out
     )
+    out = _DECIMAL_RE.sub(_decimal_words, out)
+    out = _PERCENT_RE.sub(_percent_words, out)
     # A bare ≥6-digit identifier (login/contract) → digit-by-digit, so espeak reads each
     # digit instead of voicing «крапка» between grouped thousands. Last digit pass, so
     # money/volume/percent have already worded their numbers (the lookahead skips those).
@@ -330,9 +526,10 @@ def voiceify(text: str) -> str:
     # Latin brand/jargon terms → an explicit Ukrainian spoken form: espeak's uk voice
     # reads a Latin word with its own rules and mangles it («monobank» → «монобайк»).
     out = _TERMS_RE.sub(lambda m: _SPOKEN_TERMS[m.group(0).lower()], out)
-    # Tidy spacing/punctuation left by the substitutions.
+    # Tidy spacing/punctuation left by the substitutions. `:` is in here because
+    # stripping the brackets out of «Газ (постачання): …» leaves «Газ постачання : …».
     out = re.sub(r"\s+", " ", out).strip()
-    out = re.sub(r"\s+([,.])", r"\1", out)
+    out = re.sub(r"\s+([,.:;!?])", r"\1", out)
     out = re.sub(r"([,.])(?:\s*\1)+", r"\1", out)
     out = re.sub(r",\s*\.", ".", out).strip()
     return out
